@@ -89,6 +89,7 @@ def _make_message(
     severity: str = "error",
     fields: dict[str, str] | None = None,
     user_metadata: dict[str, str] | None = None,
+    extras: dict[str, dict[str, str]] | None = None,
 ) -> AlertMessage:
     if observed_metrics is None:
         observed_metrics = {"error_row_count": 5}
@@ -100,6 +101,10 @@ def _make_message(
     # user_metadata.* prefix (this is what Teams/webhook render).
     for meta_key, meta_value in (user_metadata or {}).items():
         fields[f"user_metadata.{meta_key}"] = str(meta_value)
+    # Mirror StandardMessageBuilder: extras are flattened into fields under extras.<action>.<key>.
+    for producer, payload in (extras or {}).items():
+        for extra_key, extra_value in payload.items():
+            fields[f"extras.{producer}.{extra_key}"] = str(extra_value)
     return AlertMessage(
         title=title,
         summary=summary,
@@ -111,6 +116,7 @@ def _make_message(
         severity=severity,
         fields=fields,
         user_metadata=user_metadata or {},
+        extras=extras or {},
     )
 
 
@@ -212,6 +218,34 @@ def test_slack_payload_omits_metadata_block_when_absent():
     dest.deliver(_make_message(), context, services)
 
     assert "Metadata" not in str(client.calls[0].payload["blocks"])
+
+
+def test_slack_payload_renders_extras():
+    client = FakeWebhookClient()
+    services = _make_services(webhook_client=client)
+    context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
+
+    dest = DQSlackAlertDestination(name="slack_test", webhook_url="https://hooks.slack.com/services/T/B/x")
+    dest.deliver(
+        _make_message(extras={"collect_lineage": {"lineage_location": "cat.sch.lineage_edges"}}),
+        context,
+        services,
+    )
+
+    rendered = str(client.calls[0].payload["blocks"])
+    assert "Extras" in rendered
+    assert "collect_lineage.lineage_location: cat.sch.lineage_edges" in rendered
+
+
+def test_slack_payload_omits_extras_block_when_absent():
+    client = FakeWebhookClient()
+    services = _make_services(webhook_client=client)
+    context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
+
+    dest = DQSlackAlertDestination(name="slack_test", webhook_url="https://hooks.slack.com/services/T/B/x")
+    dest.deliver(_make_message(), context, services)
+
+    assert "Extras" not in str(client.calls[0].payload["blocks"])
 
 
 def test_slack_blocks_are_valid_block_kit():
@@ -393,6 +427,27 @@ def test_teams_payload_renders_user_metadata_fact():
     rendered = str(client.calls[0].payload)
     assert "user_metadata.pipeline" in rendered
     assert "sales_daily" in rendered
+
+
+def test_teams_payload_renders_extras_fact():
+    client = FakeWebhookClient()
+    services = _make_services(webhook_client=client)
+    context = ActionContext(metrics={}, run_id="r1", run_time=datetime.now(timezone.utc))
+
+    dest = DQTeamsAlertDestination(
+        name="teams_test",
+        webhook_url="https://prod-00.westus.logic.azure.com/workflows/abc/triggers/manual/paths/invoke?sig=xyz",
+    )
+    dest.deliver(
+        _make_message(extras={"collect_lineage": {"lineage_location": "cat.sch.lineage_edges"}}),
+        context,
+        services,
+    )
+
+    # Teams renders all message.fields as facts, so the extras.* entry must appear.
+    rendered = str(client.calls[0].payload)
+    assert "extras.collect_lineage.lineage_location" in rendered
+    assert "cat.sch.lineage_edges" in rendered
 
 
 def test_teams_payload_has_sections():

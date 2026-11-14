@@ -62,7 +62,7 @@ main installation guide:
 - [DQX Studio installation](/docs/installation#dqx-studio-installation)
 
 For administrator-oriented detail, see the Studio
-[deployment guide](https://github.com/databrickslabs/dqx/blob/v0.16.0/app/DEPLOYMENT.md).
+[deployment guide](https://github.com/databrickslabs/dqx/blob/main/app/DEPLOYMENT.md).
 
 ## Key concepts
 
@@ -76,10 +76,11 @@ You only need a handful of ideas to feel at home in DQX Studio.
 | **Check** | A rule *applied to a specific column on a specific table*. One rule can become many checks. | "`customers.email` is never blank." |
 | **Test** | A single evaluation of a check against one row (or one aggregate) during a run. | Checking `email` on row 42 — one test. |
 
-So one rule can become several checks, and each check produces one test per row
-when it runs. The headline **DQ score** is the **average test pass rate** across
-all checks, and a collection's score is the average across its member tables. See
-[Review results](/docs/studio/running/#read-the-score).
+So one rule can become several checks. When it runs, a check produces one test for
+every row it checks, or one test for the whole table. Each rule's score is the
+average pass rate of its checks, and the headline **DQ score** is the
+**equal-weight average of rule scores**. A collection's score is the
+average across its member tables. See [Review results](/docs/studio/running/#read-the-score).
 
 ### The three levels: Rules → Tables → Collections
 
@@ -164,7 +165,7 @@ screen to your first monitored table in about ten minutes.
 - **Authoring rules** — [create a rule](/docs/studio/authoring/create-a-rule)
   (built-in checks, AI generation, profiling, and governed tags), plus its
   subpages [cross-table rules](/docs/studio/authoring/create-a-rule/cross-table-rules)
-  and [row-level vs dataset-level](/docs/studio/authoring/create-a-rule/row-and-dataset-level);
+  and [row-level vs table-level](/docs/studio/authoring/create-a-rule/row-and-dataset-level);
   [import rules](/docs/studio/authoring/import-rules); and the
   [Rule Marketplace](/docs/studio/authoring/rule-marketplace).
 - **Monitor your tables** — [monitor a table](/docs/studio/monitoring/),

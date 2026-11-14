@@ -146,10 +146,12 @@ def _statements(template: str) -> list[str]:
 
 
 class TestBaselineOnlyCatalogue:
-    """The catalogue is one analytical baseline expressed as CREATE TABLE.
+    """The catalogue is the analytical baseline plus additive CREATE TABLE steps.
 
-    There are no external installs to upgrade yet, so a shape change is
-    edited into the baseline rather than appended as an ALTER. These tests
+    A new table is appended as its own CREATE TABLE IF NOT EXISTS migration so
+    installs that already recorded v1 still get it; a shape change to an
+    existing table is edited into its CREATE TABLE rather than appended as an
+    ALTER. These tests
     pin that decision: an ``ADD COLUMN``, ``DROP COLUMN``, or backfill
     ``UPDATE`` creeping back in would mean the schema is once again split
     across a replay chain — and ``DROP COLUMN`` in particular is rejected
@@ -159,7 +161,8 @@ class TestBaselineOnlyCatalogue:
 
     def test_catalogue_contains_only_the_analytical_baseline(self) -> None:
         assert [(m.version, m.description) for m in MIGRATIONS] == [
-            (1, "Delta analytical baseline (validation, profiling, quarantine, metrics)")
+            (1, "Delta analytical baseline (validation, profiling, quarantine, metrics)"),
+            (2, "Staged run configs too large to inline in job parameters"),
         ]
 
     def test_delta_migrations_do_not_create_oltp_tables(self) -> None:
@@ -191,6 +194,7 @@ class TestBaselineOnlyCatalogue:
             "dq_validation_runs",
             "dq_quarantine_records",
             "dq_metrics",
+            "dq_run_configs",
         )
 
     @pytest.mark.parametrize(

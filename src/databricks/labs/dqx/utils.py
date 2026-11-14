@@ -6,7 +6,7 @@ import re
 from decimal import Decimal
 from enum import Enum
 from importlib.util import find_spec
-from typing import Any, TypeVar, overload, Annotated
+from typing import Any, TypeGuard, TypeVar, overload, Annotated
 from fnmatch import fnmatch
 from pathlib import Path
 
@@ -48,16 +48,26 @@ def to_utc(value: datetime.datetime) -> datetime.datetime:
     return value.astimezone(datetime.timezone.utc)
 
 
+def is_spark_column(value: object) -> TypeGuard[Column]:
+    """Return True if *value* is a PySpark Column, including the Spark Connect variant.
+
+    In environments using Spark Connect (e.g. Databricks serverless / Python 3.10–3.11 CI),
+    *F.col()* / *F.lit()* return *pyspark.sql.connect.column.Column*, which is not an *isinstance* of
+    the classic *pyspark.sql.Column*. Checking both keeps column detection correct in either runtime.
+    Reading ConnectColumn at call time (not at import time) means monkeypatching in tests works.
+
+    Returns a *TypeGuard[Column]* so callers keep the type narrowing a bare *isinstance* would give.
+    """
+    valid_types: tuple = (Column,) if ConnectColumn is None else (Column, ConnectColumn)
+    return isinstance(value, valid_types)
+
+
 def _validate_spark_column(value: Any) -> Any:
     """Accept both classic pyspark.sql.Column and the Spark Connect variant.
 
-    In environments using Spark Connect (e.g. Databricks serverless / Python 3.10–3.11 CI),
-    ``F.col()`` / ``F.lit()`` return ``pyspark.sql.connect.column.Column``, which is not an
-    ``isinstance`` of the classic ``pyspark.sql.Column``.  Reading ConnectColumn at call time
-    (not at import time) means monkeypatching in tests works correctly.
+    See *is_spark_column* for why both variants must be accepted.
     """
-    _valid_types: tuple = (Column,) if ConnectColumn is None else (Column, ConnectColumn)
-    if isinstance(value, _valid_types):
+    if is_spark_column(value):
         return value
     raise ValueError(f"Expected a PySpark Column, got {type(value).__name__}")
 
@@ -129,10 +139,19 @@ def _strip_literals_and_comments(match: "re.Match[str]") -> str:
     return "" if match.group("comment") is not None else " "
 
 
-_SCALAR_VARIABLE_TYPES = (str, int, float, bool, Decimal, datetime.date, datetime.datetime, datetime.time)
+_SCALAR_VARIABLE_TYPES: tuple[type, ...] = (
+    str,
+    int,
+    float,
+    bool,
+    Decimal,
+    datetime.date,
+    datetime.datetime,
+    datetime.time,
+)
 
 VariableValue = str | int | float | bool | Decimal | datetime.date | datetime.datetime | datetime.time
-"""Supported scalar types for variable substitution values."""
+"""Supported scalar types for variable substitution into SQL / column expressions."""
 
 
 def get_column_name_or_alias(
@@ -295,6 +314,27 @@ def normalize_bound_args(val: Any, allow_simple_expressions_only: bool = True) -
         return {k: normalize_bound_args(v, allow_simple_expressions_only) for k, v in val.items()}
 
     return _normalize_leaf_value(val, allow_simple_expressions_only)
+
+
+def escape_sql_string_literal(value: str) -> str:
+    """Escape a string for inclusion in a single-quoted Spark SQL literal.
+
+    Spark's parser honours backslash escapes inside string literals by default
+    (*spark.sql.parser.escapedStringLiterals* is false), which drives both replacements:
+
+      * The backslash must be doubled, or the parser consumes it (e.g. a JSON-encoded *\\"*
+        collapses back to a bare *"*).
+      * The single quote must be escaped as *\\'*, not doubled as *''*. ANSI doubling is not
+        honoured in this mode: Spark reads *'it''s'* as two adjacent literals and concatenates
+        them, so the value becomes *its*.
+
+    Args:
+        value: The raw string.
+
+    Returns:
+        The escaped string, without the enclosing quotes.
+    """
+    return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
 def quote_column_name(name: str) -> str:
@@ -806,15 +846,20 @@ def missing_required_packages(packages: list[str]) -> bool:
     return not all(find_spec(spec) for spec in packages)
 
 
-def _replace_template(text: str, variables: dict[str, str]) -> str:
-    """Replace **{{ key }}** placeholders in *text* with values from *variables*.
+def get_template_placeholders(text: str) -> set[str]:
+    """Return the names of the placeholders (keys in double curly braces) in *text*."""
+    return {match.strip("{} \t") for match in _UNRESOLVED_PLACEHOLDER_PATTERN.findall(text)}
 
-    Uses a single-pass regex substitution.
-    Tolerates whitespace inside braces (e.g. **{{ key }}**, **{{key}}**).
-    Logs a warning if any unresolved **{{ ... }}** placeholders remain after substitution.
+
+def replace_template(text: str, variables: dict[str, str]) -> str:
+    """Replace placeholders (keys in double curly braces) in *text* with values from *variables*.
+
+    Uses a single-pass regex substitution, so a replacement value is never substituted again.
+    Tolerates whitespace inside the braces around the key.
+    Logs a warning if any unresolved placeholders remain after substitution.
 
     Args:
-        text: Input string potentially containing **{{ key }}** placeholders.
+        text: Input string potentially containing placeholders.
         variables: Pre-stringified mapping of placeholder names to values.
 
     Returns:
@@ -872,7 +917,7 @@ def _substitute_variables(obj: Any, variables: dict[str, str]) -> Any:
         A new object with all string values having placeholders replaced.
     """
     if isinstance(obj, str):
-        return _replace_template(obj, variables)
+        return replace_template(obj, variables)
     if isinstance(obj, dict):
         return {k: _substitute_variables(v, variables) for k, v in obj.items()}
     if isinstance(obj, list):

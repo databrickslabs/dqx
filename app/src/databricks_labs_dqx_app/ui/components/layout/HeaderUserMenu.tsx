@@ -1,7 +1,6 @@
 import { Suspense, useMemo } from "react";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
 import {
   useCurrentUserSuspense,
   useCurrentUserRoleSuspense,
@@ -32,11 +31,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  SUPPORTED_LANGUAGES,
-  ensureLocaleLoaded,
-  toSupportedCode,
-} from "@/lib/i18n";
+import { useLanguageSwitcher } from "@/components/layout/LanguageSelect";
 
 const GITHUB_URL = "https://github.com/databrickslabs/dqx";
 
@@ -64,43 +59,28 @@ function HeaderUserMenuContent() {
   // staleTime: Infinity so it's fetched once and served from cache instead of
   // refetching every time the header menu remounts.
   const { data: verResp } = useGetVersion({ query: { staleTime: Infinity } });
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
+  const {
+    languages: sortedLanguages,
+    currentLanguage,
+    changeLanguage: handleLanguageChange,
+  } = useLanguageSwitcher();
 
   const appVersion = verResp?.data?.version;
   const role = roleResp?.role;
   const isAdmin = role === "admin";
-  const currentLanguage = toSupportedCode(i18n.resolvedLanguage ?? "en");
-
-  // B2-65: present every registered locale in alphabetical order by the label
-  // shown to the user (its native name), so the picker reads Deutsch / English /
-  // Español / … regardless of registration order in SUPPORTED_LANGUAGES.
-  const sortedLanguages = useMemo(
-    () =>
-      [...SUPPORTED_LANGUAGES].sort((a, b) => a.nativeLabel.localeCompare(b.nativeLabel)),
-    [],
-  );
-
   const initials = useMemo(() => {
     const name = user.display_name ?? user.user_name ?? "";
     const parts = name.split(/[\s.@]+/);
     return (parts[0]?.[0] ?? "").toUpperCase() + (parts[1]?.[0] ?? "").toUpperCase();
   }, [user.display_name, user.user_name]);
 
-  const handleLanguageChange = (value: string) => {
-    ensureLocaleLoaded(value)
-      .then(() => i18n.changeLanguage(value))
-      .catch((err) => {
-        console.error("Failed to switch language", err);
-        toast.error(t("language.switchFailed"));
-      });
-  };
-
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent transition-colors outline-none data-[state=open]:bg-accent"
+          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-header-foreground hover:bg-header-foreground/10 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-header-foreground/40 data-[state=open]:bg-header-foreground/15"
         >
           <Avatar className="h-7 w-7 rounded-full">
             <AvatarFallback className="rounded-full text-[11px] font-medium">
@@ -110,7 +90,7 @@ function HeaderUserMenuContent() {
           <span className="hidden sm:inline truncate max-w-[120px] text-sm font-medium">
             {user.display_name ?? user.user_name}
           </span>
-          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+          <ChevronDown className="h-3.5 w-3.5 opacity-70" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-60">

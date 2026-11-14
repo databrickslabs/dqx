@@ -54,6 +54,33 @@ def _idle_default() -> DemoStatus:
     return DemoStatus(state="idle", phase="", message="", started_at="", updated_at="")
 
 
+def _running_is_stale(status: DemoStatus) -> bool:
+    """Whether *status* is a ``running`` status too old (or too malformed) to still be live."""
+    if status.state != "running":
+        return False
+    try:
+        updated = datetime.fromisoformat(status.updated_at)
+    except (ValueError, TypeError):
+        return True
+    if updated.tzinfo is None:
+        updated = updated.replace(tzinfo=timezone.utc)
+    age_seconds = (datetime.now(timezone.utc) - updated).total_seconds()
+    return age_seconds >= _STALE_RUNNING_AFTER_SECONDS
+
+
+def _interrupted(status: DemoStatus) -> DemoStatus:
+    return DemoStatus(
+        state="failed",
+        phase=status.phase,
+        message=(
+            "The previous demo deployment was interrupted — the app restarted while it was "
+            f"running (during {status.phase or 'startup'}). Deploy demo content again to finish it."
+        ),
+        started_at=status.started_at,
+        updated_at=status.updated_at,
+    )
+
+
 class DemoStatusStore:
     """Persists and retrieves the demo-seed job status via *AppSettingsService*.
 
@@ -65,11 +92,37 @@ class DemoStatusStore:
         self._app_settings = app_settings
 
     def get(self) -> DemoStatus:
-        """Return the current demo status, defaulting to *idle* when unset or unparseable.
+        """Return the current demo status, healing a stale ``running`` to ``failed``.
 
         Never raises — a corrupt or missing blob degrades gracefully to the idle default
         so a wedged store cannot block the admin UI.
+
+        A ``running`` status older than :data:`_STALE_RUNNING_AFTER_SECONDS` (or with
+        an unparseable ``updated_at``) is reported as ``failed`` on the read path, not
+        only inside :meth:`is_running`: the status endpoint returns whatever this
+        yields, so without the heal the deploy banner would spin forever after a
+        restart killed the seed thread.
         """
+        status = self._load()
+        if _running_is_stale(status):
+            return _interrupted(status)
+        return status
+
+    def mark_interrupted_if_running(self) -> bool:
+        """Persist ``failed`` over a ``running`` status left behind by a previous process.
+
+        The seed runs on a daemon thread of the app process, so no seed survives a
+        restart. Called once at startup, before a new seed can be launched, so a
+        deploy interrupted by a redeploy stops showing as in progress immediately
+        instead of after the stale window. Returns whether a status was rewritten.
+        """
+        status = self._load()
+        if status.state != "running":
+            return False
+        self.set(_interrupted(status))
+        return True
+
+    def _load(self) -> DemoStatus:
         raw = self._app_settings.get_setting(DEMO_STATUS_KEY)
         if raw is None:
             return _idle_default()
@@ -94,22 +147,7 @@ class DemoStatusStore:
     def is_running(self) -> bool:
         """Return *True* when a demo-seed job is genuinely still running.
 
-        A status is only "running" if its state is ``running`` AND its
-        ``updated_at`` is recent (within :data:`_STALE_RUNNING_AFTER_SECONDS`).
-        A ``running`` status that has not advanced within that window is treated
-        as STALE — the seed thread was almost certainly killed by an app restart
-        without writing a terminal status — so a wedged status cannot block new
-        deploys forever. An unparseable / missing ``updated_at`` is treated as
-        stale (not running) rather than wedging the gate.
+        A status is only "running" if its state is ``running`` AND it is not stale
+        (see :meth:`get`), so a wedged status cannot block new deploys forever.
         """
-        status = self.get()
-        if status.state != "running":
-            return False
-        try:
-            updated = datetime.fromisoformat(status.updated_at)
-        except (ValueError, TypeError):
-            return False
-        if updated.tzinfo is None:
-            updated = updated.replace(tzinfo=timezone.utc)
-        age_seconds = (datetime.now(timezone.utc) - updated).total_seconds()
-        return age_seconds < _STALE_RUNNING_AFTER_SECONDS
+        return self.get().state == "running"

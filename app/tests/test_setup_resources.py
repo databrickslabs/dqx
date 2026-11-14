@@ -6,13 +6,17 @@ import pytest
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.runtime import Runtime
+from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.setup.resources import (
     ActiveResources,
+    BootstrapResources,
     LakebaseConnection,
     VolumeLocation,
     parse_volume_path,
+    build_active_resources,
     resolve_lakebase_connection,
 )
+from databricks_labs_dqx_app.backend.setup.storage import derive_storage
 
 
 @pytest.mark.parametrize(
@@ -132,8 +136,34 @@ def test_runtime_exposes_only_activated_resources() -> None:
         job_id=None,
         tmp_schema="dqx_studio_tmp",
         genie_schema="genie",
+        demo_schema="dqx_studio_demo",
+        audience=resolve_audience(["data-team"], "admins", allow_broad=False),
     )
 
     runtime.activate(resources)
 
     assert runtime.require_resources() is resources
+
+
+def _lakebase() -> LakebaseConnection:
+    return LakebaseConnection(
+        endpoint="projects/p/branches/b/endpoints/e",
+        host=None,
+        port=5432,
+        database="databricks_postgres",
+        username=None,
+        password=None,
+        schema="dqx_studio",
+    )
+
+
+def test_active_resources_combine_bootstrap_storage_and_audience() -> None:
+    bootstrap = BootstrapResources(lakebase=_lakebase(), warehouse_id="wh", job_id=None)
+    storage = derive_storage("main", "studio")
+    audience = resolve_audience(["data-team"], "admins", allow_broad=False)
+
+    resources = build_active_resources(bootstrap, storage, audience)
+
+    assert resources.volume.path == "/Volumes/main/studio/wheels"
+    assert resources.demo_schema == "studio_demo"
+    assert resources.audience.uc_principals == ("data-team",)

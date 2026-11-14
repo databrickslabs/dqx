@@ -25,6 +25,9 @@ from databricks_labs_dqx_app.backend.migrations import (
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.database_reset_service import DatabaseResetService
+from databricks_labs_dqx_app.backend.setup.configuration import SetupChoices, SetupConfigurationStore
+from databricks_labs_dqx_app.backend.setup.models import SetupStepId
+from databricks_labs_dqx_app.backend.setup.overrides import SetupOverrides
 from databricks_labs_dqx_app.backend.services.reset_status import (
     RESET_STATUS_KEY,
     ResetStatus,
@@ -171,7 +174,8 @@ class TestAppSettingsStatusPreservation:
         # rest — mirroring the admin-preserving dq_role_mappings clear.
         assert stmt == (
             "DELETE FROM cat.sch.dq_app_settings "
-            "WHERE setting_key NOT IN ('reset_database_status', 'demo_content_status')"
+            "WHERE setting_key NOT IN ('reset_database_status', 'demo_content_status') "
+            "AND setting_key NOT LIKE 'setup!_%' ESCAPE '!'"
         )
         # The keys come from their owning modules, not hardcoded literals.
         assert RESET_STATUS_KEY in stmt
@@ -200,6 +204,7 @@ class _StatefulSettingsExecutor:
 
     _SELECT_RE = re.compile(r"WHERE setting_key = '([^']*)'")
     _NOT_IN_RE = re.compile(r"dq_app_settings WHERE setting_key NOT IN \(([^)]*)\)")
+    _NOT_LIKE_RE = re.compile(r"setting_key NOT LIKE '([^']*)%' ESCAPE '!'")
 
     def __init__(self) -> None:
         self.settings: dict[str, str] = {}
@@ -211,7 +216,13 @@ class _StatefulSettingsExecutor:
         m = self._NOT_IN_RE.search(sql)
         if m:
             keep = {v.strip().strip("'") for v in m.group(1).split(",")}
-            self.settings = {k: v for k, v in self.settings.items() if k in keep}
+            like = self._NOT_LIKE_RE.search(sql)
+            kept_prefix = like.group(1).replace("!_", "_") if like else None
+            self.settings = {
+                k: v
+                for k, v in self.settings.items()
+                if k in keep or (kept_prefix is not None and k.startswith(kept_prefix))
+            }
 
     def query(self, sql: str, *, timeout_seconds: int = 120) -> list[list[str]]:
         m = self._SELECT_RE.search(sql)
@@ -248,6 +259,33 @@ class TestRunningStatusSurvivesTheWipe:
         assert store.is_running() is True
         assert store.get().state == "running"
         # ...but an unrelated setting was cleared by the same reset.
+        assert app_settings.get_setting("ai_endpoint_name") is None
+
+
+class TestSetupStateSurvivesTheWipe:
+    """A reset clears Studio's data, not its installation: the saved setup choices,
+    the storage lock, setup overrides and the task-runner job must survive, or the
+    next restart sends the administrator back through setup."""
+
+    def test_setup_choices_lock_overrides_and_job_survive_a_reset(self):
+        oltp = _StatefulSettingsExecutor()
+        app_settings = AppSettingsService(sql=oltp)
+        configuration = SetupConfigurationStore(app_settings)
+        overrides = SetupOverrides(app_settings)
+        choices = SetupChoices(catalog="main", prefix="dqx_studio", audience_group="dqx-users")
+        configuration.save(choices, user_email="a@x")
+        configuration.lock(user_email="a@x")
+        assert overrides.record(SetupStepId.WAREHOUSE, "fingerprint", user_email="a@x")
+        app_settings.record_setup_completion(job_id=42, completed_at=datetime.now(timezone.utc), user_name="a@x")
+        app_settings.save_setting("ai_endpoint_name", "some-endpoint")
+
+        DatabaseResetService(delta_sql=_FakeExecutor(), oltp_sql=oltp).reset_all_data(performed_by="a@x")
+
+        assert configuration.load() == choices
+        assert configuration.is_locked() is True
+        assert overrides.is_overridden(SetupStepId.WAREHOUSE, "fingerprint") is True
+        assert app_settings.get_setting("setup_task_runner_job_id") == "42"
+        # Studio's other settings are still cleared.
         assert app_settings.get_setting("ai_endpoint_name") is None
 
 
@@ -389,6 +427,36 @@ class TestGenieReprovision:
         assert set(result.cleared_tables) == set(ALL_APP_TABLE_NAMES)
 
 
+class TestGenieReprovisionTagging:
+    """The lazy (post-reset) Genie path must tag the space it ensures, like startup does."""
+
+    @pytest.mark.asyncio
+    async def test_reset_reprovision_tags_the_ensured_genie_space(self, monkeypatch: pytest.MonkeyPatch):
+        from databricks.sdk import WorkspaceClient
+        from databricks.sdk.errors import NotFound
+        from databricks.sdk.service.tags import TagAssignment
+
+        from databricks_labs_dqx_app.backend import dependencies
+        from databricks_labs_dqx_app.backend.services import genie_space_service
+
+        monkeypatch.setattr(genie_space_service, "ensure_dq_genie_space", lambda **_kwargs: "01f0space")
+        sp_ws = create_autospec(WorkspaceClient)
+        sp_ws.workspace_entity_tag_assignments.get_tag_assignment.side_effect = NotFound("missing")
+        service = await dependencies.get_database_reset_service(
+            delta_sql=_FakeExecutor(),
+            oltp_sql=_FakeExecutor(),
+            sp_ws=sp_ws,
+            app_settings=create_autospec(AppSettingsService),
+        )
+
+        result = service.reset_all_data(performed_by="admin@x.com")
+
+        assert "genie_space" in result.reprovisioned_defaults
+        sp_ws.workspace_entity_tag_assignments.create_tag_assignment.assert_called_once_with(
+            TagAssignment(entity_type="geniespaces", entity_id="01f0space", tag_key="app", tag_value="dqx-studio")
+        )
+
+
 class TestAudit:
     def test_result_records_actor_and_timestamp(self):
         result = DatabaseResetService(delta_sql=_FakeExecutor(), oltp_sql=_FakeExecutor()).reset_all_data(
@@ -398,6 +466,7 @@ class TestAudit:
         assert result.performed_by == "admin@x.com"
         assert result.performed_at  # ISO-8601 timestamp string
         assert "admin role mappings" in result.preserved_note.lower()
+        assert "setup state" in result.preserved_note.lower()
 
 
 @pytest.mark.parametrize("name", ALL_APP_TABLE_NAMES)

@@ -7,12 +7,15 @@ routes themselves are thin adapters over ``MonitoredTableService``, whose
 behaviour is already covered by ``test_monitored_table_service.py``.
 """
 
+import json
 from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
+from databricks.sdk.errors import NotFound, PermissionDenied
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from databricks_labs_dqx_app.backend.services.scheduler_wake import SchedulerWakeMarker
 from databricks_labs_dqx_app.backend.models import (
     ApplyRuleIn,
     BulkRegisterMonitoredTablesIn,
@@ -41,6 +44,7 @@ from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import (
     get_monitored_table,
     get_monitored_table_profile,
     list_monitored_table_versions,
+    list_implemented_rules,
     list_monitored_tables,
     list_pending_applications,
     list_tag_suggestions,
@@ -73,7 +77,9 @@ from databricks_labs_dqx_app.backend.services.apply_rules_service import (
     MappingIncompleteError,
     RuleNotPublishedError,
 )
-from databricks_labs_dqx_app.backend.services.materializer import MaterializationError
+from databricks_labs_dqx_app.backend.services.materializer import MaterializationError, Materializer
+from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
+from databricks_labs_dqx_app.backend.services.rules_catalog_service import RuleCatalogEntry, RulesCatalogService
 from databricks_labs_dqx_app.backend.services.rule_suggester import RuleSuggestion, SuggestRulesResult
 from databricks_labs_dqx_app.backend.services.tag_suggestion_service import TagRuleSuggestion
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
@@ -82,8 +88,10 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     DuplicateMonitoredTableError,
     LatestProfile,
     MonitoredTableDetail,
+    MonitoredTableService,
     MonitoredTableSummary,
 )
+from tests.conftest import make_spec_sql_executor_mock
 
 
 def _table(binding_id: str = "b1", table_fqn: str = "cat.schema.tbl", status: str = "draft") -> MonitoredTable:
@@ -156,13 +164,26 @@ class TestListAndGet:
         version_svc.snapshot_counts_many.return_value = {}
         materializer = MagicMock()
         materializer.render_binding_checks_counts_many.return_value = {}
-        result = list_monitored_tables(svc=svc, version_svc=version_svc, materializer=materializer, status="draft")
+        result = list_monitored_tables(
+            svc=svc,
+            version_svc=version_svc,
+            materializer=materializer,
+            wake=create_autospec(SchedulerWakeMarker, instance=True),
+            status="draft",
+        )
         assert len(result) == 1
         assert result[0].table.binding_id == "b1"
         assert result[0].applied_rule_count == 3
         svc.list_monitored_tables.assert_called_once_with(
             status="draft", owner=None, catalog=None, schema=None, name=None
         )
+
+    def test_list_wakes_the_scheduler_on_page_load(self):
+        svc = MagicMock()
+        svc.list_monitored_tables.return_value = []
+        wake = create_autospec(SchedulerWakeMarker, instance=True)
+        list_monitored_tables(svc=svc, version_svc=MagicMock(), materializer=MagicMock(), wake=wake)
+        wake.signal.assert_called_once_with()
 
     def test_list_check_count_from_snapshot_for_approved_binding(self):
         # An approved binding (version > 0) reports its frozen snapshot's
@@ -178,7 +199,12 @@ class TestListAndGet:
         version_svc.snapshot_counts_many.return_value = {("b1", 4): (2, 7)}
         materializer = MagicMock()
         materializer.render_binding_checks_counts_many.return_value = {}
-        result = list_monitored_tables(svc=svc, version_svc=version_svc, materializer=materializer)
+        result = list_monitored_tables(
+            svc=svc,
+            version_svc=version_svc,
+            materializer=materializer,
+            wake=create_autospec(SchedulerWakeMarker, instance=True),
+        )
         assert result[0].check_count == 7  # snapshot len(checks_json), not 999
         version_svc.snapshot_counts_many.assert_called_once_with([("b1", 4)])
         # A snapshot-resolved approved binding is NOT sent to the live-render
@@ -195,7 +221,12 @@ class TestListAndGet:
         version_svc.snapshot_counts_many.return_value = {}
         materializer = MagicMock()
         materializer.render_binding_checks_counts_many.return_value = {"b1": 3}
-        result = list_monitored_tables(svc=svc, version_svc=version_svc, materializer=materializer)
+        result = list_monitored_tables(
+            svc=svc,
+            version_svc=version_svc,
+            materializer=materializer,
+            wake=create_autospec(SchedulerWakeMarker, instance=True),
+        )
         assert result[0].check_count == 3
         # ONE batched draft-count call for the never-approved binding — never a
         # per-binding render loop (B2-141).
@@ -452,6 +483,137 @@ class TestBulkRegister:
             body=body, svc=svc, obo_ws=_mock_obo_ws(), tag_suggestions=tag_suggestions
         )
         assert result.registered == ["cat.schema.t1"]
+
+    def test_bulk_register_rejects_whole_batch_when_a_table_is_unavailable(self):
+        svc = MagicMock()
+        obo = _mock_obo_ws()
+
+        def _get(full_name: str):
+            if full_name == "cat.schema.missing":
+                raise NotFound("no such table")
+            if full_name == "cat.schema.hidden":
+                raise PermissionDenied("nope")
+            return MagicMock()
+
+        obo.tables.get.side_effect = _get
+        body = BulkRegisterMonitoredTablesIn(
+            table_fqns=["cat.schema.ok", "cat.schema.missing", "cat.schema.hidden", "bad-fqn"]
+        )
+        with pytest.raises(HTTPException) as excinfo:
+            bulk_register_monitored_tables(body=body, svc=svc, obo_ws=obo, tag_suggestions=_tag_suggestions_mock())
+        assert excinfo.value.status_code == 422
+        assert excinfo.value.detail["code"] == "import_tables_unavailable"
+        assert sorted(excinfo.value.detail["tables"]) == ["cat.schema.hidden", "cat.schema.missing"]
+        svc.bulk_register.assert_not_called()
+
+    def test_bulk_register_uc_lookup_failure_is_502(self):
+        svc = MagicMock()
+        obo = _mock_obo_ws()
+        obo.tables.get.side_effect = RuntimeError("UC down")
+        body = BulkRegisterMonitoredTablesIn(table_fqns=["cat.schema.a"])
+        with pytest.raises(HTTPException) as excinfo:
+            bulk_register_monitored_tables(body=body, svc=svc, obo_ws=obo, tag_suggestions=_tag_suggestions_mock())
+        assert excinfo.value.status_code == 502
+        svc.bulk_register.assert_not_called()
+
+
+class TestListImplementedRules:
+    @staticmethod
+    def _registry_with_rule() -> MagicMock:
+        registry = MagicMock()
+        rule = MagicMock()
+        rule.user_metadata = {"name": "Not null", "dimension": "completeness", "severity": "high"}
+        rule.source = "ui"
+        registry.get_rules_many.return_value = {"r1": rule}
+        return registry
+
+    def test_enriches_applications_with_table_and_rule_tags_and_skips_orphans(self):
+        tables = MagicMock()
+        tables.get_table_fqns.return_value = {"b1": "cat.sch.orders"}
+        applied = MagicMock()
+        applied.list_all.return_value = [
+            AppliedRule(id="a1", binding_id="b1", rule_id="r1", column_mapping=[{"column": "id"}]),
+            AppliedRule(id="a2", binding_id="gone", rule_id="r1"),
+        ]
+
+        result = list_implemented_rules(tables=tables, applied_rules=applied, registry=self._registry_with_rule())
+
+        assert len(result) == 1
+        row = result[0]
+        assert row.table_fqn == "cat.sch.orders"
+        assert row.rule_id == "r1"
+        assert row.rule_name == "Not null"
+        assert row.rule_source == "ui"
+        assert row.column_mapping == [{"column": "id"}]
+        tables.get_table_fqns.assert_called_once_with({"b1", "gone"})
+
+    def test_binding_scope_reads_only_that_tables_applications(self):
+        tables = MagicMock()
+        tables.get_table_fqns.return_value = {"b1": "cat.sch.orders"}
+        applied = MagicMock()
+        applied.list_applied.return_value = [AppliedRule(id="a1", binding_id="b1", rule_id="r1")]
+
+        result = list_implemented_rules(
+            tables=tables, applied_rules=applied, registry=self._registry_with_rule(), binding_id="b1"
+        )
+
+        assert [(r.binding_id, r.table_fqn) for r in result] == [("b1", "cat.sch.orders")]
+        applied.list_applied.assert_called_once_with("b1")
+        applied.list_all.assert_not_called()
+        applied.list_bindings_for_rule.assert_not_called()
+        # The scoped read never lists (and enriches) every monitored table.
+        tables.list_monitored_tables.assert_not_called()
+        tables.get_table_fqns.assert_called_once_with({"b1"})
+
+    def test_rule_scope_lists_every_table_the_rule_is_applied_to(self):
+        tables = MagicMock()
+        tables.get_table_fqns.return_value = {"b1": "cat.sch.orders", "b2": "cat.hr.people"}
+        applied = MagicMock()
+        applied.list_bindings_for_rule.return_value = [
+            AppliedRule(id="a1", binding_id="b1", rule_id="r1"),
+            AppliedRule(id="a2", binding_id="b2", rule_id="r1"),
+        ]
+
+        result = list_implemented_rules(
+            tables=tables, applied_rules=applied, registry=self._registry_with_rule(), rule_id="r1"
+        )
+
+        assert sorted(r.table_fqn for r in result) == ["cat.hr.people", "cat.sch.orders"]
+        applied.list_bindings_for_rule.assert_called_once_with("r1")
+        applied.list_all.assert_not_called()
+        tables.list_monitored_tables.assert_not_called()
+
+    def test_binding_and_rule_scope_combine(self):
+        tables = MagicMock()
+        tables.get_table_fqns.return_value = {"b1": "cat.sch.orders"}
+        applied = MagicMock()
+        applied.list_applied.return_value = [
+            AppliedRule(id="a1", binding_id="b1", rule_id="r1"),
+            AppliedRule(id="a2", binding_id="b1", rule_id="r2"),
+        ]
+
+        result = list_implemented_rules(
+            tables=tables, applied_rules=applied, registry=self._registry_with_rule(), binding_id="b1", rule_id="r1"
+        )
+
+        assert [r.rule_id for r in result] == ["r1"]
+
+    def test_empty_scope_returns_empty(self):
+        tables = MagicMock()
+        tables.get_table_fqns.return_value = {}
+        applied = MagicMock()
+        applied.list_applied.return_value = []
+        registry = MagicMock()
+        registry.get_rules_many.return_value = {}
+
+        assert list_implemented_rules(tables=tables, applied_rules=applied, registry=registry, binding_id="b1") == []
+
+    def test_failure_is_500(self):
+        applied = MagicMock()
+        applied.list_all.side_effect = RuntimeError("boom")
+        with pytest.raises(HTTPException) as excinfo:
+            list_implemented_rules(tables=MagicMock(), applied_rules=applied, registry=MagicMock())
+        assert excinfo.value.status_code == 500
 
 
 class TestDelete:
@@ -1178,26 +1340,59 @@ class TestSubmitMonitoredTable:
         rules_catalog.set_status.assert_any_call("r2", "pending_approval", "alice@x")
         svc.set_status.assert_called_once_with("b1", "pending_approval", "alice@x", rationale=None, set_rationale=True)
 
-    def test_row_transition_failure_is_skipped_not_fatal(self):
+    def test_row_transition_failure_fails_submit_with_409_and_rolls_back(self):
+        """A check that can't enter review must fail the submit, not be silently left in draft."""
         svc = MagicMock()
         svc.list_materialized_rule_statuses.side_effect = [
             [("r1", "draft"), ("r2", "draft")],  # recovery scan: no rejected
             [("r1", "draft"), ("r2", "draft")],  # draft -> pending loop
-            [("r1", "draft"), ("r2", "pending_approval")],  # roll-up
         ]
-        svc.set_status.return_value = _table(status="pending_approval")
-        rules_catalog = MagicMock()
-        rules_catalog.set_status.side_effect = [ValueError("duplicate pending"), MagicMock()]
-        result = submit_monitored_table(
-            "b1",
-            monitored_tables_svc=svc,
-            materializer=MagicMock(),
-            rules_catalog=rules_catalog,
-            obo_ws=_mock_obo_ws(),
-            **_submit_mt_extra(),
+        rules_catalog = create_autospec(RulesCatalogService, instance=True)
+        rules_catalog.set_status.side_effect = [
+            MagicMock(),  # r1 submitted
+            ValueError("A duplicate rule with the same check already exists"),  # r2 refused
+            MagicMock(),  # r1 rolled back to draft
+        ]
+        rules_catalog.get_by_rule_id.return_value = RuleCatalogEntry(
+            table_fqn="cat.schema.tbl",
+            checks=[{"name": "Amount not null (EU)", "check": {"function": "is_not_null"}}],
+            rule_id="r2",
         )
-        # r1 failed and was skipped; r2 counted.
-        assert result.affected_check_count == 1
+        with pytest.raises(HTTPException) as excinfo:
+            submit_monitored_table(
+                "b1",
+                monitored_tables_svc=svc,
+                materializer=MagicMock(),
+                rules_catalog=rules_catalog,
+                obo_ws=_mock_obo_ws(),
+                **_submit_mt_extra(),
+            )
+        assert excinfo.value.status_code == 409
+        assert "Amount not null (EU)" in excinfo.value.detail
+        assert "duplicate" in excinfo.value.detail
+        # The already-submitted sibling is walked back so the binding isn't half-submitted,
+        # and the binding's own status is never rolled up.
+        rules_catalog.set_status.assert_called_with("r1", "draft", "alice@x")
+        svc.set_status.assert_not_called()
+
+    def test_unexpected_transition_error_detail_is_not_leaked(self):
+        svc = MagicMock()
+        svc.list_materialized_rule_statuses.side_effect = [[], [("r1", "draft")]]
+        rules_catalog = create_autospec(RulesCatalogService, instance=True)
+        rules_catalog.set_status.side_effect = RuntimeError("warehouse said: secret internal detail")
+        rules_catalog.get_by_rule_id.return_value = None
+        with pytest.raises(HTTPException) as excinfo:
+            submit_monitored_table(
+                "b1",
+                monitored_tables_svc=svc,
+                materializer=MagicMock(),
+                rules_catalog=rules_catalog,
+                obo_ws=_mock_obo_ws(),
+                **_submit_mt_extra(),
+            )
+        assert excinfo.value.status_code == 409
+        assert "r1" in excinfo.value.detail
+        assert "secret internal detail" not in excinfo.value.detail
 
     def test_materialization_error_raises_404(self):
         svc = MagicMock()
@@ -1213,6 +1408,93 @@ class TestSubmitMonitoredTable:
                 **_submit_mt_extra(),
             )
         assert excinfo.value.status_code == 404
+
+
+def _not_null_amount_check(applied_rule_id: str, name: str, filter_expr: str | None = None) -> dict:
+    """A materialized registry ``is_not_null(amount)`` check, as the materializer renders it."""
+    check: dict = {
+        "name": name,
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"column": "amount"}},
+        "user_metadata": {
+            "registry_rule_id": f"rr-{applied_rule_id}",
+            "registry_version": "1",
+            "applied_rule_id": applied_rule_id,
+        },
+    }
+    if filter_expr is not None:
+        check["filter"] = filter_expr
+    return check
+
+
+class TestSubmitApproveSameCheckDifferentFilter:
+    """Regression: two applied rules rendering the same check on one column that differ
+    only by rule filter must BOTH be submitted, approved and frozen — not collapse to one.
+    """
+
+    def test_filtered_and_unfiltered_rules_are_both_approved_and_frozen(self, sql_executor_mock, resolved_rules_store):
+        resolved_rules_store.add("ar-all-0", _not_null_amount_check("ar-all", "Amount not null"))
+        resolved_rules_store.add(
+            "ar-eu-0", _not_null_amount_check("ar-eu", "Amount not null (EU)", filter_expr="region = 'EU'")
+        )
+        rules_catalog = RulesCatalogService(sql=sql_executor_mock)
+
+        applied = [
+            AppliedRuleSummary(
+                applied_rule=AppliedRule(
+                    id=aid, binding_id="b1", rule_id=f"rr-{aid}", column_mapping=[{"column": "amount"}]
+                ),
+                rule_name=name,
+            )
+            for aid, name in (("ar-all", "Amount not null"), ("ar-eu", "Amount not null (EU)"))
+        ]
+        binding = {"table": _table()}
+
+        def _set_binding_status(_binding_id: str, status: str, _user: str, **_kwargs) -> MonitoredTable:
+            binding["table"] = _table(status=status)
+            return binding["table"]
+
+        svc = create_autospec(MonitoredTableService, instance=True)
+        svc.list_materialized_rule_statuses.side_effect = lambda _binding_id: resolved_rules_store.statuses()
+        svc.get.side_effect = lambda _binding_id: MonitoredTableDetail(table=binding["table"], applied_rules=applied)
+        svc.set_status.side_effect = _set_binding_status
+
+        version_sql = make_spec_sql_executor_mock()
+        version_sql.fqn.side_effect = lambda table: f"dqx_test.dqx_app_test.{table}"
+        version_sql.json_literal_expr.side_effect = lambda payload: f"parse_json('{payload}')"
+        version_sql.query.return_value = [["0"]]  # binding has never been approved
+        version_svc = MonitoredTableVersionService(
+            sql=version_sql,
+            monitored_tables=svc,
+            rules_catalog=rules_catalog,
+            materializer=create_autospec(Materializer, instance=True),
+        )
+
+        submitted = submit_monitored_table(
+            "b1",
+            monitored_tables_svc=svc,
+            materializer=create_autospec(Materializer, instance=True),
+            rules_catalog=rules_catalog,
+            obo_ws=_mock_obo_ws(),
+            **{**_submit_mt_extra(), "version_svc": version_svc},
+        )
+        assert submitted.affected_check_count == 2
+        assert submitted.table.status == "pending_approval"
+
+        approved = approve_monitored_table(
+            "b1",
+            monitored_tables_svc=svc,
+            rules_catalog=rules_catalog,
+            version_svc=version_svc,
+            obo_ws=_mock_obo_ws("bob@x"),
+        )
+        assert approved.affected_check_count == 2
+        assert approved.new_version == 1
+        assert dict(resolved_rules_store.statuses()) == {"ar-all-0": "approved", "ar-eu-0": "approved"}
+
+        frozen = json.loads(version_sql.json_literal_expr.call_args.args[0])
+        assert {ref["applied_rule_id"] for ref in frozen["rule_refs"]} == {"ar-all", "ar-eu"}
+        assert frozen["check_count"] == 2
 
 
 class TestListMonitoredTableVersions:
@@ -1277,6 +1559,28 @@ class TestApproveMonitoredTable:
         )
         version_svc.freeze_new_version.assert_called_once_with("b1", "alice@x")
         assert result.new_version == 2
+
+    def test_check_that_fails_to_approve_fails_with_409_and_freezes_nothing(self):
+        svc = MagicMock()
+        svc.get.return_value = MonitoredTableDetail(table=_table(status="pending_approval"), applied_rules=[])
+        svc.list_materialized_rule_statuses.return_value = [("r1", "pending_approval"), ("r2", "pending_approval")]
+        rules_catalog = create_autospec(RulesCatalogService, instance=True)
+        rules_catalog.set_status.side_effect = [MagicMock(), RuntimeError("Version conflict for rule r2")]
+        rules_catalog.get_by_rule_id.return_value = None
+        version_svc = MagicMock()
+        with pytest.raises(HTTPException) as excinfo:
+            approve_monitored_table(
+                "b1",
+                monitored_tables_svc=svc,
+                rules_catalog=rules_catalog,
+                version_svc=version_svc,
+                obo_ws=_mock_obo_ws(),
+            )
+        assert excinfo.value.status_code == 409
+        assert "r2" in excinfo.value.detail
+        # The binding stays pending (re-approvable) and no partial version is frozen.
+        svc.set_status.assert_not_called()
+        version_svc.freeze_new_version.assert_not_called()
 
     def test_missing_binding_raises_404(self):
         svc = MagicMock()
@@ -1524,6 +1828,7 @@ class TestRunMonitoredTable:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            wake=create_autospec(SchedulerWakeMarker, instance=True),
         )
         assert result.run_set_id == "rs-1"
         assert result.run_id == "run-1"
@@ -1541,6 +1846,82 @@ class TestRunMonitoredTable:
             rule_ids=None,
             sample_size=None,
         )
+
+    def test_started_run_wakes_the_scheduler(self):
+        # A run started with no page watching must be tracked promptly, not
+        # after the scheduler's hour-long idle sleep.
+        svc = MagicMock()
+        svc.run_binding.return_value = BindingRunResult(
+            run_set_id="rs-1", run_id="run-1", job_run_id=42, view_fqn="dqx_studio_tmp.tmp_1"
+        )
+        wake = create_autospec(SchedulerWakeMarker, instance=True)
+        run_monitored_table(
+            "b1",
+            body=RunMonitoredTableIn(source="approved", version=None),
+            obo_ws=_mock_obo_ws(),
+            run_svc=svc,
+            role=UserRole.ADMIN,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
+            wake=wake,
+        )
+        wake.signal.assert_called_once_with()
+
+    def test_failed_run_start_does_not_wake_the_scheduler(self):
+        svc = MagicMock()
+        svc.run_binding.side_effect = BindingNotFoundError("b1")
+        wake = create_autospec(SchedulerWakeMarker, instance=True)
+        with pytest.raises(HTTPException):
+            run_monitored_table(
+                "b1",
+                body=RunMonitoredTableIn(source="approved", version=None),
+                obo_ws=_mock_obo_ws(),
+                run_svc=svc,
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
+                wake=wake,
+            )
+        wake.signal.assert_not_called()
+
+    def test_staging_infra_failure_maps_to_503(self):
+        """A RunConfigStagingError (SQL warehouse unreachable / dq_run_configs missing)
+        is a server-side fault, not a bad request — it must surface as 503."""
+        from databricks_labs_dqx_app.backend.run_config_store import RunConfigStagingError
+
+        svc = MagicMock()
+        svc.run_binding.side_effect = RunConfigStagingError("run-1", "dqx_studio.dq_run_configs", RuntimeError("down"))
+        with pytest.raises(HTTPException) as excinfo:
+            run_monitored_table(
+                "b1",
+                body=RunMonitoredTableIn(source="approved", version=None),
+                obo_ws=_mock_obo_ws(),
+                run_svc=svc,
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
+                wake=create_autospec(SchedulerWakeMarker, instance=True),
+            )
+        assert excinfo.value.status_code == 503
+
+    def test_oversized_config_maps_to_400(self):
+        """A config too large to submit even as a stub stays 400-class, unlike infra staging failures."""
+        from databricks_labs_dqx_app.backend.run_config_store import RunConfigTooLargeError
+
+        svc = MagicMock()
+        svc.run_binding.side_effect = RunConfigTooLargeError(12000)
+        with pytest.raises(HTTPException) as excinfo:
+            run_monitored_table(
+                "b1",
+                body=RunMonitoredTableIn(source="approved", version=None),
+                obo_ws=_mock_obo_ws(),
+                run_svc=svc,
+                role=UserRole.ADMIN,
+                principal_ids=frozenset(),
+                perms=MagicMock(),
+                wake=create_autospec(SchedulerWakeMarker, instance=True),
+            )
+        assert excinfo.value.status_code == 400
 
     def test_execute_check_called_before_run(self):
         """require_object(EXECUTE) is invoked on the monitored table before delegating to run_binding."""
@@ -1560,6 +1941,7 @@ class TestRunMonitoredTable:
             role=UserRole.RULE_AUTHOR,
             principal_ids=frozenset({"u1"}),
             perms=perms,
+            wake=create_autospec(SchedulerWakeMarker, instance=True),
         )
         perms.require_object.assert_called_once()
         call_kwargs = perms.require_object.call_args
@@ -1587,6 +1969,7 @@ class TestRunMonitoredTable:
                 role=UserRole.RULE_AUTHOR,
                 principal_ids=frozenset(),
                 perms=perms,
+                wake=create_autospec(SchedulerWakeMarker, instance=True),
             )
         assert excinfo.value.status_code == 403
         svc.run_binding.assert_not_called()
@@ -1603,6 +1986,7 @@ class TestRunMonitoredTable:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                wake=create_autospec(SchedulerWakeMarker, instance=True),
             )
         assert excinfo.value.status_code == 404
 
@@ -1618,6 +2002,7 @@ class TestRunMonitoredTable:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                wake=create_autospec(SchedulerWakeMarker, instance=True),
             )
         assert excinfo.value.status_code == 409
 
@@ -1633,6 +2018,7 @@ class TestRunMonitoredTable:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                wake=create_autospec(SchedulerWakeMarker, instance=True),
             )
         assert excinfo.value.status_code == 422
 
@@ -1648,6 +2034,7 @@ class TestRunMonitoredTable:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                wake=create_autospec(SchedulerWakeMarker, instance=True),
             )
         assert excinfo.value.status_code == 400
 
@@ -1663,6 +2050,7 @@ class TestRunMonitoredTable:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                wake=create_autospec(SchedulerWakeMarker, instance=True),
             )
         assert excinfo.value.status_code == 500
 
@@ -1699,6 +2087,7 @@ class TestRunMonitoredTableInSamplingKnob:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            wake=create_autospec(SchedulerWakeMarker, instance=True),
         )
         assert svc.run_binding.call_args.kwargs["sample_size"] == 250
 

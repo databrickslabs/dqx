@@ -5,7 +5,7 @@ import base64
 import json
 import logging
 from collections.abc import Generator
-from unittest.mock import create_autospec
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
 
@@ -56,6 +56,7 @@ from databricks_labs_dqx_app.backend.services.draft_run_gate_service import Draf
 from databricks_labs_dqx_app.backend.services.job_service import JobService, RunStatus
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
+from databricks_labs_dqx_app.backend.services.scheduler_wake import SchedulerWakeMarker
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import (
     RuleCatalogEntry,
     RulesCatalogService,
@@ -67,6 +68,7 @@ from databricks_labs_dqx_app.backend.services.view_service import (
 )
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.settings import SettingsManager
+from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.setup.resources import ActiveResources, LakebaseConnection, VolumeLocation
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -115,6 +117,8 @@ def _activate_test_runtime_resources() -> Generator[None, None, None]:
         job_id="1",
         tmp_schema=conf.tmp_schema_name,
         genie_schema=conf.genie_schema_name,
+        demo_schema="studio_demo",
+        audience=resolve_audience(["data-team"], "admins", allow_broad=False),
     )
     rt.activate(resources)
     try:
@@ -1378,6 +1382,8 @@ class TestJobService:
 # Tests for ViewService
 # ============================================================================
 
+VIEW_CLEANUP_PRINCIPAL = "22222222-2222-4222-8222-222222222222"
+
 
 class TestViewService:
     """Unit tests for ViewService."""
@@ -1396,7 +1402,7 @@ class TestViewService:
     @pytest.fixture
     def svc(self, ws: WorkspaceClient) -> ViewService:
         sql = SqlExecutor(ws=ws, warehouse_id="wh-1", catalog="cat", schema="sch")
-        return ViewService(sql=sql)
+        return ViewService(sql=sql, cleanup_principal=VIEW_CLEANUP_PRINCIPAL)
 
     def test_create_view_returns_fqn(self, svc: ViewService, ws: WorkspaceClient) -> None:
         """create_view should return a fully qualified view name."""
@@ -1407,14 +1413,19 @@ class TestViewService:
         assert result.startswith("cat.sch.tmp_view_")
 
     def test_create_view_executes_correct_sql(self, svc: ViewService, ws: WorkspaceClient) -> None:
-        """create_view should issue CREATE OR REPLACE VIEW referencing the source table."""
+        """Create the source view with only the app cleanup MANAGE grant."""
         ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
 
-        svc.create_view("cat.sch.src_table")
+        view = svc.create_view("cat.sch.src_table")
 
         calls = ws.statement_execution.execute_statement.call_args_list  # type: ignore[attr-defined]
         sql_stmts = [c.kwargs["statement"] for c in calls]
         assert any("CREATE OR REPLACE VIEW" in s and "`cat`.`sch`.`src_table`" in s for s in sql_stmts)
+        quoted_view = ".".join(f"`{part}`" for part in view.split("."))
+        assert [statement for statement in sql_stmts if statement.startswith("GRANT")] == [
+            f"GRANT MANAGE ON VIEW {quoted_view} TO `{VIEW_CLEANUP_PRINCIPAL}`",
+        ]
+        assert not any("OWNER" in statement or "account users" in statement for statement in sql_stmts)
 
     def test_create_view_adds_limit_clause_for_a_row_sample(self, svc: ViewService, ws: WorkspaceClient) -> None:
         """A records sample should cap the view with LIMIT.
@@ -1519,17 +1530,22 @@ class TestViewService:
         assert result.startswith("cat.sch.tmp_view_")
 
     def test_create_view_from_sql_embeds_query_in_ddl(self, svc: ViewService, ws: WorkspaceClient) -> None:
-        """create_view_from_sql should embed the user query in CREATE OR REPLACE VIEW ... AS."""
+        """Embed the query and grant only app cleanup MANAGE."""
         ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
         query = "SELECT id FROM cat.sch.src_table"
 
-        svc.create_view_from_sql(query)
+        view = svc.create_view_from_sql(query)
 
         calls = ws.statement_execution.execute_statement.call_args_list  # type: ignore[attr-defined]
         sql_stmts = [c.kwargs["statement"] for c in calls]
         create_stmts = [s for s in sql_stmts if "CREATE OR REPLACE VIEW" in s]
         assert len(create_stmts) == 1
         assert query in create_stmts[0]
+        quoted_view = ".".join(f"`{part}`" for part in view.split("."))
+        assert [statement for statement in sql_stmts if statement.startswith("GRANT")] == [
+            f"GRANT MANAGE ON VIEW {quoted_view} TO `{VIEW_CLEANUP_PRINCIPAL}`",
+        ]
+        assert not any("OWNER" in statement or "account users" in statement for statement in sql_stmts)
 
     # ---------- create_view_from_sql: is_sql_query_safe gate ----------
 
@@ -2019,6 +2035,11 @@ class TestDryRunRoutes:
         sql.fqn.return_value = "cat.sch.dq_validation_runs"
         return sql
 
+    @pytest.fixture
+    def mock_wake(self) -> MagicMock:
+        wake = create_autospec(SchedulerWakeMarker, instance=True)
+        return wake
+
     def test_submit_dry_run_success(
         self,
         mock_job_svc: JobService,
@@ -2026,6 +2047,7 @@ class TestDryRunRoutes:
         mock_obo_ws: WorkspaceClient,
         mock_settings_svc: AppSettingsService,
         mock_sql: SqlExecutor,
+        mock_wake: MagicMock,
     ) -> None:
         """submit_dry_run should validate checks, create view, submit job and return run ids."""
         validation = ChecksValidationStatus()
@@ -2041,12 +2063,14 @@ class TestDryRunRoutes:
             validate_checks_fn=lambda checks: validation,
             settings_svc=mock_settings_svc,
             sql=mock_sql,
+            wake=mock_wake,
         )
 
         assert isinstance(result, DryRunSubmitOut)
         assert result.job_run_id == 88888
         assert len(result.run_id) > 0
         mock_view_svc.create_view.assert_called_once_with("cat.sch.tbl")  # type: ignore[attr-defined]
+        mock_wake.signal.assert_called_once_with()
 
     def test_submit_dry_run_raises_400_on_invalid_checks(
         self,
@@ -2055,6 +2079,7 @@ class TestDryRunRoutes:
         mock_obo_ws: WorkspaceClient,
         mock_settings_svc: AppSettingsService,
         mock_sql: SqlExecutor,
+        mock_wake: MagicMock,
     ) -> None:
         """submit_dry_run should raise HTTP 400 when check validation reports errors."""
         validation = ChecksValidationStatus(errors=["Unknown function: bad_func"])
@@ -2069,6 +2094,7 @@ class TestDryRunRoutes:
                 validate_checks_fn=lambda checks: validation,
                 settings_svc=mock_settings_svc,
                 sql=mock_sql,
+                wake=mock_wake,
             )
 
         assert exc.value.status_code == 400
@@ -2080,6 +2106,7 @@ class TestDryRunRoutes:
         mock_obo_ws: WorkspaceClient,
         mock_settings_svc: AppSettingsService,
         mock_sql: SqlExecutor,
+        mock_wake: MagicMock,
     ) -> None:
         """submit_dry_run should raise HTTP 500 when view creation fails."""
         validation = ChecksValidationStatus()
@@ -2095,6 +2122,7 @@ class TestDryRunRoutes:
                 validate_checks_fn=lambda checks: validation,
                 settings_svc=mock_settings_svc,
                 sql=mock_sql,
+                wake=mock_wake,
             )
 
         assert exc.value.status_code == 500

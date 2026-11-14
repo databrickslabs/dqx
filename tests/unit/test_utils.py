@@ -12,6 +12,7 @@ from pyspark.sql.types import IntegerType, StringType, StructField, StructType
 
 from databricks.labs.dqx.io import read_input_data, get_reference_dataframes
 from databricks.labs.dqx.utils import (
+    escape_sql_string_literal,
     get_column_name_or_alias,
     is_sql_query_safe,
     to_utc,
@@ -26,8 +27,11 @@ from databricks.labs.dqx.utils import (
     get_file_extension,
     resolve_variables,
     quote_column_name,
+    is_spark_column,
     unquote_column_name,
     normalize_column_expr,
+    get_template_placeholders,
+    replace_template,
 )
 from databricks.labs.dqx.rule import normalize_bound_args
 from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError, UnsafeSqlQueryError
@@ -950,6 +954,22 @@ def test_quote_column_name():
 
 
 @pytest.mark.parametrize(
+    "value, expected",
+    [
+        # F.col / F.lit return the classic Column or the Spark Connect variant depending on the runtime;
+        # both must be recognised (this is the divergence that failed CI on Python 3.10 for #1510).
+        (F.col("x"), True),
+        (F.lit(1), True),
+        ("x", False),
+        (5, False),
+        (None, False),
+    ],
+)
+def test_is_spark_column(value, expected):
+    assert is_spark_column(value) is expected
+
+
+@pytest.mark.parametrize(
     "name, expected",
     [
         # Back-quoted identifiers are unwrapped
@@ -1015,3 +1035,19 @@ def test_unquote_reverses_quote_column_name(name: str):
 )
 def test_normalize_column_expr(column: str, expected: str):
     assert normalize_column_expr(column) == expected
+
+
+def test_escape_sql_string_literal_escapes_quote_and_backslash():
+    """Single quote -> \\' and backslash -> \\\\. Spark runs with escapedStringLiterals=false, where a
+    doubled '' pair is dropped rather than unescaped (o'brien -> obrien), so the backslash form is required."""
+    assert escape_sql_string_literal("o'brien") == "o\\'brien"
+    assert escape_sql_string_literal("a\\b") == "a\\\\b"
+    assert escape_sql_string_literal("x'\\y") == "x\\'\\\\y"
+
+
+def test_get_template_placeholders_tolerates_whitespace():
+    assert get_template_placeholders("SELECT * FROM {{ input_view }} JOIN {{ref}} ON 1=1") == {"input_view", "ref"}
+
+
+def test_replace_template_substitutes_in_a_single_pass():
+    assert replace_template("{{ a }} {{b}}", {"a": "{{ b }}", "b": "x"}) == "{{ b }} x"

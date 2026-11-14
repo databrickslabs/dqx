@@ -14,7 +14,7 @@ from databricks_labs_dqx_app.backend.services.rule_test_service import RuleTestS
 def ai_gateway():
     gw = create_autospec(AIGateway, instance=True)
     gw.is_enabled.return_value = True
-    gw.endpoint_name.return_value = "databricks-gpt-5-5"
+    gw.endpoint_name.return_value = "system.ai.gpt-5-5"
     return gw
 
 

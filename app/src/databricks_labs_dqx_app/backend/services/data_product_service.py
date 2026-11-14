@@ -69,7 +69,11 @@ from databricks_labs_dqx_app.backend.services.permissions_service import Permiss
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
 from databricks_labs_dqx_app.backend.services.run_sets import RunSetService
 from databricks_labs_dqx_app.backend.services.score_cache_service import CachedScore, parse_cached_score
-from databricks_labs_dqx_app.backend.services.owner_display_name_service import resolve_owner_display_name
+from databricks_labs_dqx_app.backend.services.owner_display_name_service import (
+    canonicalize_owner,
+    fill_missing_owner_display_names,
+    fill_owner_display_names_from_cache,
+)
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, escape_sql_string_strict
 
@@ -83,6 +87,10 @@ _UPDATABLE_FIELDS = (
     "schedule_cron",
     "schedule_tz",
 )
+
+# Operational fields: an update touching only these leaves the review status
+# alone, mirroring ``MonitoredTableService.update_schedule``.
+_SCHEDULE_FIELDS = frozenset({"schedule_cron", "schedule_tz", "schedule_kind", "schedule_sample_size"})
 
 
 class DuplicateDataProductNameError(ValueError):
@@ -254,6 +262,7 @@ class DataProductService:
         scored = self._fetch_products_with_scores()
         if not scored:
             return []
+        fill_owner_display_names_from_cache([p for p, _ in scored], self._sp_ws, self._sql, self._products_table)
         table_map = self._table_summary_map()
         product_ids = [product.product_id for product, _ in scored]
         members_by_product = self._fetch_members_by_product(product_ids)
@@ -278,6 +287,7 @@ class DataProductService:
         if scored is None:
             return None
         product, cached = scored
+        fill_missing_owner_display_names([product], self._sp_ws, self._sql, self._products_table)
         member_rows = self._fetch_members(product_id)
         table_map = self._table_summary_map()
         pinned_counts = self._pinned_snapshot_counts(member_rows)
@@ -317,7 +327,8 @@ class DataProductService:
         # (best-effort; group/unresolvable → NULL). An explicit name wins.
         resolved_owner = owner or created_by
         if owner_display_name is None:
-            owner_display_name = resolve_owner_display_name(resolved_owner, self._sp_ws)
+            canonical, owner_display_name = canonicalize_owner(resolved_owner, self._sp_ws)
+            resolved_owner = canonical or resolved_owner
         product = DataProduct(
             product_id=uuid4().hex,
             name=name,
@@ -360,9 +371,12 @@ class DataProductService:
         *updates* should only contain keys the caller explicitly supplied
         (e.g. via ``UpdateDataProductIn.model_dump(exclude_unset=True)``) so
         an omitted field is left untouched while an explicit ``None`` (e.g.
-        clearing a schedule) is honored. ANY call flips the space back to
-        ``draft`` without touching ``version`` (P21 item 30) — even a
-        no-op save, matching the "editing = modified" semantics.
+        clearing a schedule) is honored. Any call that edits the definition
+        flips the space back to ``draft`` without touching ``version`` (P21
+        item 30) — even a no-op save, matching the "editing = modified"
+        semantics. A schedule-only update (every key in :data:`_SCHEDULE_FIELDS`)
+        is operational, not a definition change, so it keeps the current status
+        — the same contract as a monitored table's schedule.
 
         Raises:
             LookupError: *product_id* does not exist.
@@ -383,16 +397,21 @@ class DataProductService:
         # Owner changed without an explicit display name → resolve it at write
         # time (best-effort). A caller-supplied name (picker path) always wins.
         if "owner" in updates and "owner_display_name" not in updates:
+            canonical, display_name = canonicalize_owner(updates.get("owner"), self._sp_ws)
             updates = {
                 **updates,
-                "owner_display_name": resolve_owner_display_name(updates.get("owner"), self._sp_ws),
+                "owner": canonical or updates.get("owner"),
+                "owner_display_name": display_name,
             }
 
+        schedule_only = bool(updates) and set(updates) <= _SCHEDULE_FIELDS
+        status = product.status if schedule_only else "draft"
         update_cols: dict[str, Any] = {
-            "status": "draft",
             "updated_by": updated_by,
             "updated_at": RawSql("now()"),
         }
+        if not schedule_only:
+            update_cols["status"] = "draft"
         for col in _UPDATABLE_FIELDS:
             if col in updates:
                 update_cols[col] = updates[col]
@@ -423,7 +442,7 @@ class DataProductService:
         if apply_sample:
             applied["schedule_sample_size"] = sample_size
         return product.model_copy(
-            update={**applied, "status": "draft", "updated_by": updated_by, "updated_at": datetime.now(timezone.utc)}
+            update={**applied, "status": status, "updated_by": updated_by, "updated_at": datetime.now(timezone.utc)}
         )
 
     def delete(self, product_id: str) -> None:

@@ -10,15 +10,22 @@ from pathlib import Path
 
 import pytest
 import yaml
+from packaging.markers import Marker
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
 
+from scripts import build_app as build_app_module
 from scripts import build_marketplace as marketplace_builder
-from scripts.build_app import build_task_runner_wheel
+from scripts.build_app import EXTRA_PACKAGE_INDEX_ENV_VARS, build_task_runner_wheel
 
 build = marketplace_builder.build
 
 APP_DIR = Path(__file__).resolve().parent.parent
 MANIFEST = APP_DIR / "marketplace_templates" / "manifest.yaml"
 APP_YAML = APP_DIR / "marketplace_templates" / "app.yaml"
+TEMPLATE_LOCK = APP_DIR / "marketplace_templates" / "uv.lock"
+DQX_PACKAGE = "databricks-labs-dqx"
 DQX_VERSION = marketplace_builder.dqx_release_version()
 
 EXPECTED_SCOPES = [
@@ -36,8 +43,12 @@ EXPECTED_SCOPES = [
     "vectorsearch.vector-search-endpoints",
     "vectorsearch.vector-search-indexes",
     "serving.serving-endpoints",
+    "ai-gateway",
+    "ai-functions",
+    "workspace.workspace",
+    "mcp.functions",
     "files.files",
-    "dashboards.genie",
+    "genie",
     "catalog.catalogs:read",
     "catalog.schemas:read",
     "catalog.tables:read",
@@ -108,6 +119,17 @@ def test_main_ignores_generated_marketplace_artifact() -> None:
     assert completed.returncode == 0
 
 
+def test_dab_and_marketplace_ship_the_same_pyproject_and_lock(
+    marketplace_artifact: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both deploy paths must install the same published DQX and dependency versions."""
+    monkeypatch.setattr(build_app_module, "BUILD_DIR", tmp_path)
+    build_app_module.assemble_deploy_tree(DQX_VERSION)
+
+    for name in ("pyproject.toml", "uv.lock"):
+        assert (tmp_path / name).read_bytes() == (marketplace_artifact / name).read_bytes(), name
+
+
 def test_marketplace_lock_uses_only_public_package_registries(marketplace_artifact: Path) -> None:
     lock_text = (marketplace_artifact / "uv.lock").read_text(encoding="utf-8")
     lock = tomllib.loads(lock_text)
@@ -120,27 +142,30 @@ def test_marketplace_lock_uses_only_public_package_registries(marketplace_artifa
     assert registry_sources == {"https://pypi.org/simple"}
 
 
-def test_marketplace_template_lock_matches_app_runtime_closure() -> None:
-    """Guard the committed Marketplace lock against silently drifting from the app deps.
+def test_marketplace_template_lock_pins_the_release_dqx_version() -> None:
+    """The release pins *dqx_version* from the bundle; the copied lock must resolve that same DQX.
 
-    The Marketplace lock is a tracked template (``marketplace_templates/uv.lock``), not
-    regenerated at build time, so an app dependency change that isn't mirrored there would
-    ship a stale runtime graph. Its package set must equal the *runtime closure* of
-    ``app/uv.lock`` — the app lock minus its development-only packages. If this fails,
-    refresh the Marketplace lock (see DEPLOYMENT.md).
+    *dqx_version* is bumped by hand in a Studio release (make fmt does not change it), together
+    with the template lock. A lagging lock makes the app and task runner install different DQX
+    versions, so refresh the lock (see DEPLOYMENT.md) whenever the bundle's *dqx_version* moves.
     """
-    app_lock = tomllib.loads((APP_DIR / "uv.lock").read_text(encoding="utf-8"))
-    template_names = {
-        package["name"]
-        for package in tomllib.loads((APP_DIR / "marketplace_templates" / "uv.lock").read_text(encoding="utf-8"))[
-            "package"
-        ]
-    }
-    pkgs = {package["name"]: package for package in app_lock["package"]}
+    marketplace_builder.require_lock_resolves_dqx(TEMPLATE_LOCK.read_text(encoding="utf-8"), DQX_VERSION)
 
-    # Fixpoint walk of the app package's runtime dependencies (activating their extras) and
-    # each reached package's dependencies + optional-dependencies. dev-dependencies groups are
-    # never followed, so development-only packages fall out of the closure.
+
+def test_marketplace_build_rejects_a_lock_for_another_dqx_version(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="DQX version"):
+        build(output_dir=tmp_path / "artifact", dqx_version="0.15.0")
+    assert not (tmp_path / "artifact").exists()
+
+
+def _runtime_closure(lock_path: Path, *, through_dqx: bool) -> set[str]:
+    """Names the app package reaches at runtime in *lock_path*, activating extras.
+
+    Follows each reached package's dependencies and the optional dependencies of its active
+    extras; dev-dependency groups are never followed, so development-only packages fall out.
+    With *through_dqx* off, DQX itself is reached but its own dependencies are not followed.
+    """
+    packages = {package["name"]: package for package in tomllib.loads(lock_path.read_text(encoding="utf-8"))["package"]}
     reached: set[str] = {"databricks-labs-dqx-app"}
     active_extras: dict[str, set[str]] = {}
     pending: list[str] = []
@@ -153,22 +178,111 @@ def test_marketplace_template_lock_matches_app_runtime_closure() -> None:
         reached.add(name)
         active_extras.setdefault(name, set()).update(extras)
 
-    for dependency in pkgs["databricks-labs-dqx-app"].get("dependencies", []):
+    for dependency in packages["databricks-labs-dqx-app"].get("dependencies", []):
         visit(dependency)
     while pending:
-        package = pkgs.get(pending.pop())
-        if package is None:
+        name = pending.pop()
+        package = packages.get(name)
+        if package is None or (name == DQX_PACKAGE and not through_dqx):
             continue
         for dependency in package.get("dependencies", []):
             visit(dependency)
-        for extra in active_extras.get(package["name"], set()):
+        for extra in active_extras.get(name, set()):
             for dependency in package.get("optional-dependencies", {}).get(extra, []):
                 visit(dependency)
+    return reached
 
-    assert template_names == reached, (
+
+def test_marketplace_template_lock_matches_the_app_dependencies() -> None:
+    """Guard the committed Marketplace lock against silently drifting from the app's own deps.
+
+    The Marketplace lock is a tracked template, not regenerated at build time, so an app
+    dependency change that isn't mirrored there would ship a stale runtime graph. What the
+    app's own dependencies reach must match ``app/uv.lock``. DQX's own dependencies are left
+    out: ``app/uv.lock`` resolves DQX from this checkout, while the template resolves the
+    published *dqx_version*, so they legitimately differ until Studio moves to a newer DQX.
+    If this fails, refresh the Marketplace lock (see DEPLOYMENT.md).
+    """
+    expected = _runtime_closure(APP_DIR / "uv.lock", through_dqx=False)
+    actual = _runtime_closure(TEMPLATE_LOCK, through_dqx=False)
+
+    assert actual == expected, (
         "marketplace_templates/uv.lock is stale vs app/uv.lock — regenerate it (see DEPLOYMENT.md). "
-        f"missing={sorted(reached - template_names)} unexpected={sorted(template_names - reached)}"
+        f"missing={sorted(expected - actual)} unexpected={sorted(actual - expected)}"
     )
+
+
+def _app_package(lock_path: Path) -> dict:
+    lock = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+    return next(package for package in lock["package"] if package["name"] == "databricks-labs-dqx-app")
+
+
+def test_marketplace_template_lock_matches_the_app_dependency_specifiers() -> None:
+    """The template must lock the app's own requirements and their versions, as app/uv.lock does.
+
+    The deploy installs the template with *uv run --frozen*, which never checks it against the
+    pyproject, so a changed or bumped app dependency must fail here rather than ship stale.
+    DQX is pinned to *dqx_version* in the template and resolved from the checkout in app/uv.lock,
+    so it is left out.
+    """
+    app_lock, template = _app_package(APP_DIR / "uv.lock"), _app_package(TEMPLATE_LOCK)
+
+    def requirements(package: dict) -> list[dict]:
+        return sorted(
+            (entry for entry in package["metadata"]["requires-dist"] if entry["name"] != DQX_PACKAGE),
+            key=lambda entry: entry["name"],
+        )
+
+    assert requirements(template) == requirements(app_lock)
+
+    def direct_versions(lock_path: Path, package: dict) -> dict[str, str]:
+        versions = {
+            p["name"]: p.get("version") for p in tomllib.loads(lock_path.read_text(encoding="utf-8"))["package"]
+        }
+        return {d["name"]: versions[d["name"]] for d in package["dependencies"] if d["name"] != DQX_PACKAGE}
+
+    assert direct_versions(TEMPLATE_LOCK, template) == direct_versions(APP_DIR / "uv.lock", app_lock)
+
+
+def test_app_locks_match_the_app_pyproject_dependencies() -> None:
+    """Both locks must still match *app/pyproject.toml*; *uv run --frozen* never checks this itself.
+
+    The tests above only compare the two locks, so a dependency bumped in the pyproject without
+    re-locking would leave both stale and still pass. Each lock pins DQX itself, so only DQX's
+    version specifier is skipped; its name, extras and markers are still compared.
+    """
+
+    def normalized(name: str, extras: list[str], specifier: str, marker: str) -> tuple:
+        name = canonicalize_name(name)
+        return (
+            name,
+            frozenset(canonicalize_name(extra) for extra in extras),
+            None if name == DQX_PACKAGE else SpecifierSet(specifier),
+            Marker(marker) if marker else None,
+        )
+
+    pyproject = tomllib.loads((APP_DIR / "pyproject.toml").read_text(encoding="utf-8"))
+    declared = {
+        normalized(req.name, list(req.extras), str(req.specifier), str(req.marker or ""))
+        for req in map(Requirement, pyproject["project"]["dependencies"])
+    }
+
+    for lock_path in (APP_DIR / "uv.lock", TEMPLATE_LOCK):
+        locked = {
+            normalized(entry["name"], entry.get("extras", []), entry.get("specifier", ""), entry.get("marker", ""))
+            for entry in _app_package(lock_path)["metadata"]["requires-dist"]
+        }
+        assert (
+            locked == declared
+        ), f"{lock_path.relative_to(APP_DIR)} is stale vs app/pyproject.toml (see DEPLOYMENT.md)"
+
+
+def test_marketplace_template_lock_holds_exactly_its_runtime_closure() -> None:
+    """The template, published DQX included, must be complete and carry nothing unreachable."""
+    names = {package["name"] for package in tomllib.loads(TEMPLATE_LOCK.read_text(encoding="utf-8"))["package"]}
+    reached = _runtime_closure(TEMPLATE_LOCK, through_dqx=True)
+
+    assert names == reached, f"missing={sorted(reached - names)} unreachable={sorted(names - reached)}"
 
 
 def test_manifest_has_exact_resource_contract() -> None:
@@ -176,35 +290,25 @@ def test_manifest_has_exact_resource_contract() -> None:
     assert manifest["version"] == 1
     assert manifest["user_api_scopes"] == EXPECTED_SCOPES
     assert manifest["resource_specs"] == [
-        {"name": "dqx-sql-warehouse", "sql_warehouse_spec": {"permission": "CAN_USE"}},
+        {"name": "dqx-sql-warehouse", "sql_warehouse_spec": {"permission": "CAN_MANAGE"}},
         {"name": "dqx-lakebase", "postgres_spec": {"permission": "CAN_CONNECT_AND_CREATE"}},
-        {
-            "name": "dqx-wheels-volume",
-            "uc_securable_spec": {"securable_type": "VOLUME", "permission": "WRITE_VOLUME"},
-        },
     ]
 
 
 def test_app_yaml_has_single_worker_and_resource_bindings() -> None:
-    app_config = yaml.safe_load(APP_YAML.read_text(encoding="utf-8"))
-    assert app_config["command"] == [
-        "uv",
-        "run",
-        "--no-dev",
-        "uvicorn",
-        "databricks_labs_dqx_app.backend.app:app",
-        "--workers",
-        "1",
-    ]
-    env = {entry["name"]: {key: value for key, value in entry.items() if key != "name"} for entry in app_config["env"]}
+    app_yaml = yaml.safe_load(APP_YAML.read_text(encoding="utf-8"))
+    env = {item["name"]: item for item in app_yaml["env"]}
+
     assert env == {
-        "DATABRICKS_WAREHOUSE_ID": {"valueFrom": "dqx-sql-warehouse"},
-        "DQX_WHEELS_VOLUME": {"valueFrom": "dqx-wheels-volume"},
-        "DQX_TMP_SCHEMA": {"value": "dqx_studio_tmp"},
-        "DQX_GENIE_SCHEMA": {"value": "genie"},
-        "DQX_LAKEBASE_SCHEMA": {"value": "dqx_studio"},
-        "DQX_ADMIN_GROUP": {"value": "admins"},
+        "DATABRICKS_WAREHOUSE_ID": {"name": "DATABRICKS_WAREHOUSE_ID", "valueFrom": "dqx-sql-warehouse"},
+        "DQX_LAKEBASE_SCHEMA": {"name": "DQX_LAKEBASE_SCHEMA", "value": "dqx_studio"},
+        "DQX_ADMIN_GROUP": {"name": "DQX_ADMIN_GROUP", "value": "admins"},
     }
+    assert len(app_yaml["env"]) == len(env)
+    assert not {"DQX_WHEELS_VOLUME", "DQX_CATALOG", "DQX_PREFIX", "DQX_USER_GROUPS"} & env.keys()
+    assert app_yaml["command"][-2:] == ["--workers", "1"]
+    # Install exactly the committed lock; never re-resolve at container start.
+    assert app_yaml["command"][:3] == ["uv", "run", "--frozen"]
 
 
 def test_marketplace_build_is_repeatable_and_removes_stale_files(marketplace_artifact: Path) -> None:
@@ -231,22 +335,22 @@ def test_marketplace_build_ignores_parent_uv_configuration(
     monkeypatch.setattr(marketplace_builder, "APP_DIR", app_dir)
     monkeypatch.setattr(marketplace_builder, "MARKETPLACE_DIR", output_dir)
 
-    build(output_dir=output_dir, dqx_version="0.15.0")
+    build(output_dir=output_dir, dqx_version=DQX_VERSION)
 
     lock = tomllib.loads((output_dir / "uv.lock").read_text(encoding="utf-8"))
     assert "options" not in lock
 
 
-def test_task_runner_build_uses_configured_primary_package_index(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _fake_uv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, exit_code: int = 0) -> Path:
+    """Put a fake *uv* on PATH that records its environment and fakes the wheel build."""
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    captured_index = tmp_path / "captured-index"
+    captured = tmp_path / "captured-env"
     fake_uv = fake_bin / "uv"
     fake_uv.write_text(
-        """#!/bin/sh
-printf '%s' "$UV_INDEX_URL" > "$CAPTURED_INDEX_FILE"
+        f"""#!/bin/sh
+env > "$CAPTURED_ENV_FILE"
+if [ {exit_code} -ne 0 ]; then echo "error: no index reachable"; exit {exit_code}; fi
 while [ "$1" != "--out-dir" ]; do shift; done
 mkdir -p "$2"
 touch "$2/databricks_labs_dqx_task_runner-0.1.0-py3-none-any.whl"
@@ -255,12 +359,62 @@ touch "$2/databricks_labs_dqx_task_runner-0.1.0-py3-none-any.whl"
     )
     fake_uv.chmod(0o755)
     monkeypatch.setenv("PATH", f"{fake_bin}:{os.environ['PATH']}")
-    monkeypatch.setenv("CAPTURED_INDEX_FILE", str(captured_index))
-    monkeypatch.setenv("UV_INDEX_URL", "https://mirror.example/simple")
+    monkeypatch.setenv("CAPTURED_ENV_FILE", str(captured))
+    return captured
+
+
+PRIMARY_INDEX_ENV_VARS = ("UV_DEFAULT_INDEX", "UV_INDEX_URL")
+MIRROR = "https://mirror.example/simple"
+
+
+@pytest.mark.parametrize("name", EXTRA_PACKAGE_INDEX_ENV_VARS + PRIMARY_INDEX_ENV_VARS)
+def test_deploy_task_runner_build_keeps_every_package_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """DAB deploys run this build every time, so any configured mirror must reach uv."""
+    captured = _fake_uv(tmp_path, monkeypatch)
+    monkeypatch.setenv(name, MIRROR)
 
     build_task_runner_wheel(tmp_path / "wheel", "0.16.0")
 
-    assert captured_index.read_text(encoding="utf-8") == "https://mirror.example/simple"
+    assert f"{name}={MIRROR}" in captured.read_text(encoding="utf-8").splitlines()
+
+
+@pytest.mark.parametrize("name", EXTRA_PACKAGE_INDEX_ENV_VARS)
+def test_marketplace_task_runner_build_drops_the_extra_package_indexes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """Marketplace builds must not pull from a deployer's extra package index."""
+    captured = _fake_uv(tmp_path, monkeypatch)
+    monkeypatch.setenv(name, MIRROR)
+
+    build_task_runner_wheel(tmp_path / "wheel", "0.16.0", isolate_indexes=True)
+
+    assert not any(line.startswith(f"{name}=") for line in captured.read_text(encoding="utf-8").splitlines())
+
+
+@pytest.mark.parametrize("name", PRIMARY_INDEX_ENV_VARS)
+def test_marketplace_task_runner_build_keeps_the_primary_package_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """*release_marketplace.sh* sets *UV_DEFAULT_INDEX* so this build can reach a proxy when PyPI is blocked."""
+    captured = _fake_uv(tmp_path, monkeypatch)
+    monkeypatch.setenv(name, MIRROR)
+
+    build_task_runner_wheel(tmp_path / "wheel", "0.16.0", isolate_indexes=True)
+
+    assert f"{name}={MIRROR}" in captured.read_text(encoding="utf-8").splitlines()
+
+
+def test_task_runner_build_failure_shows_the_uv_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _fake_uv(tmp_path, monkeypatch, exit_code=2)
+
+    with pytest.raises(RuntimeError, match="Task-runner wheel build failed"):
+        build_task_runner_wheel(tmp_path / "wheel", "0.16.0")
+
+    assert "error: no index reachable" in capsys.readouterr().err
 
 
 def test_marketplace_check_accepts_generated_artifact(

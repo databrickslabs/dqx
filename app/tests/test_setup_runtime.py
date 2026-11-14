@@ -20,10 +20,10 @@ def test_runtime_starts_checking_and_publishes_immutable_reports() -> None:
 
     report = SetupReport(
         state=SetupState.SETUP_REQUIRED,
-        current_step=SetupStepId.VOLUME,
+        current_step=SetupStepId.STORAGE,
         steps=(
             SetupStep(
-                id=SetupStepId.VOLUME,
+                id=SetupStepId.STORAGE,
                 state=StepState.ACTION_REQUIRED,
                 code="volume_missing",
                 summary="A wheels volume is required.",
@@ -35,7 +35,7 @@ def test_runtime_starts_checking_and_publishes_immutable_reports() -> None:
     runtime.publish(report)
 
     assert runtime.report() is report
-    assert runtime.report().step(SetupStepId.VOLUME).code == "volume_missing"
+    assert runtime.report().step(SetupStepId.STORAGE).code == "volume_missing"
     with pytest.raises(ValidationError):
         report.state = SetupState.READY
 

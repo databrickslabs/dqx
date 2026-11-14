@@ -24,6 +24,12 @@ from typing import Any, cast
 from databricks.sdk import WorkspaceClient
 from pyspark.sql import DataFrame, SparkSession
 
+from dqx_task_runner.evaluated_rows import (
+    EVALUATED_ROWS_METRIC,
+    EvaluatedRowsPlan,
+    prepare_evaluated_rows,
+    with_separate_evaluated_rows,
+)
 from dqx_task_runner.row_scope import TimeWindow, apply_time_window, plan_time_window
 
 logger = logging.getLogger("dqx_task_runner")
@@ -31,7 +37,14 @@ logger = logging.getLogger("dqx_task_runner")
 # Names of the spec-defined built-in metrics produced by ``DQMetricsObserver``.
 # Anything not in this set is treated as a custom metric and persisted as-is.
 _BUILTIN_METRIC_NAMES = frozenset(
-    {"input_row_count", "error_row_count", "warning_row_count", "valid_row_count", "check_metrics"}
+    {
+        "input_row_count",
+        "error_row_count",
+        "warning_row_count",
+        "valid_row_count",
+        "check_metrics",
+        EVALUATED_ROWS_METRIC,
+    }
 )
 
 # Hard ceiling on rows persisted to ``dq_quarantine_records`` for cross-table
@@ -45,8 +58,17 @@ _BUILTIN_METRIC_NAMES = frozenset(
 # real violation count remains accurate in ``dq_metrics.error_row_count``.
 _SQL_QUARANTINE_MAX_ROWS = 100_000
 
-# Inline stub key when the app stages an oversized config on the wheels volume.
+# Inline stub key when the app stages an oversized config in the run config table.
+_MANIFEST_CONFIG_KEY = "__manifest__"
+
+# Delta table in the result schema holding run configs too large to inline.
+_RUN_CONFIGS_TABLE = "dq_run_configs"
+
+# Legacy inline stub key: the app used to stage oversized configs as a JSON
+# file on the wheels volume. Superseded by the manifest table, but still read
+# here so any in-flight job submitted by an older app keeps working.
 _STAGED_CONFIG_KEY = "__staged__"
+
 
 # User-facing observer names written to ``dq_metrics.run_name``. The
 # internal ``run_type`` token (``dryrun`` / ``scheduled`` / ``preview``)
@@ -266,12 +288,72 @@ def _read_staged_config(ws: WorkspaceClient, path: str) -> dict[str, Any]:
     return parsed
 
 
-def _resolve_run_config(ws: WorkspaceClient, config_raw: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+def _run_configs_table(catalog: str, schema: str) -> str:
+    """Return the quoted FQN of the ``dq_run_configs`` table in the result schema."""
+    return _quote_fqn(_validate_fqn(f"{catalog}.{schema}.{_RUN_CONFIGS_TABLE}"))
+
+
+def _read_manifest_config(spark: SparkSession, table: str, run_id: str) -> dict[str, Any]:
+    """Load the staged run config for *run_id* from the ``dq_run_configs`` table."""
+    _validate_run_id(run_id)
+    rows = spark.sql(f"SELECT config FROM {table} WHERE run_id = :run_id", args={"run_id": run_id}).collect()
+    if not rows:
+        raise RuntimeError(f"No manifest run config row for run_id={run_id}")
+    return _parse_manifest_config(rows[0]["config"], run_id)
+
+
+def _parse_manifest_config(value: object, run_id: str) -> dict[str, Any]:
+    """Parse the ``config`` column of a manifest row into a config dictionary."""
+    if not value:
+        raise RuntimeError(f"Manifest run config is empty for {run_id}")
+    if not isinstance(value, str):
+        raise RuntimeError(f"Manifest run config is non-string for {run_id}")
+    parsed = json.loads(value)
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"Manifest run config for {run_id} is not a JSON object")
+    return parsed
+
+
+def _resolve_run_config(
+    spark: SparkSession,
+    ws: WorkspaceClient,
+    config_raw: dict[str, Any],
+    run_configs_table: str,
+    run_id: str,
+) -> tuple[dict[str, Any], tuple[str, str | None] | None]:
+    """Resolve the full run config from an inline manifest stub."""
+    if config_raw.get(_MANIFEST_CONFIG_KEY):
+        config = _read_manifest_config(spark, run_configs_table, run_id)
+        return config, ("table", run_configs_table)
     staged = config_raw.get(_STAGED_CONFIG_KEY)
     if isinstance(staged, str) and staged.strip():
         path = staged.strip()
-        return _read_staged_config(ws, path), path
+        return _read_staged_config(ws, path), ("volume", path)
     return config_raw, None
+
+
+def _cleanup_run_config(
+    spark: SparkSession,
+    ws: WorkspaceClient,
+    cleanup: tuple[str, str | None] | None,
+    run_id: str,
+) -> None:
+    """Best-effort removal of a staged run config once the run finished."""
+    if not cleanup:
+        return
+    kind, location = cleanup
+    if kind == "table" and location:
+        _delete_manifest_config(spark, location, run_id)
+    elif kind == "volume" and location:
+        _delete_staged_config(ws, location)
+
+
+def _delete_manifest_config(spark: SparkSession, table: str, run_id: str) -> None:
+    try:
+        spark.sql(f"DELETE FROM {table} WHERE run_id = :run_id", args={"run_id": run_id})
+        logger.info("Deleted staged run config for %s from %s", run_id, table)
+    except Exception as exc:
+        logger.warning("Could not delete staged run config for %s from %s: %s", run_id, table, exc)
 
 
 def _delete_staged_config(ws: WorkspaceClient, path: str) -> None:
@@ -554,13 +636,6 @@ def _run_dryrun(
 
     fingerprint = _compute_fingerprint(checks)
 
-    observer = DQMetricsObserver(
-        name=_observer_run_name(run_type),
-        custom_metrics=custom_metrics or None,
-        id_overwrite=run_id,
-    )
-    engine = DQEngine(workspace_client=ws, spark=spark, observer=observer)
-
     df = _read_view_with_retry(spark, view_fqn)
     df, window = _apply_sample_scope(
         df,
@@ -570,6 +645,15 @@ def _run_dryrun(
         sample_interval_columns,
         sample_interval_selected_column,
     )
+
+    # Fails the run when a filter can't be counted (no silent fallback to the table row count).
+    evaluated_rows = prepare_evaluated_rows(df, checks)
+    observer = DQMetricsObserver(
+        name=_observer_run_name(run_type),
+        custom_metrics=_with_observed_evaluated_rows(custom_metrics, evaluated_rows) or None,
+        id_overwrite=run_id,
+    )
+    engine = DQEngine(workspace_client=ws, spark=spark, observer=observer)
     # ``apply_checks_by_metadata_and_split`` returns ``(valid, invalid)``
     # when no observer is attached and ``(valid, invalid, observation)``
     # when one is. We always construct the engine with ``observer=...``
@@ -600,6 +684,10 @@ def _run_dryrun(
     warning_rows = int(observed.get("warning_row_count", 0) or 0)
     error_summary = _check_metrics_to_error_summary(observed.get("check_metrics"))
     _warn_if_window_empty(window, total_rows, source_table_fqn)
+    if run_type != "preview":
+        # Runs after the snapshot (its own action can't touch it) and returns a merged copy.
+        # Previews persist no metrics, so they skip the extra aggregate.
+        observed = with_separate_evaluated_rows(df, evaluated_rows, observed)
 
     sample_invalid: list[dict[str, Any]] = []
     if invalid_rows > 0:
@@ -1060,6 +1148,13 @@ def _check_metrics_to_error_summary(check_metrics_json: Any) -> list[dict[str, A
     return rows[:20]
 
 
+def _with_observed_evaluated_rows(custom_metrics: list[str], evaluated_rows: EvaluatedRowsPlan) -> list[str]:
+    """Append the evaluated-rows observer metric, built from the checks so it bypasses ``_validate_custom_metrics``."""
+    if evaluated_rows.observed_metric is None:
+        return custom_metrics
+    return [*custom_metrics, evaluated_rows.observed_metric]
+
+
 def _persist_observed_metrics(
     *,
     spark: SparkSession,
@@ -1196,13 +1291,6 @@ def _run_scheduled(
     from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 
     fingerprint = _compute_fingerprint(checks)
-    observer = DQMetricsObserver(
-        name=_observer_run_name("scheduled"),
-        custom_metrics=custom_metrics or None,
-        id_overwrite=run_id,
-    )
-    engine = DQEngine(workspace_client=ws, spark=spark, observer=observer)
-
     df = _read_view_with_retry(spark, view_fqn)
     df, window = _apply_sample_scope(
         df,
@@ -1212,6 +1300,14 @@ def _run_scheduled(
         sample_interval_columns,
         sample_interval_selected_column,
     )
+    # Fails the run when a filter can't be counted (no silent fallback to the table row count).
+    evaluated_rows = prepare_evaluated_rows(df, checks)
+    observer = DQMetricsObserver(
+        name=_observer_run_name("scheduled"),
+        custom_metrics=_with_observed_evaluated_rows(custom_metrics, evaluated_rows) or None,
+        id_overwrite=run_id,
+    )
+    engine = DQEngine(workspace_client=ws, spark=spark, observer=observer)
     # See narrowing rationale on the dryrun call site — DQX returns the
     # 3-tuple shape iff the engine was constructed with an observer,
     # which we always do here.
@@ -1233,6 +1329,8 @@ def _run_scheduled(
     warning_rows = int(observed.get("warning_row_count", 0) or 0)
     error_summary = _check_metrics_to_error_summary(observed.get("check_metrics"))
     _warn_if_window_empty(window, total_rows, source_table_fqn)
+    # Runs after the snapshot (its own action can't touch it) and returns a merged copy.
+    observed = with_separate_evaluated_rows(df, evaluated_rows, observed)
 
     result_table = f"{result_catalog}.{result_schema}.dq_validation_runs"
     result_row = spark.createDataFrame(
@@ -1413,13 +1511,16 @@ def main() -> None:
     _validate_run_id(args.run_id)
     config_raw = json.loads(args.config_json)
     ws = WorkspaceClient()
-    config, staged_config_path = _resolve_run_config(ws, config_raw)
-    source_table_fqn = config.get("source_table_fqn", "")
-    job_run_id = _parse_job_run_id(args.job_run_id)
-
     spark = SparkSession.builder.getOrCreate()
+    job_run_id = _parse_job_run_id(args.job_run_id)
+    config: dict[str, Any] = {}
+    config_cleanup: tuple[str, str | None] | None = None
+    source_table_fqn = ""
 
     try:
+        run_configs_table = _run_configs_table(args.result_catalog, args.result_schema)
+        config, config_cleanup = _resolve_run_config(spark, ws, config_raw, run_configs_table, args.run_id)
+        source_table_fqn = config.get("source_table_fqn", "")
         if args.task_type == "profile":
             _run_profile(
                 spark,
@@ -1478,8 +1579,7 @@ def main() -> None:
             logger.error("Failed to write error result: %s", write_exc, exc_info=True)
         sys.exit(1)
     finally:
-        if staged_config_path:
-            _delete_staged_config(ws, staged_config_path)
+        _cleanup_run_config(spark, ws, config_cleanup, args.run_id)
         # Best-effort belt-and-suspenders cleanup of the OBO-created temp view.
         #
         # The authoritative cleanup is the app's OBO ``drop_view`` (run as the

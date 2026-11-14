@@ -709,6 +709,24 @@ class TestUpdate:
         assert "`status` = 'draft'" in update_sql
         assert "version =" not in update_sql  # PATCH never bumps version
 
+    def test_schedule_only_update_keeps_approved_status(self, service, sql):
+        sql.query.side_effect = [[_product_row(product_id="p1", status="approved", version="3")]]
+        updated = service.update(
+            "p1",
+            {"schedule_cron": "0 6 * * *", "schedule_tz": "UTC", "schedule_kind": "dq_only"},
+            "bob@x",
+        )
+        assert updated.status == "approved"
+        update_sql = sql.execute.call_args[0][0]
+        assert "`status`" not in update_sql
+        assert "`schedule_cron` = '0 6 * * *'" in update_sql
+
+    def test_mixed_schedule_and_definition_update_still_drafts(self, service, sql):
+        sql.query.side_effect = [[_product_row(product_id="p1", status="approved")]]
+        updated = service.update("p1", {"schedule_cron": "0 6 * * *", "description": "x"}, "bob@x")
+        assert updated.status == "draft"
+        assert "`status` = 'draft'" in sql.execute.call_args[0][0]
+
     def test_update_missing_raises_lookup_error(self, service, sql):
         sql.query.return_value = []
         with pytest.raises(LookupError):

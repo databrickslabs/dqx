@@ -38,13 +38,13 @@ class TestGetAiSettings:
         # AI is ON by default (per explicit product request); the admin
         # kill-switch (an explicit "false") is what turns it off.
         assert result.ai_enabled is True
-        assert result.ai_endpoint_name == "databricks-claude-sonnet-4-5"
-        assert result.ai_endpoint_name_default == "databricks-claude-sonnet-4-5"
+        assert result.ai_endpoint_name == "system.ai.claude-sonnet-4-5"
+        assert result.ai_endpoint_name_default == "system.ai.claude-sonnet-4-5"
         assert result.ai_rate_limit_per_user_per_hour == 30
         assert result.ai_rate_limit_default == 30
         # Auto-derived (Rules Registry Phase 8B) — no separate admin
         # input for this; see ``AppSettingsService.EMBEDDING_ENDPOINT_NAME_DEFAULT``.
-        assert result.embedding_endpoint_name == "databricks-gte-large-en"
+        assert result.embedding_endpoint_name == "system.ai.gte-large-en"
 
 
 def _wire_stateful_store(sql_executor_mock) -> dict[str, str]:
@@ -88,7 +88,8 @@ class TestSaveAiSettings:
             "admin@x",
         )
 
-        assert sql_executor_mock.upsert.call_count == 3
+        # ai_enabled also records that an administrator made the choice (ai_enabled_source).
+        assert sql_executor_mock.upsert.call_count == 4
         assert result.ai_enabled is True
         assert result.ai_endpoint_name == "my-endpoint"
         assert result.ai_rate_limit_per_user_per_hour == 5

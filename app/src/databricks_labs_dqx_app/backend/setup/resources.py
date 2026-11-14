@@ -7,17 +7,13 @@ from pydantic import SecretStr
 
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks_labs_dqx_app.backend.config import AppConfig
-from databricks_labs_dqx_app.backend.sql_utils import validate_fqn, validate_identifier
-
-
-@dataclass(frozen=True)
-class VolumeLocation:
-    """Validated Unity Catalog volume location and its derived identifiers."""
-
-    catalog: str
-    schema: str
-    volume: str
-    path: str
+from databricks_labs_dqx_app.backend.setup.audience import StudioAudience
+from databricks_labs_dqx_app.backend.setup.storage import StudioStorage
+from databricks_labs_dqx_app.backend.sql_utils import validate_identifier
+from databricks_labs_dqx_app.backend.volume import (
+    VolumeLocation as VolumeLocation,
+    parse_volume_path as parse_volume_path,
+)
 
 
 @dataclass(frozen=True)
@@ -34,6 +30,15 @@ class LakebaseConnection:
 
 
 @dataclass(frozen=True)
+class BootstrapResources:
+    """Bindings available before Studio storage is configured."""
+
+    lakebase: LakebaseConnection
+    warehouse_id: str
+    job_id: str | None
+
+
+@dataclass(frozen=True)
 class ActiveResources:
     """Installation resources that passed setup readiness checks."""
 
@@ -43,32 +48,33 @@ class ActiveResources:
     job_id: str | None
     tmp_schema: str
     genie_schema: str
+    demo_schema: str
+    audience: StudioAudience
 
 
-def parse_volume_path(path: str) -> VolumeLocation:
-    """Parse an exact */Volumes/catalog/schema/volume* path.
+def build_active_resources(
+    bootstrap: BootstrapResources, storage: StudioStorage, audience: StudioAudience
+) -> ActiveResources:
+    """Combine bootstrap bindings with resolved storage and audience.
 
     Args:
-        path: Bound Unity Catalog volume path.
+        bootstrap: Lakebase, warehouse and job bindings.
+        storage: Resolved Studio storage layout.
+        audience: Resolved Studio audience.
 
     Returns:
-        The validated location and derived catalog/schema identifiers.
-
-    Raises:
-        InvalidParameterError: If the path shape or an identifier is invalid.
+        Resources ready for activation.
     """
-    parts = path.split("/") if isinstance(path, str) else []
-    if len(parts) != 5 or parts[:2] != ["", "Volumes"] or any(not part for part in parts[2:]):
-        raise InvalidParameterError("The wheels volume must use /Volumes/<catalog>/<schema>/<volume>.")
-
-    catalog, schema, volume = parts[2:]
-    if any(part in {".", ".."} for part in (catalog, schema, volume)):
-        raise InvalidParameterError("The wheels volume contains an invalid identifier.")
-    try:
-        validate_fqn(f"{catalog}.{schema}.{volume}")
-    except ValueError:
-        raise InvalidParameterError("The wheels volume contains an invalid identifier.") from None
-    return VolumeLocation(catalog=catalog, schema=schema, volume=volume, path=path)
+    return ActiveResources(
+        volume=storage.volume_location,
+        lakebase=bootstrap.lakebase,
+        warehouse_id=bootstrap.warehouse_id,
+        job_id=bootstrap.job_id,
+        tmp_schema=storage.tmp_schema,
+        genie_schema=storage.genie_schema,
+        demo_schema=storage.demo_schema,
+        audience=audience,
+    )
 
 
 def resolve_lakebase_connection(

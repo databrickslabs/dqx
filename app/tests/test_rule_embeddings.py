@@ -6,7 +6,6 @@ Covers ``build_rule_embed_text`` (pure function) and ``RuleEmbeddingsService``
 """
 
 import json
-from types import SimpleNamespace
 from unittest.mock import create_autospec
 
 import pytest
@@ -182,12 +181,12 @@ def svc(sql_executor_mock, sp_ws, app_settings):
 
 
 class TestIsConfigured:
-    def test_false_when_endpoint_unset(self, svc, app_settings):
+    def test_false_when_model_unset(self, svc, app_settings):
         app_settings.get_embedding_endpoint_name.return_value = ""
         assert svc.is_configured() is False
 
-    def test_true_when_endpoint_set(self, svc, app_settings):
-        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
+    def test_true_when_model_set(self, svc, app_settings):
+        app_settings.get_embedding_endpoint_name.return_value = "system.ai.my-embedding-model"
         assert svc.is_configured() is True
 
 
@@ -196,74 +195,74 @@ class TestEmbedText:
         app_settings.get_embedding_endpoint_name.return_value = ""
 
         assert svc.embed_text("hello") is None
-        sp_ws.serving_endpoints.query.assert_not_called()
+        sp_ws.api_client.do.assert_not_called()
 
-    def test_calls_serving_endpoint_and_extracts_embedding(self, svc, app_settings, sp_ws):
-        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
-        sp_ws.serving_endpoints.query.return_value = SimpleNamespace(data=[SimpleNamespace(embedding=[0.1, 0.2, 0.3])])
+    def test_calls_the_embeddings_route_and_extracts_embedding(self, svc, app_settings, sp_ws):
+        app_settings.get_embedding_endpoint_name.return_value = "system.ai.my-embedding-model"
+        sp_ws.api_client.do.return_value = {"data": [{"embedding": [0.1, 0.2, 0.3]}]}
 
         result = svc.embed_text("hello")
 
         assert result == [0.1, 0.2, 0.3]
-        _, kwargs = sp_ws.serving_endpoints.query.call_args
-        assert kwargs["name"] == "my-embedding-endpoint"
-        assert kwargs["input"] == ["hello"]
+        _, kwargs = sp_ws.api_client.do.call_args
+        assert kwargs["body"]["model"] == "system.ai.my-embedding-model"
+        assert kwargs["body"]["input"] == ["hello"]
 
 
 class TestEmbedTexts:
     def test_batches_and_aligns_by_index(self, svc, app_settings, sp_ws):
-        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
-        sp_ws.serving_endpoints.query.return_value = SimpleNamespace(
-            data=[
-                SimpleNamespace(index=1, embedding=[0.0, 1.0]),
-                SimpleNamespace(index=0, embedding=[1.0, 0.0]),
+        app_settings.get_embedding_endpoint_name.return_value = "system.ai.my-embedding-model"
+        sp_ws.api_client.do.return_value = {
+            "data": [
+                {"index": 1, "embedding": [0.0, 1.0]},
+                {"index": 0, "embedding": [1.0, 0.0]},
             ]
-        )
+        }
 
         result = svc.embed_texts(["a", "b"])
 
         assert result == [[1.0, 0.0], [0.0, 1.0]]
-        _, kwargs = sp_ws.serving_endpoints.query.call_args
-        assert kwargs["input"] == ["a", "b"]
+        _, kwargs = sp_ws.api_client.do.call_args
+        assert kwargs["body"]["input"] == ["a", "b"]
 
     def test_chunks_wide_batches(self, svc, app_settings, sp_ws):
-        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
+        app_settings.get_embedding_endpoint_name.return_value = "system.ai.my-embedding-model"
 
-        def _respond(*, name, input):  # noqa: A002 — mirrors SDK kwarg
-            return SimpleNamespace(data=[SimpleNamespace(index=i, embedding=[float(i)]) for i in range(len(input))])
+        def _respond(method, path, *, body):
+            return {"data": [{"index": i, "embedding": [float(i)]} for i in range(len(body["input"]))]}
 
-        sp_ws.serving_endpoints.query.side_effect = _respond
+        sp_ws.api_client.do.side_effect = _respond
 
         result = svc.embed_texts(["t0", "t1", "t2"], batch_size=2)
 
         assert result == [[0.0], [1.0], [0.0]]
-        assert sp_ws.serving_endpoints.query.call_count == 2
-        first_input = sp_ws.serving_endpoints.query.call_args_list[0].kwargs["input"]
-        second_input = sp_ws.serving_endpoints.query.call_args_list[1].kwargs["input"]
+        assert sp_ws.api_client.do.call_count == 2
+        first_input = sp_ws.api_client.do.call_args_list[0].kwargs["body"]["input"]
+        second_input = sp_ws.api_client.do.call_args_list[1].kwargs["body"]["input"]
         assert first_input == ["t0", "t1"]
         assert second_input == ["t2"]
 
     def test_query_path_prefers_obo_client(self, sql_executor_mock, app_settings, sp_ws):
-        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
+        app_settings.get_embedding_endpoint_name.return_value = "system.ai.my-embedding-model"
         user_ws = create_autospec(WorkspaceClient, instance=True)
-        user_ws.serving_endpoints.query.return_value = SimpleNamespace(data=[SimpleNamespace(embedding=[9.0])])
+        user_ws.api_client.do.return_value = {"data": [{"embedding": [9.0]}]}
         sql_executor_mock.fqn.side_effect = lambda t: f"dqx_test.dqx_app_test.{t}"
         svc = RuleEmbeddingsService(sql=sql_executor_mock, sp_ws=sp_ws, app_settings=app_settings, user_ws=user_ws)
 
         assert svc.embed_texts(["q"]) == [[9.0]]
-        user_ws.serving_endpoints.query.assert_called_once()
-        sp_ws.serving_endpoints.query.assert_not_called()
+        user_ws.api_client.do.assert_called_once()
+        sp_ws.api_client.do.assert_not_called()
 
     def test_embed_and_store_always_uses_sp_even_when_obo_present(self, sql_executor_mock, app_settings, sp_ws):
-        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
+        app_settings.get_embedding_endpoint_name.return_value = "system.ai.my-embedding-model"
         user_ws = create_autospec(WorkspaceClient, instance=True)
-        sp_ws.serving_endpoints.query.return_value = SimpleNamespace(data=[SimpleNamespace(embedding=[1.0, 2.0])])
+        sp_ws.api_client.do.return_value = {"data": [{"embedding": [1.0, 2.0]}]}
         sql_executor_mock.fqn.side_effect = lambda t: f"dqx_test.dqx_app_test.{t}"
         svc = RuleEmbeddingsService(sql=sql_executor_mock, sp_ws=sp_ws, app_settings=app_settings, user_ws=user_ws)
 
         assert svc.embed_and_store(_rule(rule_id="r42")) is True
-        sp_ws.serving_endpoints.query.assert_called_once()
-        user_ws.serving_endpoints.query.assert_not_called()
+        sp_ws.api_client.do.assert_called_once()
+        user_ws.api_client.do.assert_not_called()
 
 
 class TestEmbedAndStore:
@@ -276,8 +275,8 @@ class TestEmbedAndStore:
         sql_executor_mock.upsert.assert_not_called()
 
     def test_stores_when_configured(self, svc, app_settings, sp_ws, sql_executor_mock):
-        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
-        sp_ws.serving_endpoints.query.return_value = SimpleNamespace(data=[SimpleNamespace(embedding=[1.0, 2.0])])
+        app_settings.get_embedding_endpoint_name.return_value = "system.ai.my-embedding-model"
+        sp_ws.api_client.do.return_value = {"data": [{"embedding": [1.0, 2.0]}]}
 
         stored = svc.embed_and_store(_rule(rule_id="r42", version=3))
 
@@ -288,9 +287,9 @@ class TestEmbedAndStore:
         assert kwargs["value_cols"]["rule_version"] == 3
         assert "[1.0, 2.0]" in kwargs["value_cols"]["embedding"]
 
-    def test_returns_false_and_swallows_endpoint_errors(self, svc, app_settings, sp_ws, sql_executor_mock):
-        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
-        sp_ws.serving_endpoints.query.side_effect = RuntimeError("endpoint unreachable")
+    def test_returns_false_and_swallows_model_errors(self, svc, app_settings, sp_ws, sql_executor_mock):
+        app_settings.get_embedding_endpoint_name.return_value = "system.ai.my-embedding-model"
+        sp_ws.api_client.do.side_effect = RuntimeError("model unreachable")
 
         stored = svc.embed_and_store(_rule())
 
@@ -298,8 +297,8 @@ class TestEmbedAndStore:
         sql_executor_mock.upsert.assert_not_called()
 
     def test_returns_false_when_no_embedding_returned(self, svc, app_settings, sp_ws, sql_executor_mock):
-        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
-        sp_ws.serving_endpoints.query.return_value = SimpleNamespace(data=[])
+        app_settings.get_embedding_endpoint_name.return_value = "system.ai.my-embedding-model"
+        sp_ws.api_client.do.return_value = {"data": []}
 
         stored = svc.embed_and_store(_rule())
 
@@ -309,9 +308,9 @@ class TestEmbedAndStore:
 
 class TestBackfill:
     def test_counts_only_successful_embeds(self, svc, app_settings, sp_ws):
-        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
-        sp_ws.serving_endpoints.query.side_effect = [
-            SimpleNamespace(data=[SimpleNamespace(embedding=[1.0])]),
+        app_settings.get_embedding_endpoint_name.return_value = "system.ai.my-embedding-model"
+        sp_ws.api_client.do.side_effect = [
+            {"data": [{"embedding": [1.0]}]},
             RuntimeError("boom"),
         ]
 
@@ -350,8 +349,8 @@ class TestIterEmbeddings:
         assert sql_executor_mock.query_dicts.call_count == 1
 
     def test_upsert_clears_memoised_corpus(self, svc, app_settings, sp_ws, sql_executor_mock):
-        app_settings.get_embedding_endpoint_name.return_value = "my-embedding-endpoint"
-        sp_ws.serving_endpoints.query.return_value = SimpleNamespace(data=[SimpleNamespace(embedding=[1.0])])
+        app_settings.get_embedding_endpoint_name.return_value = "system.ai.my-embedding-model"
+        sp_ws.api_client.do.return_value = {"data": [{"embedding": [1.0]}]}
         sql_executor_mock.query_dicts.return_value = [
             {"rule_id": "r1", "embedding": json.dumps([0.1])},
         ]

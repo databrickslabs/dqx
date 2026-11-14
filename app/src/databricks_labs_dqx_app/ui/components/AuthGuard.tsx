@@ -4,11 +4,19 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
   currentUser,
+  getBranding,
   getCurrentUserQueryKey,
+  getGetBrandingQueryKey,
+  useGetBranding,
   getGetSetupStatusQueryKey,
   getSetupStatus,
 } from "@/lib/api";
 import { StudioLoadingScreen } from "@/components/StudioLoadingScreen";
+import { BrandingStyle } from "@/components/branding/BrandingStyle";
+import { readBrandingCache } from "@/lib/branding";
+
+/** Longest we hold the loading screen for branding on a cold start (no cache). */
+const BRANDING_MAX_WAIT_MS = 2000;
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -30,6 +38,21 @@ export function AuthGuard({ children }: AuthGuardProps) {
   const [retryCount, setRetryCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
+  // Bounded wait for branding: a valid cache means the pre-React bootstrap has
+  // already themed the page, so no wait. Otherwise hold the loading screen until
+  // the branding fetch settles (success or error) or the cap elapses, so first
+  // paint isn't the default theme followed by a flash to the company theme.
+  const [hasBrandingCache] = useState(() => readBrandingCache() !== null);
+  const [brandingWaitElapsed, setBrandingWaitElapsed] = useState(false);
+  // Subscribe-only: the prefetch below does the fetching.
+  const { status: brandingStatus } = useGetBranding({ query: { enabled: false } });
+  const brandingReady = hasBrandingCache || brandingStatus !== "pending" || brandingWaitElapsed;
+
+  useEffect(() => {
+    const timerId = setTimeout(() => setBrandingWaitElapsed(true), BRANDING_MAX_WAIT_MS);
+    return () => clearTimeout(timerId);
+  }, []);
+
   useEffect(() => {
     tRef.current = t;
   }, [t]);
@@ -43,6 +66,11 @@ export function AuthGuard({ children }: AuthGuardProps) {
       queryKey: getGetSetupStatusQueryKey(),
       queryFn: () => getSetupStatus(),
       retry: 15,
+    });
+    void queryClient.prefetchQuery({
+      queryKey: getGetBrandingQueryKey(),
+      queryFn: () => getBranding(),
+      retry: 2,
     });
   }, [queryClient]);
 
@@ -131,11 +159,16 @@ export function AuthGuard({ children }: AuthGuardProps) {
   }
 
   // Show loading state while waiting for auth
-  if (!isAuthReady) {
+  if (!isAuthReady || !brandingReady) {
     return <StudioLoadingScreen />;
   }
 
   // Auth is ready, render the app
-  return <>{children}</>;
+  return (
+    <>
+      <BrandingStyle />
+      {children}
+    </>
+  );
 }
 

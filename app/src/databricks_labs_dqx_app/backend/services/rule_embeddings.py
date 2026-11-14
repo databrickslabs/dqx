@@ -1,7 +1,7 @@
 """Rule embeddings — Rules Registry Phase 4B.
 
 Builds a normalized text representation of a published registry rule
-(:func:`build_rule_embed_text`) and, when an embedding serving endpoint is
+(:func:`build_rule_embed_text`) and, when an embedding model service is
 configured, embeds + stores it in the ``dq_rule_embeddings`` corpus table
 (:class:`RuleEmbeddingsService`).
 
@@ -26,6 +26,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     get_rule_name,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.model_services import ModelServices
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 
 logger = logging.getLogger(__name__)
@@ -40,9 +41,9 @@ _RESERVED_TAG_KEYS = {"name", "description", "dimension", "severity"}
 # here defensively even though there is no LLM call in this module).
 _MAX_PREDICATE_CHARS = 500
 
-# Foundation-model / serving-endpoint ``input`` arrays have per-request payload
-# and token limits. Chunk so a wide-table retrieval batch never blows the
-# endpoint while still collapsing N round trips into a few.
+# Embedding ``input`` arrays have per-request payload and token limits. Chunk
+# so a wide-table retrieval batch never blows the model's limits while still
+# collapsing N round trips into a few.
 EMBED_BATCH_SIZE = 32
 
 
@@ -151,11 +152,11 @@ class RuleEmbeddingsService:
         self._corpus_cache: list[tuple[str, list[float]]] | None = None
 
     def is_configured(self) -> bool:
-        """Return whether an embedding serving endpoint is configured."""
+        """Return whether an embedding model service is configured."""
         return bool(self._app_settings.get_embedding_endpoint_name())
 
     def embed_text(self, text: str) -> list[float] | None:
-        """Call the configured embedding endpoint for *text* (query-time / OBO).
+        """Call the configured embedding model for *text* (query-time / OBO).
 
         Returns ``None`` (never raises) when unconfigured. Propagates SDK
         errors from an actual call failure — callers that want a
@@ -165,26 +166,26 @@ class RuleEmbeddingsService:
         return self.embed_texts([text])[0]
 
     def embed_texts(self, texts: list[str], *, batch_size: int = EMBED_BATCH_SIZE) -> list[list[float] | None]:
-        """Embed many texts in chunked serving-endpoint calls (query-time).
+        """Embed many texts in chunked model-service calls (query-time).
 
         Uses the caller's OBO ``WorkspaceClient`` when one was injected so
-        retrieval sits on the same identity / endpoint ACL as the AIGateway
-        judge. Falls back to the service principal only when no user client
+        retrieval sits on the same identity / Unity Catalog grants as the
+        AIGateway judge. Falls back to the service principal only when no user client
         is available.
 
-        The Databricks serving-endpoints ``input`` field accepts an array and
-        returns one element per input (with an ``index``). Batching collapses
-        per-column retrieval round trips; *batch_size* keeps each call under
-        FMAPI payload/token limits so a very wide table doesn't fail the
-        whole request.
+        The embeddings ``input`` field accepts an array and returns one
+        element per input (with an ``index``). Batching collapses per-column
+        retrieval round trips; *batch_size* keeps each call under the model's
+        payload/token limits so a very wide table doesn't fail the whole
+        request.
 
         Args:
             texts: Query (or document) texts to embed, in order.
-            batch_size: Max texts per ``serving_endpoints.query`` call.
+            batch_size: Max texts per embeddings call.
 
         Returns:
             A list aligned with *texts*. Each entry is the embedding vector,
-            or ``None`` when the endpoint is unconfigured or that element was
+            or ``None`` when no model is configured or that element was
             missing from the response. Propagates SDK errors from a failed
             call (same contract as :meth:`embed_text`).
         """
@@ -199,23 +200,24 @@ class RuleEmbeddingsService:
     ) -> list[list[float] | None]:
         if not texts:
             return []
-        endpoint = self._app_settings.get_embedding_endpoint_name()
-        if not endpoint:
+        model = self._app_settings.get_embedding_endpoint_name()
+        if not model:
             return [None] * len(texts)
 
+        models = ModelServices(ws)
         out: list[list[float] | None] = [None] * len(texts)
         chunk = max(1, batch_size)
         for start in range(0, len(texts), chunk):
             batch = texts[start : start + chunk]
-            response = ws.serving_endpoints.query(name=endpoint, input=batch)
-            data = getattr(response, "data", None) or []
-            for position, item in enumerate(data):
-                embedding = getattr(item, "embedding", None)
-                if not embedding:
+            response = models.embed(model=model, inputs=batch)
+            data = response.get("data")
+            for position, item in enumerate(data if isinstance(data, list) else []):
+                embedding = item.get("embedding") if isinstance(item, dict) else None
+                if not isinstance(embedding, list) or not embedding:
                     continue
-                # Prefer the endpoint's ``index`` when present; fall back to
-                # response order so older/mock shapes still work.
-                idx = getattr(item, "index", None)
+                # Prefer the response's ``index`` when present; fall back to
+                # response order.
+                idx = item.get("index")
                 offset = idx if isinstance(idx, int) else position
                 abs_idx = start + offset
                 if 0 <= abs_idx < len(out):
@@ -238,13 +240,13 @@ class RuleEmbeddingsService:
             ``True`` iff the OLTP corpus row was written.
         """
         if not self.is_configured():
-            logger.debug("Embedding endpoint not configured; skipping embed for rule %s", rule.rule_id)
+            logger.debug("Embedding model not configured; skipping embed for rule %s", rule.rule_id)
             return False
         try:
             text = build_rule_embed_text(rule)
             embedding = self._embed_texts_with(self._sp_ws, [text])[0]
             if embedding is None:
-                logger.warning("Embedding endpoint returned no vector for rule %s", rule.rule_id)
+                logger.warning("Embedding model returned no vector for rule %s", rule.rule_id)
                 return False
             self._upsert(rule.rule_id, rule.version, text, embedding)
             return True

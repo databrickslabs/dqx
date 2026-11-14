@@ -32,6 +32,7 @@ import { RESULTS_QUERY_OPTIONS } from "@/lib/results-invalidation";
 import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
 import { GenieChatProvider } from "@/components/results/AskGenieButton";
 import { ScoreBox } from "@/components/results/ScoreBox";
+import { countChecksAndRules } from "@/components/results/testCounts";
 import { RunPicker } from "@/components/results/RunPicker";
 import { RunModeSelect, includeDraftsParam } from "@/components/results/RunModeSelect";
 import { RunReviewStatusPanel } from "@/components/RunReviewStatusPanel";
@@ -67,7 +68,7 @@ import { computeSchemaDriftSummary } from "@/components/apply-rules/schemaDrift"
  *  surfaces (product/global/rule — see MultiTableResults); this single-table
  *  tab never toggles it (a table facet is meaningless on a one-table scope),
  *  so its `filters.table` stays empty and the param is never sent. */
-export type Facet = "dimension" | "severity" | "rule" | "column" | "table" | "catalog" | "schema";
+export type Facet = "dimension" | "severity" | "rule" | "column" | "table" | "catalog" | "schema" | "outcome";
 
 /** Help text shown behind the "?" icon on the two count charts. The rule /
  *  check / test terms are bold so the distinction reads at a glance. */
@@ -76,7 +77,7 @@ function CountInfo() {
     <span>
       <Trans
         i18nKey="resultsUi.countInfo"
-        components={{ b: <strong /> }}
+        components={{ b: <strong />, br: <br /> }}
       />
     </span>
   );
@@ -96,6 +97,8 @@ export type MultiFilters = {
   catalog: string[];
   /** Two-part `catalog.schema` identities — see backend `schema_of`. */
   schema: string[];
+  /** "passed" / "failed" check outcome (Global Results only). */
+  outcome: string[];
   runId?: string | null;
 };
 
@@ -107,6 +110,7 @@ export const EMPTY_FILTERS: MultiFilters = {
   table: [],
   catalog: [],
   schema: [],
+  outcome: [],
 };
 
 /** Toggle a value in a facet's multi-select set: add if absent, remove if
@@ -143,6 +147,7 @@ export function facetQueryParams(filters: MultiFilters): {
   table?: string[];
   catalog?: string[];
   schema?: string[];
+  outcome?: string[];
 } {
   return {
     dimension: orUndef(filters.dimension),
@@ -156,6 +161,7 @@ export function facetQueryParams(filters: MultiFilters): {
     // them); every other surface leaves them empty, so they drop out here.
     catalog: orUndef(filters.catalog),
     schema: orUndef(filters.schema),
+    outcome: orUndef(filters.outcome),
   };
 }
 
@@ -370,6 +376,7 @@ const CHIP_LABEL_KEYS: Record<Facet, string> = {
   table: "resultsUi.chipTable",
   catalog: "resultsUi.chipCatalog",
   schema: "resultsUi.chipSchema",
+  outcome: "resultsUi.chipOutcome",
 };
 
 function ResultsBody({
@@ -599,6 +606,23 @@ function ResultsBody({
   const passRate = selectedRun?.pass_rate ?? null;
   const failedTests = selectedRun?.failed_tests ?? 0;
   const totalTests = selectedRun?.total_tests ?? 0;
+  const tableFailedTests = selectedRun?.table_failed_tests ?? null;
+  const tableTotalTests = selectedRun?.table_total_tests ?? null;
+  // Checks / rules for the score subtitle, in the SAME scope as the tests:
+  // the selected run, unfiltered — i.e. the BASE breakdown (run-scoped, no
+  // facets) for effectiveRunId, which is the selected run. Its by_rule rows
+  // are grouped by rule identity, so rules = distinct rules and checks = the
+  // summed check_count (see countChecksAndRules). While the run's breakdown is
+  // still loading (or only placeholder data from the previous run is shown)
+  // the counts are `undefined`, so the score box holds the line back and
+  // renders it once, complete; a failed breakdown query gives `null`, which
+  // falls back to the plain "X / Y tests passed".
+  const scopeCounts =
+    baseTableQuery.isPlaceholderData || baseTableQuery.isPending
+      ? undefined
+      : baseTableQuery.isError
+        ? null
+        : countChecksAndRules(baseTable?.by_rule);
   // Score direction vs the next-older run (runs are newest-first). null when
   // equal or there's no previous run.
   const prevPassRate =
@@ -621,6 +645,8 @@ function ResultsBody({
       rule_count: g.rule_count ?? null,
       check_count: g.check_count ?? null,
       total_tests: g.total_tests ?? null,
+      table_failed_tests: g.table_failed_tests ?? null,
+      table_total_tests: g.table_total_tests ?? null,
       // Carry the per-row breach flag + criticality through so DimensionBreakdown
       // can render the BreachIcon on each breached facet row (by dimension /
       // severity / rule / column). Omitting these — as this mapper previously
@@ -871,7 +897,7 @@ function ResultsBody({
             breachEnabled={thresholdEnabled}
           />
         </div>
-        <div className="sm:pr-2">
+        <div>
           {runsLoading ? (
             <Skeleton className="h-32 w-full" />
           ) : (
@@ -879,6 +905,9 @@ function ResultsBody({
               passRate={passRate}
               failedTests={failedTests}
               totalTests={totalTests}
+              tableFailedTests={tableFailedTests}
+              tableTotalTests={tableTotalTests}
+              scopeCounts={scopeCounts}
               trend={scoreTrend}
               info={COUNT_INFO}
               breachCriticality={thresholdEnabled ? selectedRun?.breach_criticality : null}

@@ -4,7 +4,7 @@ import { ErrorBoundary } from "react-error-boundary";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
-import { AlertCircle, AlertTriangle, BarChart3, CheckCircle2, Clock, Cpu, Database, ExternalLink, FlaskConical, Globe, KeyRound, Loader2, Lock, Scale, Search, SlidersHorizontal, Tags, Plus, Trash2, Users, X, ShieldCheck, Sparkles } from "lucide-react";
+import { AlertCircle, AlertTriangle, BarChart3, CheckCircle2, Clock, Cpu, Database, ExternalLink, FlaskConical, Globe, KeyRound, Loader2, Lock, Palette, Scale, Search, SlidersHorizontal, Tags, Plus, Trash2, Users, X, ShieldCheck, Sparkles } from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 import { RoleManagement } from "@/components/RoleManagement";
@@ -45,11 +45,12 @@ import {
 } from "@/lib/label-definition-drafts";
 import { resolveCriticality } from "@/lib/registry-rule-conversion";
 import { GovernedKeyPicker, type GovernedKeySeed } from "@/components/settings/GovernedKeyPicker";
+import { BrandingCard, ThemeCard } from "@/components/settings/styling";
 import {
   useGetAiSettings,
   useSaveAiSettings,
   getGetAiSettingsQueryKey,
-  useListServingEndpoints,
+  useListModelServices,
   useGetRulesRegistrySettings,
   useSaveRulesRegistrySettings,
   getGetRulesRegistrySettingsQueryKey,
@@ -104,7 +105,7 @@ import { toast } from "sonner";
 import { useCurrentUserRoleSuspense } from "@/hooks/use-suspense-queries";
 import { usePermissions } from "@/hooks/use-permissions";
 import { sampleValueForKind } from "@/lib/sampling";
-import { Suspense, useMemo, useState, useRef, useEffect, useCallback, type ComponentType, type ReactNode } from "react";
+import { Fragment, Suspense, useMemo, useState, useRef, useEffect, useCallback, type ComponentType, type ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
@@ -1634,13 +1635,12 @@ function WarehouseSelect({
 }
 
 /**
- * Serving-endpoint dropdown for the AI endpoint field. Always includes the
- * currently-configured value as an option even if it's missing from the
- * fetched workspace list (e.g. typed before this dropdown existed, or the
- * endpoint was since deleted) so saving doesn't silently blank out an
- * existing setting.
+ * Model dropdown for the AI model field, listing the chat model services in
+ * system.ai. Always includes the currently-configured value as an option even
+ * if it's missing from the fetched list (e.g. a custom model service, or one
+ * since removed) so saving doesn't silently blank out an existing setting.
  */
-function ServingEndpointSelect({
+function ModelServiceSelect({
   value,
   onChange,
   endpoints,
@@ -1696,8 +1696,8 @@ function AiSettingsCard() {
   const saveMutation = useSaveAiSettings();
   const { data: role } = useCurrentUserRoleSuspense();
   const isAdmin = role?.data?.role === "admin";
-  const { data: servingEndpointsResp } = useListServingEndpoints();
-  const servingEndpoints = useMemo(() => servingEndpointsResp?.data.names ?? [], [servingEndpointsResp]);
+  const { data: modelServicesResp } = useListModelServices();
+  const modelServices = useMemo(() => modelServicesResp?.data.names ?? [], [modelServicesResp]);
   const { data: workspace } = useWorkspaceHost();
   const host = workspace?.workspace_host;
 
@@ -1743,11 +1743,7 @@ function AiSettingsCard() {
     return <Skeleton className="h-40 w-full" />;
   }
 
-  const manageHref = host
-    ? aiEndpoint
-      ? `${host}/ml/endpoints/${encodeURIComponent(aiEndpoint)}`
-      : `${host}/ml/endpoints`
-    : undefined;
+  const manageHref = host ? `${host}/ml/ai-gateway` : undefined;
 
   return (
     <Card className="border-fuchsia-500/30 dark:border-fuchsia-400/30">
@@ -1789,10 +1785,10 @@ function AiSettingsCard() {
             )}
           </div>
           <div className="w-64 shrink-0">
-            <ServingEndpointSelect
+            <ModelServiceSelect
               value={aiEndpoint}
               onChange={handleEndpointChange}
-              endpoints={servingEndpoints}
+              endpoints={modelServices}
               disabled={!isAdmin || !aiEnabled || saveMutation.isPending}
             />
           </div>
@@ -2511,6 +2507,11 @@ function ComputeSettingsCard() {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getGetWarehouseAccessQueryKey({ warehouse_id: checkWarehouseId }) });
           toast.success(t("config.computeGrantSucceeded"));
+          // A pick rejected for missing app access was never saved; saving it now
+          // also grants Studio users CAN USE on the new warehouse.
+          if (warehouseId && warehouseId !== (settings?.sql_warehouse_id ?? "")) {
+            save({ warehouseId });
+          }
         },
         onError: (err: unknown) => {
           toast.error(extractApiError(err, t("config.computeGrantFailed")));
@@ -2815,7 +2816,7 @@ function DangerZoneCard() {
 // The individual setting cards above are unchanged; this only regroups them.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type SettingsTabId = "general" | "ai" | "compute" | "entitlements" | "governance" | "tags" | "danger";
+type SettingsTabId = "general" | "ai" | "compute" | "entitlements" | "governance" | "tags" | "theme" | "danger";
 
 /** ErrorBoundary + Suspense wrapper shared by every setting card. */
 function SettingSection({ reset, children }: { reset: () => void; children: ReactNode }) {
@@ -2847,6 +2848,7 @@ function ConfigPage() {
       { id: "entitlements", label: t("config.tabEntitlements"), icon: KeyRound },
       { id: "governance", label: t("config.tabGovernance"), icon: Scale },
       { id: "tags", label: t("config.tabTags"), icon: Tags },
+      { id: "theme", label: t("config.tabTheme"), icon: Palette },
       { id: "danger", label: t("config.tabDanger"), icon: AlertTriangle },
     ],
     [t],
@@ -2870,6 +2872,8 @@ function ConfigPage() {
       { id: "compute", tab: "compute", title: t("config.computeTitle"), keywords: t("config.kwCompute"), render: () => <ComputeSettingsCard /> },
       { id: "draftSample", tab: "compute", title: t("config.draftSampleTitle"), keywords: t("config.kwDraftSample"), render: () => <DraftRunSampleLimitSettings /> },
       { id: "profilerSample", tab: "compute", title: t("config.profilerSampleTitle"), keywords: t("config.kwProfilerSample"), render: () => <ProfilerSampleSettings /> },
+      { id: "branding", tab: "theme", title: t("config.styling.brandingTitle"), keywords: t("config.kwBranding"), render: () => <BrandingCard /> },
+      { id: "theme", tab: "theme", title: t("config.styling.themeTitle"), keywords: t("config.kwTheme"), render: () => <ThemeCard /> },
       { id: "resetDatabase", tab: "danger", title: t("config.resetDbTitle"), keywords: t("config.kwDanger"), render: () => <DangerZoneCard /> },
     ],
     [t],
@@ -2948,8 +2952,8 @@ function ConfigPage() {
                 {tabs.map((tab) => {
                   const Icon = tab.icon;
                   return (
+                    <Fragment key={tab.id}>
                     <TabsTrigger
-                      key={tab.id}
                       value={tab.id}
                       className={cn(
                         "gap-1.5",
@@ -2972,6 +2976,11 @@ function ConfigPage() {
                         tab.label
                       )}
                     </TabsTrigger>
+                    {/* Dividers after General and before Danger Zone. Same as the monitored-table tab bar: bg-border matches the bg-muted track. */}
+                    {(tab.id === "general" || tab.id === "theme") && (
+                      <div aria-hidden="true" className="mx-1 self-stretch w-px my-1.5 bg-muted-foreground/40" />
+                    )}
+                    </Fragment>
                   );
                 })}
               </TabsList>
@@ -2979,8 +2988,9 @@ function ConfigPage() {
                 <TabsContent key={tab.id} value={tab.id} className="mt-4 space-y-6 pb-8">
                   {entries
                     .filter((e) => e.tab === tab.id)
-                    // Cards within each tab are ordered alphabetically by title.
-                    .sort((a, b) => a.title.localeCompare(b.title))
+                    // Cards within each tab are ordered alphabetically by title, except Theme,
+                    // where Branding always comes before the theme card.
+                    .sort((a, b) => (tab.id === "theme" ? 0 : a.title.localeCompare(b.title)))
                     .map((e) => (
                       <FadeIn key={e.id}>
                         <SettingSection reset={reset}>{e.render()}</SettingSection>

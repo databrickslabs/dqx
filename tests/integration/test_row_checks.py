@@ -2,6 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 import pytest
 import pyspark.sql.functions as F
+from pyspark.sql import SparkSession
 from pyspark.testing.utils import assertDataFrameEqual
 from pyspark.errors import AnalysisException
 
@@ -11,6 +12,7 @@ from databricks.labs.dqx.check_funcs import (
     is_in_range,
     is_not_empty,
     is_not_in_range,
+    has_num_decimal_places,
     is_not_null,
     is_not_null_and_not_empty,
     is_older_than_col2_for_n_days,
@@ -19,6 +21,8 @@ from databricks.labs.dqx.check_funcs import (
     is_not_in_near_future,
     is_not_less_than,
     is_not_greater_than,
+    is_greater_than,
+    is_less_than,
     regex_match,
     sql_expression,
     is_in_list,
@@ -1334,6 +1338,156 @@ def test_col_is_not_greater_than(spark, set_utc_timezone):
     assertDataFrameEqual(actual, expected)
 
 
+def test_col_is_greater_than(spark, set_utc_timezone):
+    schema = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>, g: float"
+    test_df = spark.createDataFrame(
+        [
+            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00"), [1], 1.2],
+            [2, 4, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("2.01"), [2], 3.6],
+            [None, None, None, None, None, [None], None],
+        ],
+        schema,
+    )
+
+    actual = test_df.select(
+        is_greater_than("a", 1),
+        is_greater_than("a", "1"),
+        is_greater_than("b", F.col("a") * 2),
+        is_greater_than("b", "a"),
+        is_greater_than("c", datetime(2025, 1, 1).date()),
+        is_greater_than("c", "2025-01-01"),
+        is_greater_than("c", F.lit("2025-01-01")),
+        is_greater_than("d", datetime(2025, 1, 1)),
+        is_greater_than("d", "2025-01-01"),
+        is_greater_than("d", "2025-01-01 00:00:00"),
+        is_greater_than("e", 1),
+        is_greater_than(F.try_element_at("f", F.lit(1)), 1),
+        is_greater_than("g", 2.4),
+    )
+
+    checked_schema = (
+        "a_not_greater_than_limit: string, a_not_greater_than_limit: string, "
+        "b_not_greater_than_limit: string, b_not_greater_than_limit: string, "
+        "c_not_greater_than_limit: string, c_not_greater_than_limit: string, c_not_greater_than_limit: string, "
+        "d_not_greater_than_limit: string, d_not_greater_than_limit: string, d_not_greater_than_limit: string, "
+        "e_not_greater_than_limit: string, try_element_at_f_1_not_greater_than_limit: string, "
+        "g_not_greater_than_limit: string"
+    )
+    expected = spark.createDataFrame(
+        [
+            [
+                "Value '1' in Column 'a' is not greater than limit: 1",
+                "Value '1' in Column 'a' is not greater than limit: 1",
+                "Value '1' in Column 'b' is not greater than limit: 2",
+                "Value '1' in Column 'b' is not greater than limit: 1",
+                "Value '2025-01-01' in Column 'c' is not greater than limit: 2025-01-01",
+                "Value '2025-01-01' in Column 'c' is not greater than limit: 2025-01-01",
+                "Value '2025-01-01' in Column 'c' is not greater than limit: 2025-01-01",
+                "Value '2025-01-01 00:00:00' in Column 'd' is not greater than limit: 2025-01-01 00:00:00",
+                "Value '2025-01-01 00:00:00' in Column 'd' is not greater than limit: 2025-01-01",
+                "Value '2025-01-01 00:00:00' in Column 'd' is not greater than limit: 2025-01-01 00:00:00",
+                "Value '1.00' in Column 'e' is not greater than limit: 1",
+                "Value '1' in Column 'try_element_at(f, 1)' is not greater than limit: 1",
+                "Value '1.2' in Column 'g' is not greater than limit: 2.4",
+            ],
+            [
+                None,
+                None,
+                "Value '4' in Column 'b' is not greater than limit: 4",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+            [None, None, None, None, None, None, None, None, None, None, None, None, None],
+        ],
+        checked_schema,
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_is_less_than(spark, set_utc_timezone):
+    schema = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>, g: float"
+    test_df = spark.createDataFrame(
+        [
+            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00"), [1], 1.2],
+            [2, 4, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("2.01"), [2], 3.6],
+            [None, None, None, None, None, [None], None],
+        ],
+        schema,
+    )
+
+    actual = test_df.select(
+        is_less_than("a", 2),
+        is_less_than("a", "2"),
+        is_less_than("b", F.col("a") * 2),
+        is_less_than("b", "a"),
+        is_less_than("c", datetime(2025, 2, 1).date()),
+        is_less_than("c", "2025-02-01"),
+        is_less_than("c", F.lit("2025-02-01")),
+        is_less_than("d", datetime(2025, 2, 1)),
+        is_less_than("d", "2025-02-01"),
+        is_less_than("d", "2025-02-01 00:00:00"),
+        is_less_than("e", 2),
+        is_less_than(F.try_element_at("f", F.lit(1)), 2),
+        is_less_than("g", 2.4),
+    )
+
+    checked_schema = (
+        "a_not_less_than_limit: string, a_not_less_than_limit: string, "
+        "b_not_less_than_limit: string, b_not_less_than_limit: string, "
+        "c_not_less_than_limit: string, c_not_less_than_limit: string, c_not_less_than_limit: string, "
+        "d_not_less_than_limit: string, d_not_less_than_limit: string, d_not_less_than_limit: string, "
+        "e_not_less_than_limit: string, try_element_at_f_1_not_less_than_limit: string, "
+        "g_not_less_than_limit: string"
+    )
+    expected = spark.createDataFrame(
+        [
+            [
+                None,
+                None,
+                None,
+                "Value '1' in Column 'b' is not less than limit: 1",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+            [
+                "Value '2' in Column 'a' is not less than limit: 2",
+                "Value '2' in Column 'a' is not less than limit: 2",
+                "Value '4' in Column 'b' is not less than limit: 4",
+                "Value '4' in Column 'b' is not less than limit: 2",
+                "Value '2025-02-01' in Column 'c' is not less than limit: 2025-02-01",
+                "Value '2025-02-01' in Column 'c' is not less than limit: 2025-02-01",
+                "Value '2025-02-01' in Column 'c' is not less than limit: 2025-02-01",
+                "Value '2025-02-01 00:00:00' in Column 'd' is not less than limit: 2025-02-01 00:00:00",
+                "Value '2025-02-01 00:00:00' in Column 'd' is not less than limit: 2025-02-01",
+                "Value '2025-02-01 00:00:00' in Column 'd' is not less than limit: 2025-02-01 00:00:00",
+                "Value '2.01' in Column 'e' is not less than limit: 2",
+                "Value '2' in Column 'try_element_at(f, 1)' is not less than limit: 2",
+                "Value '3.6' in Column 'g' is not less than limit: 2.4",
+            ],
+            [None, None, None, None, None, None, None, None, None, None, None, None, None],
+        ],
+        checked_schema,
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
 def test_col_is_in_range(spark, set_utc_timezone):
     schema_num = "a: int, b: date, c: timestamp, d: int, e: int, f: int, g: decimal(10,2), h: map<string, int>, i:float"
     test_df = spark.createDataFrame(
@@ -1496,6 +1650,144 @@ def test_col_is_not_in_range(spark, set_utc_timezone):
             [None, None, None, None, None, None, None, None, None, None, None, None, None, None],
         ],
         checked_schema,
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_has_num_decimal_places(spark):
+    schema = "val: string, i: int"
+    test_df = spark.createDataFrame(
+        [
+            ["-1.25", 7],
+            ["1.250", 7],
+            ["+1.25", 7],
+            [".5", 7],
+            ["1.", 7],
+            ["1.5e3", 7],
+            ["100e-2", 7],
+            ["0e-999", 7],
+            ["1.234", 7],
+            ["abc", 7],
+            [" 1.25", 7],
+            ["1.25\n", 7],
+            [None, None],
+        ],
+        schema,
+    )
+
+    actual = test_df.select(
+        has_num_decimal_places("val", 2).alias("val_max2"),
+        has_num_decimal_places("i", 0).alias("i_max0"),
+        has_num_decimal_places("i", 0, allow_nulls=False).alias("i_max0_nonull"),
+    )
+
+    expected_schema = "val_max2: string, i_max0: string, i_max0_nonull: string"
+    expected = spark.createDataFrame(
+        [
+            [None, None, None],
+            [None, None, None],
+            [None, None, None],
+            [None, None, None],
+            [None, None, None],
+            [None, None, None],
+            [None, None, None],
+            [None, None, None],
+            ["Value '1.234' in Column 'val' has more than 2 decimal places", None, None],
+            ["Value 'abc' in Column 'val' is not numeric", None, None],
+            ["Value ' 1.25' in Column 'val' is not numeric", None, None],
+            ["Value '1.25\n' in Column 'val' is not numeric", None, None],
+            [None, None, "Column 'i' value is null"],
+        ],
+        expected_schema,
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_has_num_decimal_places_exponent_trailing_zeros(spark):
+    test_df = spark.createDataFrame([["100e-2"], ["0e-999"], ["0.000"], ["150e-2"]], "val: string")
+
+    actual = test_df.select(has_num_decimal_places("val", 0).alias("val_max0"))
+
+    expected = spark.createDataFrame(
+        [[None], [None], [None], ["Value '150e-2' in Column 'val' has more than 0 decimal places"]],
+        "val_max0: string",
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_has_num_decimal_places_numeric_types(spark):
+    schema = "d0: double, f0: float, d2: double, dec2: decimal(10,4)"
+    test_df = spark.createDataFrame(
+        [
+            [5.0, 5.0, 1e7, Decimal("1.5")],
+            [0.0, 2.0, 0.0001, Decimal("2")],
+            [-3.0, -3.0, 1.23, Decimal("1.23")],
+            [1.5, 1.5, 1.234, Decimal("1.2345")],
+        ],
+        schema,
+    )
+
+    actual = test_df.select(
+        has_num_decimal_places("d0", 0).alias("d0"),
+        has_num_decimal_places("f0", 0).alias("f0"),
+        has_num_decimal_places("d2", 2).alias("d2"),
+        has_num_decimal_places("dec2", 2).alias("dec2"),
+    )
+
+    expected_schema = "d0: string, f0: string, d2: string, dec2: string"
+    expected = spark.createDataFrame(
+        [
+            [None, None, None, None],
+            [None, None, "Value '1.0E-4' in Column 'd2' has more than 2 decimal places", None],
+            [None, None, None, None],
+            [
+                "Value '1.5' in Column 'd0' has more than 0 decimal places",
+                "Value '1.5' in Column 'f0' has more than 0 decimal places",
+                "Value '1.234' in Column 'd2' has more than 2 decimal places",
+                "Value '1.2345' in Column 'dec2' has more than 2 decimal places",
+            ],
+        ],
+        expected_schema,
+    )
+
+    assertDataFrameEqual(actual, expected)
+
+
+def test_col_has_num_decimal_places_null_limit(spark):
+    schema = "val: string, max_scale: int"
+    test_df = spark.createDataFrame(
+        [
+            ["1.23456", None],
+            ["1.23", 2],
+            ["1.234", 2],
+            [None, None],
+        ],
+        schema,
+    )
+
+    actual = test_df.select(
+        has_num_decimal_places("val", "max_scale").alias("allow_nulls"),
+        has_num_decimal_places("val", F.col("max_scale"), allow_nulls=False).alias("no_nulls"),
+    )
+
+    expected_schema = "allow_nulls: string, no_nulls: string"
+    expected = spark.createDataFrame(
+        [
+            [
+                "Value '1.23456' in Column 'val' has a null limit",
+                "Value '1.23456' in Column 'val' has a null limit",
+            ],
+            [None, None],
+            [
+                "Value '1.234' in Column 'val' has more than 2 decimal places",
+                "Value '1.234' in Column 'val' has more than 2 decimal places",
+            ],
+            [None, "Column 'val' value is null"],
+        ],
+        expected_schema,
     )
 
     assertDataFrameEqual(actual, expected)
@@ -4624,17 +4916,20 @@ def test_col_comparison_checks_with_nulls_failing(spark):
         is_not_greater_than("a", 1, allow_nulls=False),
         is_in_range("a", 1, 2, allow_nulls=False),
         is_not_in_range("a", 4, 6, allow_nulls=False),
+        is_greater_than("a", 1, allow_nulls=False),
+        is_less_than("a", 5, allow_nulls=False),
     )
 
     expected_schema = (
         "a_is_null_or_not_equal_to_value: string, a_is_null_or_equal_to_value: string, "
         "a_is_null_or_less_than_limit: string, a_is_null_or_greater_than_limit: string, "
-        "a_is_null_or_not_in_range: string, a_is_null_or_in_range: string"
+        "a_is_null_or_not_in_range: string, a_is_null_or_in_range: string, "
+        "a_is_null_or_not_greater_than_limit: string, a_is_null_or_not_less_than_limit: string"
     )
     null_message = "Column 'a' value is null"
     expected = spark.createDataFrame(
         [
-            [None, None, None, None, None, None],
+            [None, None, None, None, None, None, "Value '1' in Column 'a' is not greater than limit: 1", None],
             [
                 "Value '5' in Column 'a' is not equal to value: 1",
                 "Value '5' in Column 'a' is equal to value: 5",
@@ -4642,8 +4937,10 @@ def test_col_comparison_checks_with_nulls_failing(spark):
                 "Value '5' in Column 'a' is greater than limit: 1",
                 "Value '5' in Column 'a' not in range: [1, 2]",
                 "Value '5' in Column 'a' in range: [4, 6]",
+                None,
+                "Value '5' in Column 'a' is not less than limit: 5",
             ],
-            [null_message] * 6,
+            [null_message] * 8,
         ],
         expected_schema,
     )
@@ -5011,6 +5308,49 @@ def test_has_json_keys_require_at_least_one(spark):
         expected_schema,
     )
     assertDataFrameEqual(actual, expected)
+
+
+@pytest.mark.parametrize("require_all", [True, False])
+@pytest.mark.parametrize("ansi_enabled", ["true", "false"])
+def test_has_json_keys_requires_outermost_object(spark: SparkSession, require_all: bool, ansi_enabled: str) -> None:
+    missing_keys = "is missing keys in the list: [id, name]"
+    non_object = "is not a JSON object"
+    cases = [
+        (None, None),
+        ("[]", non_object),
+        ("[1, 2]", non_object),
+        ('[{"id": 1, "name": "test"}]', non_object),
+        ("123", non_object),
+        ('"a string"', non_object),
+        ("true", non_object),
+        ("false", non_object),
+        ("null", non_object),
+        ('{"id": 1, "name": "test"}', None),
+        ('{"id": null, "name": null}', None),
+        ("{}", missing_keys),
+        ('{"id": 1}', missing_keys if require_all else None),
+        ('{"name": null}', missing_keys if require_all else None),
+        ('{"nested": {"id": 1, "name": "test"}}', missing_keys),
+        ("Not a JSON string", "is not a valid JSON string"),
+        ("", "is not a valid JSON string"),
+        ("  null  ", "is not a JSON object"),
+        (' {"id": 1, "name": "test"} ', None),
+    ]
+    original_ansi_enabled = spark.conf.get("spark.sql.ansi.enabled")
+    assert original_ansi_enabled is not None
+    try:
+        spark.conf.set("spark.sql.ansi.enabled", ansi_enabled)
+        test_df = spark.createDataFrame([(value,) for value, _ in cases], "a: string")
+
+        actual = test_df.select("a", has_json_keys("a", ["id", "name"], require_all=require_all))
+        expected = spark.createDataFrame(
+            [(value, f"Value '{value}' in Column 'a' {reason}" if reason else None) for value, reason in cases],
+            "a: string, a_does_not_have_json_keys: string",
+        )
+
+        assertDataFrameEqual(actual, expected)
+    finally:
+        spark.conf.set("spark.sql.ansi.enabled", original_ansi_enabled)
 
 
 def test_has_valid_json_schema(spark):

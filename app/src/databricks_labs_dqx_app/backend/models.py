@@ -5,6 +5,7 @@ from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .. import __version__
+from .common.branding import MAX_LOGO_BASE64_LENGTH
 from .config import AI_SAMPLE_ROW_LIMIT
 from .sql_utils import validate_row_scope
 from .registry_models import AuthorKind as RegistryAuthorKind
@@ -26,6 +27,8 @@ from .registry_models import SCHEDULE_KIND_DEFAULT as REGISTRY_SCHEDULE_KIND_DEF
 from .registry_models import MAX_SCHEDULE_SAMPLE_SIZE
 from .registry_models import MonitoredTableVersion as MonitoredTableVersionDomain
 from .rule_enums import RuleSource, RuleStatus
+from .setup.models import GrantErrorCode
+from .sql_utils import validate_fqn
 from .registry_models import RuleSlot as RegistryRuleSlot
 from .registry_models import RunSetSource as RegistryRunSetSource
 from .registry_models import RunSetTrigger as RegistryRunSetTrigger
@@ -487,6 +490,13 @@ class RegistryRuleOut(BaseModel):
         default=None,
         description="Human-readable display name for the owner; falls back to the owner email when null.",
     )
+    owner_unverified: bool = Field(
+        default=False,
+        description=(
+            "True when the owner matched no Databricks user, group, or service principal (e.g. a "
+            "mistyped imported email). Transient; set on the list / detail read paths only."
+        ),
+    )
     is_builtin: bool = False
     source: str | None = None
     pending_rationale: str | None = Field(
@@ -581,6 +591,16 @@ class CreateRegistryRuleOut(BaseModel):
     dedup_warning: str | None = Field(
         default=None, description="Non-blocking warning when a published rule shares this fingerprint"
     )
+    input_index: int | None = Field(
+        default=None, description="Batch import only: index of the input rule this result is for"
+    )
+    slot_renames: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Batch import only: input slot name -> slot name on the returned rule, when they differ "
+            "(the input was matched to, or created as, a generic rule with different slot names)."
+        ),
+    )
 
 
 # Upper bound on a single batch import. The endpoint runs a SYNCHRONOUS
@@ -627,6 +647,14 @@ class BatchImportRegistryRulesIn(BaseModel):
             "'marketplace' so its rules are distinguishable from file imports."
         ),
     )
+    generalize_slots: bool = Field(
+        default=False,
+        description=(
+            "When true, rules whose slots are named after concrete columns (data contracts) are "
+            "created as generic rules: slots renamed to 'column'/'column_N', a generic name, and "
+            "no column-specific description. See ``slot_renames`` on each result."
+        ),
+    )
 
 
 class BatchImportRegistryRulesFailure(BaseModel):
@@ -666,6 +694,17 @@ class RecordPendingApplicationIn(BaseModel):
         default_factory=list,
         description="One slot-name -> column-name mapping group per materialized check; may be "
         "empty for whole-table rules (no slots).",
+    )
+    row_filter: str | None = Field(
+        default=None,
+        description="Per-rule SQL WHERE predicate carried to the application on approval; "
+        "None/blank = every row. Validated for SQL safety when the rule is approved and applied.",
+    )
+    pass_threshold: int | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Per-rule minimum % of rows that must pass, carried to the application on approval.",
     )
 
 
@@ -712,6 +751,8 @@ class PendingApplicationOut(BaseModel):
     rule_name: str | None = None
     rule_status: str | None = None
     column_mapping: list[ColumnMappingGroup] = Field(default_factory=list)
+    row_filter: str | None = None
+    pass_threshold: int | None = None
     created_by: str | None = None
     created_at: str | None = None
 
@@ -896,6 +937,12 @@ class AppliedRuleOut(BaseModel):
             rule_dimension=enriched.rule_dimension,
             rule_severity=enriched.rule_severity,
         )
+
+
+class ImplementedRuleOut(AppliedRuleOut):
+    """One concrete registry-rule application, enriched with its monitored table's FQN."""
+
+    table_fqn: str
 
 
 class ApplyRuleIn(BaseModel):
@@ -1716,6 +1763,26 @@ class ValidationRunSummaryOut(BaseModel):
     review_status_updated_at: str | None = None
 
 
+class ValidationStatusOut(BaseModel):
+    """Pass/fail status for a single validation run, for external uptime monitors.
+
+    Deliberately minimal — an uptime monitor (e.g. Site24x7) only needs the
+    status and enough context to identify the run, not the full
+    ``ValidationRunSummaryOut`` shape.
+    """
+
+    status: str = Field(description="Validation run status: SUCCESS | FAILED | CANCELED")
+    source_table_fqn: str
+    run_id: str
+    error_rows: int | None = None
+    warning_rows: int | None = None
+    updated_at: str | None = None
+    stale: bool = Field(
+        default=False,
+        description="True when the run completed longer ago than the caller's max_age_minutes",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Lightweight recent-failures shape used by the app-wide toast watcher.
 # Only carries the fields the hook needs: no counts, no error_message.
@@ -2169,11 +2236,18 @@ class FailingRecordOut(BaseModel):
 
 
 class CheckMetricBreakdown(BaseModel):
-    """Per-check error/warning breakdown produced by ``DQMetricsObserver``."""
+    """Per-check error/warning breakdown produced by ``DQMetricsObserver``.
+
+    *evaluated_count* is the number of rows a filtered row-level check
+    evaluated (the rows its filter selected), from the run's
+    *check_evaluated_rows* metric. None for unfiltered and dataset checks
+    and for runs that predate the metric: those use the table's input rows.
+    """
 
     check_name: str
     error_count: int = 0
     warning_count: int = 0
+    evaluated_count: int | None = None
 
 
 class MetricSnapshotOut(BaseModel):
@@ -2223,8 +2297,10 @@ class TableScoreOut(BaseModel):
     source_table_fqn: str
     score: float | None = None
     latest_run_id: str | None = None
-    total_tests: int = 0
-    failed_tests: int = 0
+    total_tests: int = Field(default=0, description="Row-level tests (evaluated rows x row checks)")
+    failed_tests: int = Field(default=0, description="Failed row-level tests")
+    table_total_tests: int | None = Field(default=None, description="Table-level checks, one test each")
+    table_failed_tests: int | None = Field(default=None, description="Failed table-level checks")
 
 
 class RuleScoreOut(BaseModel):
@@ -2279,10 +2355,12 @@ class GroupRowOut(BaseModel):
     binding_id: str | None = None
     rule_id: str | None = None
     pass_rate: float | None = None
-    failed_tests: int | None = None
+    failed_tests: int | None = Field(default=None, description="Failed row-level tests")
     rule_count: int | None = None
     check_count: int | None = None
-    total_tests: int | None = None
+    total_tests: int | None = Field(default=None, description="Row-level tests (evaluated rows x row checks)")
+    table_failed_tests: int | None = Field(default=None, description="Failed table-level checks")
+    table_total_tests: int | None = Field(default=None, description="Table-level checks, one test each")
     breached: bool = False
     breach_criticality: str | None = None
     pass_threshold: int | None = None
@@ -2310,7 +2388,9 @@ class TrendPointOut(BaseModel):
     series: str | None = None
     pass_rate: float | None = None
     rule_count: int | None = None
-    total_tests: int | None = None
+    total_tests: int | None = Field(default=None, description="Row-level tests (evaluated rows x row checks)")
+    table_total_tests: int | None = Field(default=None, description="Table-level checks, one test each")
+    table_failed_tests: int | None = Field(default=None, description="Failed table-level checks")
     version: int | None = None
     is_draft: bool = False
     breached: bool = False
@@ -2319,8 +2399,8 @@ class TrendPointOut(BaseModel):
 
 class TrendCountPointOut(BaseModel):
     """Per-run count axes: distinct rules, checks (rows), and tests
-    (record-level evaluations). Feeds the "Number of Rules, Checks & Tests"
-    chart."""
+    (record-level evaluations of row checks plus one per dataset check).
+    Feeds the "Number of Rules, Checks & Tests" chart."""
 
     run_date: str | None = None
     rule_count: int | None = None
@@ -2376,8 +2456,10 @@ class RunRowOut(BaseModel):
     run_id: str | None = None
     run_ts: str | None = None
     pass_rate: float | None = None
-    failed_tests: int | None = None
-    total_tests: int | None = None
+    failed_tests: int | None = Field(default=None, description="Failed row-level tests")
+    total_tests: int | None = Field(default=None, description="Row-level tests (evaluated rows x row checks)")
+    table_failed_tests: int | None = Field(default=None, description="Failed table-level checks")
+    table_total_tests: int | None = Field(default=None, description="Table-level checks, one test each")
     run_mode: str | None = None
     breached: bool = False
     breach_criticality: str | None = None
@@ -2673,8 +2755,49 @@ class ScheduleConfigHistoryOut(BaseModel):
 class ManageHolderOut(BaseModel):
     """A user or group that can grant on a table (holds MANAGE or is an owner)."""
 
-    principal: str = Field(description="User name / email or group name that can grant on the table")
-    type: str = Field(description="Best-effort classification: 'user' or 'group'")
+    principal: str = Field(description="User name / email, group name or service principal application id")
+    type: str = Field(description="Best-effort classification: 'user', 'group' or 'service_principal'")
+    display_name: str | None = Field(
+        default=None, description="Name to show: a service principal's display name, otherwise the principal"
+    )
+
+
+class ScheduleMissingGrantOut(BaseModel):
+    """A catalog or schema usage grant a scheduler service principal still needs."""
+
+    principal: str = Field(description="Service principal application id (the grantee in the statement)")
+    display_name: str = Field(description="Service principal display name, or its application id")
+    privilege: str = Field(description="Missing privilege, e.g. USE_CATALOG")
+    securable_type: str = Field(description="CATALOG or SCHEMA")
+    securable: str = Field(description="Catalog or schema name")
+    statement: str = Field(description="GRANT statement that adds the privilege")
+
+
+class ScheduleOverviewOut(BaseModel):
+    """One normalized schedule definition with its scheduler runtime state."""
+
+    source_type: Literal["table", "collection", "scope"]
+    source_id: str
+    name: str
+    target: str
+    cron: str | None = None
+    timezone: str | None = None
+    frequency: str | None = None
+    schedule_kind: RegistryScheduleKind | None = None
+    sample_size: int | None = None
+    enabled: bool = True
+    paused: bool = False
+    owner: str | None = None
+    updated_by: str | None = None
+    updated_at: str | None = None
+    last_run_at: str | None = None
+    next_run_at: str | None = None
+    last_run_id: str | None = None
+    run_status: str | None = None
+
+
+class SchedulePauseIn(BaseModel):
+    paused: bool
 
 
 class SchedulePreflightIn(BaseModel):
@@ -2690,17 +2813,74 @@ class SchedulePreflightTableOut(BaseModel):
     service principals (they own the table/schema/catalog or hold MANAGE,
     directly or via a group). When ``False`` the schedule save is hard-blocked
     and ``manage_holders`` names who to ask instead.
+
+    ``missing_grants`` is non-empty when the scheduler service principals lack
+    ``USE CATALOG`` / ``USE SCHEMA`` on the table's parents. That blocks the
+    schedule whoever saves it, so ``manage_holders`` is then empty.
+
+    ``access_unverified`` is ``True`` when grantability is unknown rather than
+    denied: ``unverified_reason`` is ``"warehouse"`` when the SQL warehouse gave
+    no answer (e.g. still starting), ``"permissions"`` when the permissions
+    couldn't be read, and ``"configuration"`` when Studio's setup is incomplete
+    (e.g. the scheduler service principals can't be resolved). ``can_manage`` is ``False`` and the UI asks the user to retry.
     """
 
     fqn: str
     can_manage: bool
     manage_holders: list[ManageHolderOut] = Field(default_factory=list)
+    missing_grants: list[ScheduleMissingGrantOut] = Field(default_factory=list)
+    access_unverified: bool = False
+    unverified_reason: Literal["warehouse", "permissions", "configuration"] | None = None
 
 
 class SchedulePreflightOut(BaseModel):
     """Response of the schedule preflight — one entry per requested table."""
 
     tables: list[SchedulePreflightTableOut] = Field(default_factory=list)
+
+
+class ScheduleGrantApplyIn(BaseModel):
+    """Body of ``POST /schedule-grants/apply``: only table names, never SQL.
+
+    The server re-derives the GRANT statements from its own preflight of these tables.
+    There is no size cap beyond the preflight's: the preflight takes any number of
+    tables, and a statement shared by several tables runs only once.
+    """
+
+    table_fqns: list[str] = Field(
+        min_length=1,
+        description="Fully qualified names of the tables whose missing scheduler grants to run",
+    )
+
+    @field_validator("table_fqns")
+    @classmethod
+    def _real_table_names(cls, table_fqns: list[str]) -> list[str]:
+        for fqn in table_fqns:
+            validate_fqn(fqn)
+            if len(fqn.split(".")) != 3:
+                raise ValueError("Each entry must be a catalog.schema.table name.")
+        return list(dict.fromkeys(table_fqns))
+
+
+class ScheduleGrantFailureOut(BaseModel):
+    """A missing scheduler grant that could not be run, with a sanitized error code."""
+
+    fqn: str = Field(description="First requested table that needed the grant")
+    statement: str = Field(description="The GRANT statement, as the preflight showed it")
+    error_code: GrantErrorCode
+
+
+class ScheduleGrantApplyOut(BaseModel):
+    """Outcome of running the missing scheduler grants as the signed-in user."""
+
+    preflight: SchedulePreflightOut = Field(description="Fresh preflight taken after the grants ran")
+    applied: int
+    total: int
+    failed: list[ScheduleGrantFailureOut] = Field(default_factory=list)
+    recheck_failed: bool = Field(
+        default=False,
+        description="The check after the grants couldn't run, so preflight is the one taken before them",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -3038,3 +3218,93 @@ class DemoContentStatusOut(BaseModel):
     message: str
     started_at: str
     updated_at: str
+
+
+class BrandingModeColorsIn(BaseModel):
+    """Colour groups for one mode."""
+
+    colors: dict[str, str] = Field(default_factory=dict)
+
+
+class BrandingDarkIn(BaseModel):
+    """Dark-mode colours set on top of those generated from light; ignored unless *customised*."""
+
+    customised: bool = False
+    colors: dict[str, str] = Field(default_factory=dict)
+
+
+class BrandingThemeIn(BaseModel):
+    """Theme update."""
+
+    preset: str | None = None
+    light: BrandingModeColorsIn = Field(default_factory=BrandingModeColorsIn)
+    dark: BrandingDarkIn = Field(default_factory=BrandingDarkIn)
+
+
+class BrandingCustomPresetRenameIn(BaseModel):
+    """Custom preset rename (empty or null shows it as "Custom N")."""
+
+    name: str | None = None
+
+
+class BrandingCompanyNameIn(BaseModel):
+    """Company name update (empty or null clears it)."""
+
+    company_name: str | None = None
+
+
+class BrandingLogoIn(BaseModel):
+    """Logo upload as base64."""
+
+    content_type: str
+    data_base64: str = Field(max_length=MAX_LOGO_BASE64_LENGTH)
+
+
+class BrandingModeColorsOut(BaseModel):
+    """Stored colour groups for one mode."""
+
+    colors: dict[str, str]
+
+
+class BrandingDarkOut(BaseModel):
+    """Stored dark-mode colours."""
+
+    customised: bool
+    colors: dict[str, str]
+
+
+class BrandingLogosOut(BaseModel):
+    """Logo content hashes per slot (None when unset)."""
+
+    light: str | None = None
+    dark: str | None = None
+
+
+class BrandingCustomPresetOut(BaseModel):
+    """A theme an admin saved after editing a preset, shown as "Custom N"."""
+
+    id: str
+    name: str | None = None
+    light: BrandingModeColorsOut
+    dark: BrandingDarkOut
+
+
+class BrandingEditedPresetOut(BaseModel):
+    """Saved colours of a built-in preset an admin has edited."""
+
+    id: str
+    light: BrandingModeColorsOut
+    dark: BrandingDarkOut
+
+
+class BrandingOut(BaseModel):
+    """Full branding as seen by the UI."""
+
+    company_name: str | None = None
+    preset: str | None = None
+    logo_mode: str = "shared"
+    light: BrandingModeColorsOut
+    dark: BrandingDarkOut
+    logos: BrandingLogosOut
+    custom_presets: list[BrandingCustomPresetOut] = Field(default_factory=list)
+    edited_presets: list[BrandingEditedPresetOut] = Field(default_factory=list)

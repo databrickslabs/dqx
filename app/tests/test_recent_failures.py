@@ -1,20 +1,20 @@
 """Unit tests for the recent-failures endpoints.
 
 Both ``GET /dryrun/runs/recent-failures`` and ``GET /profiler/runs/recent-failures``
-are thin filters over the existing list infrastructure. These tests verify:
+feed the app-wide toast watcher, which every open tab polls. They read failed
+task-runner job runs from the Jobs API (via :class:`JobService`) so the poll
+never keeps the SQL warehouse awake. These tests verify:
 
-1. Only FAILED rows are returned (not SUCCESS, RUNNING, CANCELED).
-2. The result is bounded at _RECENT_FAILURES_LIMIT.
-3. The response shape carries only the minimal fields (RunFailureOut).
-4. Non-FAILED rows do not inflate the result count.
+1. Only the endpoint's own task types are returned (validation vs. profile).
+2. The validation feed honours the caller's catalog access.
+3. The result is bounded at _RECENT_FAILURES_LIMIT with the minimal RunFailureOut shape.
+4. Neither feed ever queries the SQL warehouse.
 """
 
-from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock, create_autospec
 
 import pytest
 
-from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.models import RunFailureOut
 from databricks_labs_dqx_app.backend.routes.v1.dryrun import (
     list_recent_validation_failures,
@@ -25,54 +25,25 @@ from databricks_labs_dqx_app.backend.routes.v1.profiler import (
     _RECENT_FAILURES_LIMIT as PROFILER_LIMIT,
 )
 from databricks_labs_dqx_app.backend.services.job_service import JobService
-from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
-
-# ---------------------------------------------------------------------------
-# Shared helpers
-# ---------------------------------------------------------------------------
+from databricks_labs_dqx_app.backend.services.task_runner_runs import TaskRunnerRun
 
 
-def _recent_ts() -> str:
-    """A timestamp 1 hour ago — recent enough to not trigger the stale-RUNNING fallback."""
-    return (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S")
-
-
-def _old_ts() -> str:
-    """A timestamp 24 hours ago — old enough to trigger stale-RUNNING fallback."""
-    return "2025-01-01T00:00:00"
-
-
-def _make_row(
-    run_id: str,
-    status: str,
-    fqn: str = "main.public.orders",
-    created_at: str | None = None,
-) -> dict[str, str | None]:
-    # Use a recent timestamp for RUNNING rows so reconcile_running_rows doesn't
-    # flip them to FAILED via the stale-age path. Non-RUNNING rows default to
-    # an old timestamp (they won't be mutated by reconcile anyway).
-    if created_at is None:
-        created_at = _recent_ts() if status == "RUNNING" else _old_ts()
-    return {
-        "run_id": run_id,
-        "status": status,
-        "source_table_fqn": fqn,
-        "created_at": created_at,
-        # Extra fields that should NOT appear in RunFailureOut
-        "error_message": "big error payload" if status == "FAILED" else None,
-        "requesting_user": "user@example.com",
-        "total_rows": "1000",
-        "valid_rows": "900",
-        "invalid_rows": "100",
-        "error_rows": "50",
-        "warning_rows": "50",
-        "sample_size": None,
-        "updated_at": None,
-        "run_type": "dryrun",
-        "canceled_by": None,
-        "job_run_id": None,
-        "duration_seconds": None,
-    }
+def _failed_run(
+    app_run_id: str,
+    *,
+    task_type: str = "dryrun",
+    fqn: str | None = "main.public.orders",
+) -> TaskRunnerRun:
+    return TaskRunnerRun(
+        job_run_id=hash(app_run_id) & 0xFFFF,
+        app_run_id=app_run_id,
+        task_type=task_type,
+        source_table_fqn=fqn,
+        is_preview=False,
+        life_cycle_state="TERMINATED",
+        result_state="FAILED",
+        start_time_ms=1_790_000_000_000,
+    )
 
 
 @pytest.fixture
@@ -80,270 +51,118 @@ def job_service_mock() -> MagicMock:
     return create_autospec(JobService, instance=True)
 
 
-@pytest.fixture
-def sql_executor() -> MagicMock:
-    return create_autospec(SqlExecutor, instance=True)
-
-
-@pytest.fixture
-def app_conf() -> AppConfig:
-    from databricks_labs_dqx_app.backend.config import conf
-
-    return conf
-
-
-# ---------------------------------------------------------------------------
-# Validation recent-failures
-# ---------------------------------------------------------------------------
+async def _validation(job_svc: MagicMock, catalogs: frozenset[str] = frozenset({"main"})):
+    return await list_recent_validation_failures(job_svc=job_svc, user_catalogs=catalogs)
 
 
 class TestListRecentValidationFailures:
-    """``GET /dryrun/runs/recent-failures`` filters to FAILED, bounds, minimal shape."""
-
-    def test_returns_only_failed_rows(
-        self,
-        job_service_mock: MagicMock,
-        sql_executor: MagicMock,
-        app_conf: AppConfig,
-    ) -> None:
-        job_service_mock.list_dryrun_rows.return_value = [
-            _make_row("run-success", "SUCCESS"),
-            _make_row("run-running", "RUNNING"),
-            _make_row("run-canceled", "CANCELED"),
-            _make_row("run-failed", "FAILED"),
+    async def test_returns_only_validation_task_types(self, job_service_mock):
+        job_service_mock.list_recent_failed_runs.return_value = [
+            _failed_run("run-dryrun"),
+            _failed_run("run-scheduled", task_type="scheduled"),
+            _failed_run("run-profile", task_type="profile"),
         ]
-        # reconcile_running_rows is called but we don't want it to modify rows
-        # (it operates on the list in-place; stubbing get_run_status is sufficient
-        # to let the reconcile path pass without touching anything meaningful).
-        sql_executor.query_dicts.return_value = []
 
-        result = list_recent_validation_failures(
-            job_svc=job_service_mock,
-            app_conf=app_conf,
-            user_catalogs=frozenset({"main"}),
-            sql=sql_executor,
-        )
+        result = await _validation(job_service_mock)
 
-        assert len(result) == 1
-        assert result[0].run_id == "run-failed"
-        assert result[0].status == "FAILED"
+        assert [r.run_id for r in result] == ["run-dryrun", "run-scheduled"]
+        assert all(r.status == "FAILED" for r in result)
 
-    def test_excludes_rows_from_inaccessible_catalogs(
-        self,
-        job_service_mock: MagicMock,
-        sql_executor: MagicMock,
-        app_conf: AppConfig,
-    ) -> None:
-        job_service_mock.list_dryrun_rows.return_value = [
-            _make_row("run-visible", "FAILED", fqn="main.public.orders"),
-            _make_row("run-hidden", "FAILED", fqn="restricted.public.orders"),
+    async def test_excludes_runs_from_inaccessible_catalogs(self, job_service_mock):
+        job_service_mock.list_recent_failed_runs.return_value = [
+            _failed_run("run-visible", fqn="main.public.orders"),
+            _failed_run("run-hidden", fqn="restricted.public.orders"),
         ]
-        sql_executor.query_dicts.return_value = []
 
-        result = list_recent_validation_failures(
-            job_svc=job_service_mock,
-            app_conf=app_conf,
-            user_catalogs=frozenset({"main"}),
-            sql=sql_executor,
-        )
+        result = await _validation(job_service_mock)
 
-        assert len(result) == 1
-        assert result[0].run_id == "run-visible"
+        assert [r.run_id for r in result] == ["run-visible"]
 
-    def test_includes_sql_check_prefix_rows(
-        self,
-        job_service_mock: MagicMock,
-        sql_executor: MagicMock,
-        app_conf: AppConfig,
-    ) -> None:
-        """Cross-table SQL checks use the synthetic ``__sql_check__/`` FQN prefix
-        and bypass the catalog visibility filter — they should always be included."""
-        job_service_mock.list_dryrun_rows.return_value = [
-            _make_row("run-sql-check", "FAILED", fqn="__sql_check__/orders_have_customers"),
+    async def test_includes_sql_check_prefix_runs(self, job_service_mock):
+        job_service_mock.list_recent_failed_runs.return_value = [
+            _failed_run("run-sql", fqn="__sql_check__/my_check"),
         ]
-        sql_executor.query_dicts.return_value = []
 
-        result = list_recent_validation_failures(
-            job_svc=job_service_mock,
-            app_conf=app_conf,
-            user_catalogs=frozenset(),  # empty — no catalog access
-            sql=sql_executor,
-        )
+        result = await _validation(job_service_mock, catalogs=frozenset())
 
-        assert len(result) == 1
-        assert result[0].run_id == "run-sql-check"
+        assert [r.source_table_fqn for r in result] == ["__sql_check__/my_check"]
 
-    def test_result_bounded_at_limit(
-        self,
-        job_service_mock: MagicMock,
-        sql_executor: MagicMock,
-        app_conf: AppConfig,
-    ) -> None:
-        over_limit = DRYRUN_LIMIT + 5
-        job_service_mock.list_dryrun_rows.return_value = [_make_row(f"run-{i}", "FAILED") for i in range(over_limit)]
-        sql_executor.query_dicts.return_value = []
+    async def test_result_bounded_at_limit(self, job_service_mock):
+        job_service_mock.list_recent_failed_runs.return_value = [
+            _failed_run(f"f-{i}") for i in range(DRYRUN_LIMIT + 10)
+        ]
 
-        result = list_recent_validation_failures(
-            job_svc=job_service_mock,
-            app_conf=app_conf,
-            user_catalogs=frozenset({"main"}),
-            sql=sql_executor,
-        )
+        result = await _validation(job_service_mock)
 
         assert len(result) == DRYRUN_LIMIT
 
-    def test_returns_minimal_fields_only(
-        self,
-        job_service_mock: MagicMock,
-        sql_executor: MagicMock,
-        app_conf: AppConfig,
-    ) -> None:
-        """RunFailureOut carries only run_id, source_table_fqn, status, created_at."""
-        job_service_mock.list_dryrun_rows.return_value = [
-            _make_row("r1", "FAILED", created_at="2025-06-01T12:00:00"),
+    async def test_returns_minimal_fields_only(self, job_service_mock):
+        job_service_mock.list_recent_failed_runs.return_value = [_failed_run("run-failed")]
+
+        result = await _validation(job_service_mock)
+
+        assert result == [
+            RunFailureOut(
+                run_id="run-failed",
+                source_table_fqn="main.public.orders",
+                status="FAILED",
+                created_at="2026-09-21T14:13:20+00:00",
+            )
         ]
-        sql_executor.query_dicts.return_value = []
 
-        result = list_recent_validation_failures(
-            job_svc=job_service_mock,
-            app_conf=app_conf,
-            user_catalogs=frozenset({"main"}),
-            sql=sql_executor,
-        )
-
-        row = result[0]
-        assert isinstance(row, RunFailureOut)
-        assert row.run_id == "r1"
-        assert row.status == "FAILED"
-        assert row.source_table_fqn == "main.public.orders"
-        assert row.created_at == "2025-06-01T12:00:00"
-        # Heavy fields must NOT be present on RunFailureOut
-        assert not hasattr(row, "error_message")
-        assert not hasattr(row, "total_rows")
-        assert not hasattr(row, "checks")
-
-    def test_empty_list_when_no_failures(
-        self,
-        job_service_mock: MagicMock,
-        sql_executor: MagicMock,
-        app_conf: AppConfig,
-    ) -> None:
-        job_service_mock.list_dryrun_rows.return_value = [
-            _make_row("r1", "SUCCESS"),
-            _make_row("r2", "RUNNING"),
+    async def test_runs_without_a_source_table_are_skipped(self, job_service_mock):
+        # The catalog filter cannot be applied to a run with no table, so it
+        # is dropped rather than shown to everyone.
+        job_service_mock.list_recent_failed_runs.return_value = [
+            _failed_run("run-known"),
+            _failed_run("run-unknown", fqn=None),
         ]
-        sql_executor.query_dicts.return_value = []
 
-        result = list_recent_validation_failures(
-            job_svc=job_service_mock,
-            app_conf=app_conf,
-            user_catalogs=frozenset({"main"}),
-            sql=sql_executor,
-        )
+        result = await _validation(job_service_mock)
 
-        assert result == []
+        assert [r.run_id for r in result] == ["run-known"]
 
+    async def test_empty_list_when_no_failures(self, job_service_mock):
+        job_service_mock.list_recent_failed_runs.return_value = []
 
-# ---------------------------------------------------------------------------
-# Profiler recent-failures
-# ---------------------------------------------------------------------------
+        assert await _validation(job_service_mock) == []
 
 
 class TestListRecentProfileFailures:
-    """``GET /profiler/runs/recent-failures`` filters to FAILED, bounds, minimal shape."""
-
-    def test_returns_only_failed_rows(
-        self,
-        job_service_mock: MagicMock,
-        app_conf: AppConfig,
-    ) -> None:
-        job_service_mock.list_run_rows.return_value = [
-            _make_row("p-success", "SUCCESS"),
-            _make_row("p-running", "RUNNING"),
-            _make_row("p-canceled", "CANCELED"),
-            _make_row("p-failed", "FAILED"),
+    async def test_returns_only_profile_task_types(self, job_service_mock):
+        job_service_mock.list_recent_failed_runs.return_value = [
+            _failed_run("run-profile", task_type="profile"),
+            _failed_run("run-dryrun"),
         ]
 
-        result = list_recent_profile_failures(
-            job_svc=job_service_mock,
-            app_conf=app_conf,
-        )
+        result = await list_recent_profile_failures(job_svc=job_service_mock)
 
-        assert len(result) == 1
-        assert result[0].run_id == "p-failed"
-        assert result[0].status == "FAILED"
+        assert [r.run_id for r in result] == ["run-profile"]
 
-    def test_result_bounded_at_limit(
-        self,
-        job_service_mock: MagicMock,
-        app_conf: AppConfig,
-    ) -> None:
-        over_limit = PROFILER_LIMIT + 5
-        job_service_mock.list_run_rows.return_value = [_make_row(f"p-{i}", "FAILED") for i in range(over_limit)]
+    async def test_result_bounded_at_limit(self, job_service_mock):
+        job_service_mock.list_recent_failed_runs.return_value = [
+            _failed_run(f"f-{i}", task_type="profile") for i in range(PROFILER_LIMIT + 10)
+        ]
 
-        result = list_recent_profile_failures(
-            job_svc=job_service_mock,
-            app_conf=app_conf,
-        )
+        result = await list_recent_profile_failures(job_svc=job_service_mock)
 
         assert len(result) == PROFILER_LIMIT
 
-    def test_returns_minimal_fields_only(
-        self,
-        job_service_mock: MagicMock,
-        app_conf: AppConfig,
-    ) -> None:
-        job_service_mock.list_run_rows.return_value = [
-            _make_row("p1", "FAILED", fqn="cat.sch.tbl", created_at="2025-06-15T08:00:00"),
+    async def test_returns_minimal_fields_only(self, job_service_mock):
+        job_service_mock.list_recent_failed_runs.return_value = [_failed_run("run-p", task_type="profile")]
+
+        result = await list_recent_profile_failures(job_svc=job_service_mock)
+
+        assert result == [
+            RunFailureOut(
+                run_id="run-p",
+                source_table_fqn="main.public.orders",
+                status="FAILED",
+                created_at="2026-09-21T14:13:20+00:00",
+            )
         ]
 
-        result = list_recent_profile_failures(
-            job_svc=job_service_mock,
-            app_conf=app_conf,
-        )
+    async def test_empty_list_when_no_failures(self, job_service_mock):
+        job_service_mock.list_recent_failed_runs.return_value = []
 
-        row = result[0]
-        assert isinstance(row, RunFailureOut)
-        assert row.run_id == "p1"
-        assert row.status == "FAILED"
-        assert row.source_table_fqn == "cat.sch.tbl"
-        assert row.created_at == "2025-06-15T08:00:00"
-        assert not hasattr(row, "error_message")
-        assert not hasattr(row, "rows_profiled")
-        assert not hasattr(row, "generated_rules")
-
-    def test_empty_list_when_no_failures(
-        self,
-        job_service_mock: MagicMock,
-        app_conf: AppConfig,
-    ) -> None:
-        job_service_mock.list_run_rows.return_value = [
-            _make_row("p1", "SUCCESS"),
-        ]
-
-        result = list_recent_profile_failures(
-            job_svc=job_service_mock,
-            app_conf=app_conf,
-        )
-
-        assert result == []
-
-    def test_non_failed_rows_before_failures_do_not_inflate_count(
-        self,
-        job_service_mock: MagicMock,
-        app_conf: AppConfig,
-    ) -> None:
-        """Non-FAILED rows interspersed with FAILED ones are skipped, not counted."""
-        rows: list[dict[str, str | None]] = []
-        for i in range(PROFILER_LIMIT):
-            rows.append(_make_row(f"f-{i}", "FAILED"))
-            rows.append(_make_row(f"s-{i}", "SUCCESS"))
-        job_service_mock.list_run_rows.return_value = rows
-
-        result = list_recent_profile_failures(
-            job_svc=job_service_mock,
-            app_conf=app_conf,
-        )
-
-        assert len(result) == PROFILER_LIMIT
-        assert all(r.status == "FAILED" for r in result)
+        assert await list_recent_profile_failures(job_svc=job_service_mock) == []

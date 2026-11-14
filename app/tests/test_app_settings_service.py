@@ -118,16 +118,18 @@ class TestAiGatewaySettings:
 
         svc.save_ai_enabled(True, user_email="admin@x")
 
-        _, kwargs = sql_executor_mock.upsert.call_args
-        assert kwargs["key_cols"] == {"setting_key": "ai_enabled"}
-        assert kwargs["value_cols"]["setting_value"] == "true"
+        saved = {
+            call.kwargs["key_cols"]["setting_key"]: call.kwargs["value_cols"]["setting_value"]
+            for call in sql_executor_mock.upsert.call_args_list
+        }
+        assert saved == {"ai_enabled": "true", "ai_enabled_source": "admin"}
 
         sql_executor_mock.query.return_value = [["true"]]
         assert svc.get_ai_enabled() is True
 
     def test_ai_endpoint_name_defaults_to_claude_sonnet(self, settings_service):
-        # The fresh-deploy default moved from ``databricks-gpt-5-4-nano`` to
-        # ``databricks-claude-sonnet-4-5`` after a live golden-set eval showed
+        # The fresh-deploy default moved from gpt-5-4-nano to
+        # claude-sonnet-4-5 after a live golden-set eval showed
         # nano returning zero suggestions on wide tables (blew max_tokens
         # mid-JSON) and taking three of seven planted wrong-column bindings
         # structural post-processing cannot catch. See the constant's docstring
@@ -135,8 +137,24 @@ class TestAiGatewaySettings:
         svc, sql_executor_mock = settings_service
         sql_executor_mock.query.return_value = []
 
-        assert svc.get_ai_endpoint_name() == "databricks-claude-sonnet-4-5"
-        assert svc.AI_ENDPOINT_NAME_DEFAULT == "databricks-claude-sonnet-4-5"
+        assert svc.get_ai_endpoint_name() == "system.ai.claude-sonnet-4-5"
+        assert svc.AI_ENDPOINT_NAME_DEFAULT == "system.ai.claude-sonnet-4-5"
+
+    def test_legacy_ai_endpoint_name_reads_as_its_model_service(self, settings_service):
+        """A ``databricks-*`` endpoint saved before the Unity Gateway migration keeps working."""
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["databricks-gpt-5-4-nano"]]
+
+        assert svc.get_ai_endpoint_name() == "system.ai.gpt-5-4-nano"
+
+    def test_save_ai_endpoint_name_maps_legacy_names(self, settings_service):
+        svc, sql_executor_mock = settings_service
+
+        saved = svc.save_ai_endpoint_name("databricks-claude-sonnet-4-5", user_email="admin@x")
+
+        assert saved == "system.ai.claude-sonnet-4-5"
+        _, kwargs = sql_executor_mock.upsert.call_args
+        assert kwargs["value_cols"]["setting_value"] == "system.ai.claude-sonnet-4-5"
 
     def test_ai_endpoint_name_respects_explicit_empty_value(self, settings_service):
         """An admin who explicitly clears the endpoint gets '', not the default."""
@@ -251,14 +269,14 @@ class TestEmbeddingEndpointSettings:
     """Embedding endpoint setting (Rules Registry Phase 4B/4C, auto-derived since 8B).
 
     Auto-derives a sensible default when unset so cosine rule suggestions
-    work from the AI enable toggle + serving endpoint alone.
+    work from the AI enable toggle + chat model alone.
     """
 
     def test_defaults_to_auto_derived_value(self, settings_service):
         svc, sql_executor_mock = settings_service
         sql_executor_mock.query.return_value = []
 
-        assert svc.get_embedding_endpoint_name() == "databricks-gte-large-en"
+        assert svc.get_embedding_endpoint_name() == "system.ai.gte-large-en"
 
     @pytest.mark.parametrize("stored", ["", "   ", "\n\t"])
     def test_empty_or_whitespace_row_falls_back_to_auto_derived_value(self, settings_service, stored):
@@ -271,7 +289,7 @@ class TestEmbeddingEndpointSettings:
         svc, sql_executor_mock = settings_service
         sql_executor_mock.query.return_value = [[stored]]
 
-        assert svc.get_embedding_endpoint_name() == "databricks-gte-large-en"
+        assert svc.get_embedding_endpoint_name() == "system.ai.gte-large-en"
 
     def test_save_trims_whitespace_and_round_trips(self, settings_service):
         svc, sql_executor_mock = settings_service
@@ -285,6 +303,12 @@ class TestEmbeddingEndpointSettings:
 
         sql_executor_mock.query.return_value = [["my-value"]]
         assert svc.get_embedding_endpoint_name() == "my-value"
+
+    def test_legacy_embedding_endpoint_name_reads_as_its_model_service(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [["databricks-gte-large-en"]]
+
+        assert svc.get_embedding_endpoint_name() == "system.ai.gte-large-en"
 
 
 class TestDefaultAutoUpgrade:

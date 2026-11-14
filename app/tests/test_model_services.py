@@ -1,0 +1,171 @@
+"""Tests for ``services/model_services.py`` — the Unity Gateway model-service transport."""
+
+from unittest.mock import create_autospec
+
+import pytest
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound, PermissionDenied
+
+from databricks_labs_dqx_app.backend.services.model_services import (
+    CHAT_COMPLETIONS_API,
+    EMBEDDINGS_API,
+    ModelServices,
+    ModelServiceUnavailableError,
+    model_service_name,
+)
+
+
+@pytest.fixture
+def ws():
+    return create_autospec(WorkspaceClient, instance=True)
+
+
+class TestModelServiceName:
+    @pytest.mark.parametrize(
+        ("configured", "expected"),
+        [
+            ("databricks-claude-sonnet-4-5", "system.ai.claude-sonnet-4-5"),
+            ("databricks-gte-large-en", "system.ai.gte-large-en"),
+            ("  databricks-gpt-5-4-nano ", "system.ai.gpt-5-4-nano"),
+            ("system.ai.claude-sonnet-4-5", "system.ai.claude-sonnet-4-5"),
+            ("main.models.databricks-custom", "main.models.databricks-custom"),
+            ("my-provisioned-endpoint", "my-provisioned-endpoint"),
+            ("", ""),
+        ],
+    )
+    def test_maps_legacy_endpoint_names_to_system_ai(self, configured, expected):
+        assert model_service_name(configured) == expected
+
+
+class TestChat:
+    def test_posts_an_openai_compatible_request(self, ws):
+        ws.api_client.do.return_value = {"choices": []}
+
+        ModelServices(ws).chat(
+            model="system.ai.claude-sonnet-4-5",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=10,
+            temperature=0,
+        )
+
+        ws.api_client.do.assert_called_once_with(
+            "POST",
+            "/ai-gateway/mlflow/v1/chat/completions",
+            body={
+                "model": "system.ai.claude-sonnet-4-5",
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 10,
+                "temperature": 0,
+            },
+        )
+
+    def test_omits_temperature_when_unset(self, ws):
+        ws.api_client.do.return_value = {}
+
+        ModelServices(ws).chat(model="system.ai.x", messages=[], max_tokens=5)
+
+        assert "temperature" not in ws.api_client.do.call_args.kwargs["body"]
+
+
+class TestEmbed:
+    def test_posts_inputs_to_the_embeddings_route(self, ws):
+        ws.api_client.do.return_value = {"data": [{"index": 0, "embedding": [0.1]}]}
+
+        response = ModelServices(ws).embed(model="system.ai.gte-large-en", inputs=["a"])
+
+        assert response == {"data": [{"index": 0, "embedding": [0.1]}]}
+        ws.api_client.do.assert_called_once_with(
+            "POST", "/ai-gateway/mlflow/v1/embeddings", body={"model": "system.ai.gte-large-en", "input": ["a"]}
+        )
+
+
+class TestCallErrors:
+    """Chat and embeddings share one mapping from Databricks errors to a fix the user can act on."""
+
+    @pytest.mark.parametrize("call", ["chat", "embed"])
+    def test_missing_model_names_the_model(self, ws, call):
+        ws.api_client.do.side_effect = NotFound("'system.ai.x' does not exist.")
+
+        with pytest.raises(ModelServiceUnavailableError, match="system.ai.x doesn't exist"):
+            _call(ModelServices(ws), call, "system.ai.x")
+
+    @pytest.mark.parametrize("call", ["chat", "embed"])
+    def test_missing_scope_says_to_sign_in_again(self, ws, call):
+        ws.api_client.do.side_effect = PermissionDenied(
+            "Provided OAuth token does not have required scopes: ai-gateway"
+        )
+
+        with pytest.raises(ModelServiceUnavailableError, match="sign in again"):
+            _call(ModelServices(ws), call, "system.ai.x")
+
+    @pytest.mark.parametrize("call", ["chat", "embed"])
+    def test_missing_grant_names_the_privileges(self, ws, call):
+        ws.api_client.do.side_effect = PermissionDenied("User does not have EXECUTE on model service")
+
+        with pytest.raises(ModelServiceUnavailableError, match="EXECUTE on model service system.ai.x"):
+            _call(ModelServices(ws), call, "system.ai.x")
+
+
+def _call(models: ModelServices, call: str, model: str) -> object:
+    if call == "chat":
+        return models.chat(model=model, messages=[{"role": "user", "content": "hi"}], max_tokens=5)
+    return models.embed(model=model, inputs=["hi"])
+
+
+class TestExists:
+    def test_true_when_the_model_service_resolves(self, ws):
+        ws.api_client.do.return_value = {"name": "model-services/system.ai.x"}
+
+        assert ModelServices(ws).exists("system.ai.x") is True
+        ws.api_client.do.assert_called_once_with("GET", "/api/2.1/unity-catalog/model-services/system.ai.x")
+
+    def test_encodes_each_name_part_into_the_path(self, ws):
+        ws.api_client.do.return_value = {}
+
+        ModelServices(ws).exists("a.b.c/../../../permissions/catalog/x?y#z")
+
+        path = ws.api_client.do.call_args.args[1]
+        assert path == "/api/2.1/unity-catalog/model-services/a.b.c%2F..%2F..%2F..%2Fpermissions%2Fcatalog%2Fx%3Fy%23z"
+
+    def test_false_when_not_found(self, ws):
+        ws.api_client.do.side_effect = NotFound("Resource not found")
+
+        assert ModelServices(ws).exists("system.ai.x") is False
+
+    def test_other_errors_propagate(self, ws):
+        ws.api_client.do.side_effect = PermissionDenied("no")
+
+        with pytest.raises(PermissionDenied):
+            ModelServices(ws).exists("system.ai.x")
+
+
+class TestListNames:
+    def test_stops_on_a_repeated_page_token(self, ws):
+        page = {
+            "model_services": [{"name": "model-services/system.ai.a", "supported_api_types": [CHAT_COMPLETIONS_API]}],
+            "next_page_token": "same",
+        }
+        ws.api_client.do.return_value = page
+
+        assert ModelServices(ws).list_names(api_type=CHAT_COMPLETIONS_API) == ["system.ai.a"]
+        assert ws.api_client.do.call_count == 2
+
+    def test_filters_by_api_type_and_follows_pages(self, ws):
+        ws.api_client.do.side_effect = [
+            {
+                "model_services": [
+                    {"name": "model-services/system.ai.b", "supported_api_types": [CHAT_COMPLETIONS_API]},
+                    {"name": "model-services/system.ai.e", "supported_api_types": [EMBEDDINGS_API]},
+                ],
+                "next_page_token": "t1",
+            },
+            {"model_services": [{"name": "model-services/system.ai.a", "supported_api_types": [CHAT_COMPLETIONS_API]}]},
+        ]
+
+        names = ModelServices(ws).list_names(api_type=CHAT_COMPLETIONS_API)
+
+        assert names == ["system.ai.a", "system.ai.b"]
+        assert ws.api_client.do.call_args_list[1].kwargs["query"] == {
+            "parent": "schemas/system.ai",
+            "page_token": "t1",
+        }

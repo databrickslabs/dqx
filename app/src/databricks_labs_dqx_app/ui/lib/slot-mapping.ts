@@ -38,3 +38,23 @@ export function buildSlotMapping(slots: RuleSlot[], columns: ColumnOut[]): Recor
   }
   return mapping;
 }
+
+/**
+ * {@link buildSlotMapping} for a rule whose slots were renamed on import.
+ *
+ * A contract rule names its slot after the column (``customer_id``); the
+ * batch import may match it to a generic rule whose slot is ``column``,
+ * returning ``slotRenames`` (``{customer_id: "column"}``). The column is
+ * resolved from the original slot name and keyed by the rule's slot name.
+ */
+export function buildGenericSlotMapping(
+  ruleSlots: RuleSlot[],
+  slotRenames: Record<string, string>,
+  columns: ColumnOut[],
+): Record<string, string> | null {
+  const inputNameFor = new Map(Object.entries(slotRenames).map(([input, ruleName]) => [ruleName, input]));
+  const inputSlots = ruleSlots.map((slot) => ({ ...slot, name: inputNameFor.get(slot.name) ?? slot.name }));
+  const byInputName = buildSlotMapping(inputSlots, columns);
+  if (byInputName === null) return null;
+  return Object.fromEntries(ruleSlots.map((slot, i) => [slot.name, byInputName[inputSlots[i].name]]));
+}

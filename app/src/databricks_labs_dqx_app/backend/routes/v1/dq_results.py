@@ -26,7 +26,6 @@ Permission model (unchanged from Phase 1):
 """
 
 import logging
-import re
 from collections.abc import Iterable
 from typing import Annotated
 
@@ -34,6 +33,7 @@ from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole, get_user_email
+from databricks_labs_dqx_app.backend.common.validation import require_valid
 from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import (
     get_app_settings_service,
@@ -47,6 +47,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_registry_service,
     get_run_set_service,
     get_score_cache_service,
+    get_scheduler_wake_marker,
     get_sp_sql_executor,
     get_user_catalog_names,
     require_role,
@@ -71,6 +72,7 @@ from databricks_labs_dqx_app.backend.models import (
     SeverityOut,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.scheduler_wake import SchedulerWakeMarker
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
 from databricks_labs_dqx_app.backend.services.dq_results_service import (
@@ -102,9 +104,11 @@ from databricks_labs_dqx_app.backend.services.score_view_service import (
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import (
     escape_sql_string,
+    escape_sql_string_strict,
     quote_object_fqn,
     sql_string_in_list,
     validate_fqn,
+    validate_run_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -122,25 +126,16 @@ _FAILED_ROWS_MAX = 100000
 # the UI's muted gray).
 _DEFAULT_LABEL_COLOR = "#6B7280"
 
-# Conservative allowlist for the user-supplied run_id filter. Observer run
-# ids are uuid4 strings (metrics_observer.DQMetricsObserver — hex plus
-# hyphens); the slightly wider charset tolerates prefixed/timestamped
-# overrides without admitting quotes, backslashes, whitespace, or control
-# characters. This validation is LOAD-BEARING: *escape_sql_string*
-# deliberately does not escape backslashes (it relies on upstream
-# validation, normally *validate_fqn* — which run_id never passes
-# through), so run_id must be charset-validated before it is interpolated
-# into any SQL string literal.
-_RUN_ID_SAFE = re.compile(r"^[A-Za-z0-9_\-.:]+$")
-
 
 def _validate_run_id(run_id: str | None) -> None:
-    """Reject a run_id unsafe to embed in a SQL string literal (400)."""
-    if run_id is not None and not _RUN_ID_SAFE.fullmatch(run_id):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid run_id: only letters, digits, '_', '-', '.' and ':' are allowed",
-        )
+    """Reject a run_id unsafe to embed in a SQL string literal (400).
+
+    Observer run ids are uuid4 strings (metrics_observer.DQMetricsObserver);
+    see *validate_run_id* for the shared allowlist.
+    """
+    if run_id is None:
+        return
+    require_valid(validate_run_id, run_id)
 
 
 # ---------------------------------------------------------------------------
@@ -194,11 +189,13 @@ def _fetch_check_rows(
     table_fqns: list[str] | None,
     run_id: str | None = None,
     include_drafts: bool = False,
+    allowed_catalogs: frozenset[str] | None = None,
 ) -> list[CheckResultRow]:
     """Read per-check result rows from ``v_dq_check_results``.
 
-    *table_fqns* None means "every table" (the global endpoint filters
-    by catalog app-side afterwards); an empty list short-circuits.
+    *table_fqns* None means "every table"; an empty list short-circuits.
+    *allowed_catalogs* pushes the caller's catalog access gate into the
+    query (see :func:`_catalog_gate_predicates`).
     Draft runs are excluded unless *include_drafts* — the view's
     ``run_mode`` column already resolves the stamped run-level tag
     (untagged legacy runs classify as published).
@@ -213,10 +210,12 @@ def _fetch_check_rows(
         conds.append(f"run_id = '{escape_sql_string(run_id)}'")
     if not include_drafts:
         conds.append(f"run_mode = '{RUN_MODE_PUBLISHED}'")
+    conds.extend(_catalog_gate_predicates(allowed_catalogs))
     where = f"WHERE {' AND '.join(conds)} " if conds else ""
     stmt = (
         f"SELECT input_location, run_id, CAST(run_time AS STRING) AS run_date, "
-        f"check_name, error_count, warning_count, input_row_count, run_mode, check_granularity, "
+        f"check_name, error_count, warning_count, input_row_count, evaluated_row_count, "
+        f"run_mode, check_granularity, "
         # As-of-run attribution baked into the view rows (frozen
         # checks_json payload — see score_view_service).
         f"severity, dimension, criticality, registry_rule_id, rule_name, pass_threshold, "
@@ -234,6 +233,7 @@ def _fetch_asof_check_rows(
     table_fqns: list[str] | None,
     run_id: str | None = None,
     include_drafts: bool = False,
+    allowed_catalogs: frozenset[str] | None = None,
 ) -> list[CheckResultRow]:
     """Read the scope's slice of the AS-OF expansion ``v_dq_check_results_asof``.
 
@@ -258,9 +258,11 @@ def _fetch_asof_check_rows(
         conds.append(f"input_location IN ({_in_list(table_fqns)})")
     if run_id:
         conds.append(f"run_id = '{escape_sql_string(run_id)}'")
+    conds.extend(_catalog_gate_predicates(allowed_catalogs))
     stmt = (
         f"SELECT input_location, run_id, CAST(as_of_time AS STRING) AS run_date, "
-        f"check_name, error_count, warning_count, input_row_count, run_mode, check_granularity, "
+        f"check_name, error_count, warning_count, input_row_count, evaluated_row_count, "
+        f"run_mode, check_granularity, "
         f"severity, dimension, criticality, registry_rule_id, rule_name, pass_threshold, "
         f"to_json(columns) AS columns_json "
         f"FROM {view} "  # noqa: S608
@@ -268,6 +270,28 @@ def _fetch_asof_check_rows(
         f"ORDER BY as_of_time"
     )
     return parse_check_rows(sql.query_dicts(stmt))
+
+
+def _catalog_gate_predicates(allowed_catalogs: frozenset[str] | None) -> list[str]:
+    """Restrict check rows to the caller's accessible catalogs in the warehouse.
+
+    Only the access gate is pushed down: drilldown facets stay app-side
+    because ``compute_entity_results`` derives batch and trend instants
+    from the full, pre-facet scope. ``None`` means no gate; an empty set
+    matches nothing. Matches the table's catalog prefix in both plain
+    (``cat.``) and backtick-quoted (```cat`.``) form, agreeing with
+    :func:`catalog_of` for catalog names that contain dots.
+    """
+    if allowed_catalogs is None:
+        return []
+    if not allowed_catalogs:
+        return ["false"]
+    prefixes: list[str] = []
+    for catalog in sorted(allowed_catalogs):
+        prefixes.append(f"{catalog}.")
+        prefixes.append(f"`{catalog.replace('`', '``')}`.")
+    ors = " OR ".join(f"startswith(input_location, '{escape_sql_string_strict(p)}')" for p in prefixes)
+    return [f"({ors})"]
 
 
 def _wants_trends(axes: str) -> bool:
@@ -391,6 +415,7 @@ def _facets(
     table: list[str] | None = None,
     catalog: list[str] | None = None,
     schema: list[str] | None = None,
+    outcome: list[str] | None = None,
 ) -> ResultFacets:
     return ResultFacets(
         dimensions=tuple(dimension or ()),
@@ -400,6 +425,7 @@ def _facets(
         tables=tuple(table or ()),
         catalogs=tuple(catalog or ()),
         schemas=tuple(schema or ()),
+        outcomes=tuple(value for value in (outcome or ()) if value in ("passed", "failed")),
     )
 
 
@@ -614,6 +640,8 @@ def _consolidate_runs(rows: list[RunRowOut], run_set_by_run_id: dict[str, str]) 
         rates = [m.pass_rate for m in members if m.pass_rate is not None]
         failed = [m.failed_tests for m in members if m.failed_tests is not None]
         totals = [m.total_tests for m in members if m.total_tests is not None]
+        table_failed = [m.table_failed_tests for m in members if m.table_failed_tests is not None]
+        table_totals = [m.table_total_tests for m in members if m.table_total_tests is not None]
         # A batch breaches if any member run breached; carries the worst.
         batch_crit: str | None = None
         for m in members:
@@ -626,6 +654,8 @@ def _consolidate_runs(rows: list[RunRowOut], run_set_by_run_id: dict[str, str]) 
                 pass_rate=sum(rates) / len(rates) if rates else None,
                 failed_tests=sum(failed) if failed else None,
                 total_tests=sum(totals) if totals else None,
+                table_failed_tests=sum(table_failed) if table_failed else None,
+                table_total_tests=sum(table_totals) if table_totals else None,
                 # A batch is 'draft' only if every member is a draft run;
                 # any published member makes it a published batch.
                 run_mode=(
@@ -674,7 +704,9 @@ def _runs_from_metric_view(
     stmt = (
         f"SELECT run_id, CAST(run_time AS STRING) AS run_ts, run_mode, "
         f"MEASURE(score) AS pass_rate, MEASURE(failed_tests) AS failed_tests, "
-        f"MEASURE(total_tests) AS total_tests "
+        f"MEASURE(total_tests) AS total_tests, "
+        f"MEASURE(table_failed_tests) AS table_failed_tests, "
+        f"MEASURE(table_total_tests) AS table_total_tests "
         f"FROM {mv} "  # noqa: S608
         f"WHERE {' AND '.join(conds)} "
         f"GROUP BY run_id, run_time, run_mode "
@@ -688,6 +720,8 @@ def _runs_from_metric_view(
             pass_rate=safe_float(row.get("pass_rate")),
             failed_tests=safe_int(row.get("failed_tests")),
             total_tests=safe_int(row.get("total_tests")),
+            table_failed_tests=safe_int(row.get("table_failed_tests")),
+            table_total_tests=safe_int(row.get("table_total_tests")),
             run_mode=row.get("run_mode"),
             breached=breaches.get(row.get("run_id")) is not None,
             breach_criticality=breaches.get(row.get("run_id")),
@@ -841,6 +875,7 @@ def get_global_results(
     run_sets: Annotated[RunSetService, Depends(get_run_set_service)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     registry: Annotated[RegistryService, Depends(get_registry_service)],
+    wake: Annotated[SchedulerWakeMarker, Depends(get_scheduler_wake_marker)],
     dimension: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
@@ -848,6 +883,7 @@ def get_global_results(
     table: Annotated[list[str] | None, Query()] = None,
     catalog: Annotated[list[str] | None, Query()] = None,
     schema: Annotated[list[str] | None, Query()] = None,
+    outcome: Annotated[list[str] | None, Query()] = None,
     run_id: str | None = Query(None),
     axes: str = Query("all"),
     include_drafts: bool = Query(False),
@@ -861,18 +897,23 @@ def get_global_results(
     the By-table cross-filter: a repeatable list of member FQNs, applied
     app-side like the other four facets (the rows it filters are already
     catalog-gated, so an inaccessible value simply matches nothing).
+    *outcome* keeps only ``passed`` or ``failed`` checks.
 
     Concurrent member runs of one run set are consolidated onto their
     RUN-BATCH instant (``dq_run_set_members`` join) so the per-table trend
     markers align; *as_of_batch* caps to a chosen batch's instant.
+
+    Signals the scheduler on the way in (the Results page load), so a run
+    started with no page watching gets its score refreshed promptly.
     """
+    wake.signal()
     _validate_run_id(run_id)
     _validate_run_id(as_of_batch)
     _validate_table_facet(table)
     try:
         rows = [
             row
-            for row in _fetch_check_rows(sql, app_conf, None, run_id, include_drafts)
+            for row in _fetch_check_rows(sql, app_conf, None, run_id, include_drafts, allowed_catalogs=user_catalogs)
             if catalog_of(row.table_fqn) in user_catalogs
         ]
         accessible_fqns = sorted({row.table_fqn for row in rows})
@@ -885,7 +926,9 @@ def get_global_results(
         if _wants_trends(axes):
             asof_rows = [
                 row
-                for row in _fetch_asof_check_rows(sql, app_conf, None, run_id, include_drafts)
+                for row in _fetch_asof_check_rows(
+                    sql, app_conf, None, run_id, include_drafts, allowed_catalogs=user_catalogs
+                )
                 if catalog_of(row.table_fqn) in user_catalogs
             ]
     except Exception as exc:
@@ -912,7 +955,7 @@ def get_global_results(
     )
     return compute_entity_results(
         rows,
-        _facets(dimension, severity, rule, column, table, catalog, schema),
+        _facets(dimension, severity, rule, column, table, catalog, schema, outcome),
         axes=axes,
         table_axis="by_table",
         failed_records_by_run=failed_records,

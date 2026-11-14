@@ -13,7 +13,11 @@
  * (Monitored Tables overview and detail page) can't drift out of sync.
  */
 import type { QueryClient } from "@tanstack/react-query";
-import { getListMonitoredTablesQueryKey, getListDataProductsQueryKey } from "@/lib/api";
+import {
+  getListDataProductsQueryKey,
+  getListImplementedRulesQueryKey,
+  getListMonitoredTablesQueryKey,
+} from "@/lib/api";
 
 const MONITORED_TABLE_DETAIL_PATH_PREFIX = "/api/v1/monitored-tables/";
 
@@ -27,6 +31,8 @@ const MONITORED_TABLE_DETAIL_PATH_PREFIX = "/api/v1/monitored-tables/";
  *   all key off the same `/api/v1/monitored-tables` base path)
  * - Data Products' member-table summaries, which derive counts from this
  *   binding's applied rules
+ * - every implemented-rules read (the Tables / Rules overview row
+ *   expansions), whose parameter-less key matches each scoped variant
  * - when *bindingId* is known: that binding's detail, versions, profile, and
  *   applied-rules queries, matched by URL-path predicate since they're all
  *   nested under `/api/v1/monitored-tables/{bindingId}`
@@ -34,6 +40,7 @@ const MONITORED_TABLE_DETAIL_PATH_PREFIX = "/api/v1/monitored-tables/";
 export function invalidateAfterMonitoredTableChange(queryClient: QueryClient, bindingId?: string): void {
   queryClient.invalidateQueries({ queryKey: getListMonitoredTablesQueryKey() });
   queryClient.invalidateQueries({ queryKey: getListDataProductsQueryKey() });
+  queryClient.invalidateQueries({ queryKey: getListImplementedRulesQueryKey() });
   // Invalidate ALL validation-run query variants (full and summary) so the
   // table-detail spinner sees the freshly-started run immediately (G3). Using
   // the base path as the prefix matches both [path, null] and [path, {summary:true}].

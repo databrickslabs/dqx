@@ -19,12 +19,14 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_obo_ws,
     get_review_status_service,
     get_rules_catalog_service,
+    get_scheduler_wake_marker,
     get_sp_sql_executor,
     get_user_catalog_names,
     get_view_service,
     require_role,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.scheduler_wake import SchedulerWakeMarker
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
@@ -227,6 +229,8 @@ async def list_validation_runs(
 
 
 _RECENT_FAILURES_LIMIT = 50
+# Task-runner ``task_type`` values that write ``dq_validation_runs`` rows.
+_VALIDATION_TASK_TYPES = frozenset({"dryrun", "scheduled"})
 
 
 @router.get(
@@ -235,46 +239,29 @@ _RECENT_FAILURES_LIMIT = 50
     operation_id="listRecentValidationFailures",
     dependencies=[require_role(*_ALL_ROLES)],
 )
-def list_recent_validation_failures(
+async def list_recent_validation_failures(
     job_svc: Annotated[JobService, Depends(get_job_service)],
-    app_conf: Annotated[AppConfig, Depends(get_conf)],
     user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
-    sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
 ) -> list[RunFailureOut]:
     """Return recently-failed validation runs, bounded to the most recent *N*.
 
     Intended for the app-wide toast watcher: returns FAILED runs only with
-    minimal fields (run_id, source_table_fqn, status, created_at). The
-    endpoint is cheap by construction — no error_message, no counts, no
-    review-status join. The full run history is still available via
-    ``GET /dryrun/runs`` for the Runs History page.
+    minimal fields (run_id, source_table_fqn, status, created_at). Every open
+    tab polls this, so it reads the task-runner job runs from the Jobs API
+    instead of ``dq_validation_runs`` and never keeps the SQL warehouse awake.
+    The full run history is still available via ``GET /dryrun/runs``.
     """
     try:
-        table = sql.fqn(_DRYRUN_TABLE)
-        rows = job_svc.list_dryrun_rows(table, limit=_RECENT_FAILURES_LIMIT * 10)
-
-        # Reconcile stale RUNNING placeholders so the failure list stays
-        # accurate even when the task runner crashed before writing a result.
-        # Best-effort — never let it break the listing.
-        try:
-            reconcile_running_rows(sql, app_conf, _DRYRUN_TABLE, rows, job_svc.get_run_status)
-        except Exception as exc:
-            logger.warning("Failed to reconcile RUNNING validation runs (recent-failures): %s", exc)
+        failed = [run for run in await job_svc.list_recent_failed_runs() if run.task_type in _VALIDATION_TASK_TYPES]
 
         results: list[RunFailureOut] = []
-        for row in rows:
-            if row.get("status") != "FAILED":
-                continue
-            fqn = row.get("source_table_fqn") or ""
-            if not fqn.startswith(_SQL_CHECK_PREFIX) and _catalog_of(fqn) not in user_catalogs:
+        for run in failed:
+            # A run with no table cannot pass the catalog filter, so it is skipped.
+            fqn = run.source_table_fqn or ""
+            if not fqn or (not fqn.startswith(_SQL_CHECK_PREFIX) and _catalog_of(fqn) not in user_catalogs):
                 continue
             results.append(
-                RunFailureOut(
-                    run_id=row.get("run_id") or "",
-                    source_table_fqn=fqn,
-                    status="FAILED",
-                    created_at=row.get("created_at"),
-                )
+                RunFailureOut(run_id=run.app_run_id, source_table_fqn=fqn, status="FAILED", created_at=run.created_at)
             )
             if len(results) >= _RECENT_FAILURES_LIMIT:
                 break
@@ -300,6 +287,7 @@ def batch_run_from_catalog(
     rules_svc: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
     settings_svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    wake: Annotated[SchedulerWakeMarker, Depends(get_scheduler_wake_marker)],
 ) -> BatchRunFromCatalogOut:
     """Read approved checks from the rules catalog for the given tables and submit dry-run jobs."""
     submitted: list[DryRunSubmitOut] = []
@@ -392,6 +380,8 @@ def batch_run_from_catalog(
             logger.error("Failed to submit run for %s: %s", table_fqn, e, exc_info=True)
             errors.append(f"{table_fqn}: {e}")
 
+    if submitted:
+        wake.signal()
     return BatchRunFromCatalogOut(submitted=submitted, errors=errors)
 
 
@@ -409,6 +399,7 @@ def submit_dry_run(
     validate_checks_fn: Annotated[Callable[[list[Any]], ChecksValidationStatus], Depends(get_check_validator)],
     settings_svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    wake: Annotated[SchedulerWakeMarker, Depends(get_scheduler_wake_marker)],
 ) -> DryRunSubmitOut:
     """Validate checks, create a temporary view (OBO), and submit a dry-run job (SP)."""
     try:
@@ -499,6 +490,8 @@ def submit_dry_run(
                 )
             raise
 
+        if not body.skip_history:
+            wake.signal()
         return DryRunSubmitOut(run_id=run_id, job_run_id=job_run_id, view_fqn=view_fqn)
     except HTTPException:
         raise
@@ -586,7 +579,7 @@ def get_dry_run_status(
 
         is_terminal = status.state in ("TERMINATED", "INTERNAL_ERROR", "SKIPPED")
 
-        if is_terminal and resolved_view_fqn:
+        if is_terminal and resolved_view_fqn and "tmp_view_" in resolved_view_fqn:
             try:
                 view_svc.drop_view(resolved_view_fqn)
                 view_cleaned_up = True

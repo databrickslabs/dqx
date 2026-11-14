@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from .me import router as me_router
 from .setup import router as setup_router
 from .check_functions import router as check_functions_router
+from .branding import router as branding_router
 from .config import router as config_router
 from .contract import router as contract_router
 from .discovery import router as discovery_router
@@ -36,10 +37,12 @@ from .permissions import router as permissions_router
 from .admin import router as admin_router
 from .marketplace import router as marketplace_router
 from .schedule_grants import router as schedule_grants_router
+from .monitoring import router as monitoring_router
 
 v1_router = APIRouter()
 v1_router.include_router(me_router, tags=["meta"])
 v1_router.include_router(setup_router, prefix="/setup", tags=["setup"])
+v1_router.include_router(branding_router, prefix="/config/branding", tags=["config"])
 v1_router.include_router(config_router, prefix="/config", tags=["config"])
 v1_router.include_router(schedules_router, prefix="/schedules", tags=["schedules"])
 v1_router.include_router(roles_router, prefix="/roles", tags=["roles"])
@@ -74,3 +77,4 @@ v1_router.include_router(permissions_router, prefix="/permissions", tags=["permi
 v1_router.include_router(admin_router, prefix="/admin", tags=["admin"])
 v1_router.include_router(marketplace_router, prefix="/marketplace", tags=["marketplace"])
 v1_router.include_router(schedule_grants_router, prefix="/schedule-grants", tags=["schedule-grants"])
+v1_router.include_router(monitoring_router, prefix="/monitoring", tags=["monitoring"])

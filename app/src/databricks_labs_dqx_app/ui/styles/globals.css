@@ -41,6 +41,8 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  --header: var(--background);
+  --header-foreground: var(--foreground);
 }
 
 .dark {
@@ -78,6 +80,8 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(0.269 0 0);
   --sidebar-ring: oklch(0.439 0 0);
+  --header: var(--background);
+  --header-foreground: var(--foreground);
 }
 
 @theme inline {
@@ -117,6 +121,8 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-header: var(--header);
+  --color-header-foreground: var(--header-foreground);
 
   --animate-shine: shine 5s linear infinite;
   @keyframes shine {

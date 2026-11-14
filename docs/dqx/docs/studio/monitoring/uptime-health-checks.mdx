@@ -1,0 +1,102 @@
+---
+sidebar_position: 7
+title: Uptime health checks
+---
+
+import Admonition from '@theme/Admonition';
+import { FeatureLifecycleStage, AvailableSinceVersion, FeatureTags } from '@site/src/components/FeatureTags';
+
+# Uptime health checks
+
+<FeatureTags>
+  <FeatureLifecycleStage stage="beta" heading={false} />
+  <AvailableSinceVersion version="0.17.0" heading={false} />
+</FeatureTags>
+
+DQX Studio exposes read-only **validation-status endpoints** so an external uptime
+monitor — Site24x7, Pingdom, Datadog, or any checker that can send an HTTP request
+with a Databricks OAuth token — can poll a table's data-quality health like a
+service health check. The contract is deliberately simple:
+
+- **200 OK** — the latest completed run passed (no error rows).
+- **503 Service Unavailable** — the run failed, was canceled, found error rows, or
+  is older than the freshness bound you asked for.
+
+Point your monitor at one of the endpoints below and alert on any non-200 response.
+
+## Check the latest run for a table
+
+```
+GET /api/v1/monitoring/status/table/{table_fqn}
+```
+
+Returns the pass/fail status of the **most recently completed** run for a monitored
+table. `table_fqn` is the three-level Unity Catalog name, e.g. `main.sales.orders`.
+
+In-progress, canceled, and ad-hoc preview runs are skipped — they say nothing about
+the table's data — so the endpoint always reflects the last real scheduled or
+on-demand run.
+
+### Catch a job that stopped running
+
+Add `max_age_minutes` to be told when a table's validation has gone quiet. If the
+latest completed run finished longer ago than this bound, the endpoint returns
+**503** with `stale: true` instead of serving a stale "all clear":
+
+```
+GET /api/v1/monitoring/status/table/main.sales.orders?max_age_minutes=90
+```
+
+<Admonition type="tip" title="Sizing max_age_minutes">
+Set it to a little more than the table's schedule interval — e.g. ~90 for an
+hourly schedule — so a run that simply hasn't fired yet doesn't trip the alert, but
+a validation job that has actually stopped does. The maximum is 129600 (90 days),
+which matches the default run-history retention.
+</Admonition>
+
+## Check a specific run
+
+```
+GET /api/v1/monitoring/status/run/{run_id}
+```
+
+Returns the status of one run by its id. Unlike the by-table endpoint, a **canceled**
+run is reported here (as 503) rather than skipped — you asked for that specific run,
+so its outcome is surfaced. Preview runs are still excluded.
+
+## Response
+
+Both endpoints return the same minimal body:
+
+| Field | Description |
+|---|---|
+| `status` | `SUCCESS`, `FAILED`, or `CANCELED` |
+| `source_table_fqn` | The table the run validated |
+| `run_id` | The run's id |
+| `error_rows` | Rows that failed an error-level check (clean when 0 or null) |
+| `warning_rows` | Rows that failed a warning-level check (do not affect pass/fail) |
+| `updated_at` | When the run completed |
+| `stale` | `true` when the run is older than the requested `max_age_minutes` |
+
+Other status codes: **404** when no completed run exists for the table (or the run id
+is unknown), and **400** for a malformed table name or run id.
+
+<Admonition type="note" title="Warnings don't fail the check">
+Only error rows drive the 200/503 result. A clean run with warning rows still returns
+200 — warnings are reported in the body for context but don't mark the table "down".
+</Admonition>
+
+## Authentication
+
+Call the endpoints with a Databricks OAuth token for a principal that has any DQX
+Studio role (**Viewer** is enough). Most uptime monitors let you set a static
+`Authorization: Bearer <token>` header:
+
+```bash
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  -H "Authorization: Bearer $DATABRICKS_TOKEN" \
+  "https://<app-host>/api/v1/monitoring/status/table/main.sales.orders?max_age_minutes=90"
+```
+
+A `200` means the table is healthy and fresh; a `503` means your monitor should
+raise an alert.

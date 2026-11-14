@@ -78,6 +78,48 @@ def test_record_updates_existing_row(svc, sql):
     assert "parse_json('[{\"column\": \"new_col\"}]')" in update
 
 
+def test_record_persists_row_filter_and_pass_threshold(svc, sql):
+    sql.query.return_value = []
+
+    result = svc.record(
+        "b1", "r1", [{"column": "c"}], "alice@example.com", row_filter="  region = 'EU'  ", pass_threshold=90
+    )
+
+    assert result.row_filter == "region = 'EU'"
+    assert result.pass_threshold == 90
+    insert = next(s for s in _executed_sql(sql) if s.strip().startswith("INSERT INTO"))
+    assert "region = ''EU''" in insert
+    assert "90" in insert
+
+
+def test_record_update_overwrites_row_filter_and_pass_threshold(svc, sql):
+    sql.query.return_value = [
+        ["pa1", "b1", "r1", json.dumps([{"column": "c"}]), "bob@example.com", None, "old = 1", "50"],
+    ]
+
+    result = svc.record("b1", "r1", [{"column": "c"}], "alice@example.com", row_filter=None, pass_threshold=None)
+
+    assert result.row_filter is None
+    assert result.pass_threshold is None
+    update = next(s for s in _executed_sql(sql) if s.strip().startswith("UPDATE"))
+    assert "`row_filter` = NULL" in update
+    assert "`pass_threshold` = NULL" in update
+
+
+def test_list_parses_row_filter_and_pass_threshold(svc, sql):
+    sql.query.return_value = [
+        ["pa1", "b1", "r1", None, None, None, "x > 0", "75"],
+        ["pa2", "b2", "r1", None, None, None],
+    ]
+
+    rows = svc.list_for_rule("r1")
+
+    assert rows[0].row_filter == "x > 0"
+    assert rows[0].pass_threshold == 75
+    assert rows[1].row_filter is None
+    assert rows[1].pass_threshold is None
+
+
 def test_list_for_rule_parses_rows(svc, sql):
     sql.query.return_value = [
         ["pa1", "b1", "r1", json.dumps([{"column": "a"}]), "alice@example.com", "2026-07-01T00:00:00+00:00"],

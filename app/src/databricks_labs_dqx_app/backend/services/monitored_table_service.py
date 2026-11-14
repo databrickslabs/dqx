@@ -48,7 +48,13 @@ from databricks.sdk import WorkspaceClient
 from databricks_labs_dqx_app.backend.common.permissions import ObjectType
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.score_cache_service import parse_cached_score
-from databricks_labs_dqx_app.backend.services.owner_display_name_service import resolve_owner_display_name
+from databricks_labs_dqx_app.backend.services.owner_display_name_service import (
+    DeferredTaskRunner,
+    fill_missing_owner_display_names,
+    fill_owner_display_names_from_cache,
+    resolve_owner_display_name,
+    run_in_background,
+)
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_fqn
 
@@ -194,11 +200,13 @@ class MonitoredTableService:
         profiling_sql: SqlExecutor,
         permissions: PermissionsService | None = None,
         sp_ws: WorkspaceClient | None = None,
+        defer_owner_resolution: DeferredTaskRunner = run_in_background,
     ) -> None:
         self._sql = sql
         self._profiling_sql = profiling_sql
         self._perms = permissions
         self._sp_ws = sp_ws
+        self._defer_owner_resolution = defer_owner_resolution
         self._table = sql.fqn("dq_monitored_tables")
         self._versions_table = sql.fqn("dq_monitored_table_versions")
         self._applied_table = sql.fqn("dq_applied_rules")
@@ -470,6 +478,11 @@ class MonitoredTableService:
         if name:
             needle = name.lower()
             tables = [(t, s, c) for t, s, c in tables if needle in t.table_fqn.lower()]
+        # Cache-only owner fill: a list read never waits on SCIM (unresolved
+        # owners are resolved and written back off the request path).
+        fill_owner_display_names_from_cache(
+            [t for t, _, _c in tables], self._sp_ws, self._sql, self._table, defer=self._defer_owner_resolution
+        )
         applied_counts = self._applied_rule_counts([t.binding_id for t, _, _c in tables])
         check_counts = self._materialized_check_counts([t.table_fqn for t, _, _c in tables])
         bindings_with_rules = [bid for bid in applied_counts if applied_counts[bid] > 0]
@@ -712,6 +725,7 @@ class MonitoredTableService:
         table = self._get(binding_id)
         if table is None:
             return None
+        fill_missing_owner_display_names([table], self._sp_ws, self._sql, self._table)
         # ``last_profiled_at`` / ``last_run_at`` are read straight off the OLTP
         # row (denormalized on completion by :meth:`refresh_run_timestamps`) —
         # no warehouse hop on the detail load (About tab reads last_profiled_at).
@@ -754,6 +768,19 @@ class MonitoredTableService:
             return {}
         in_list = ", ".join(f"'{escape_sql_string(fqn)}'" for fqn in candidates)
         sql = f"SELECT table_fqn, binding_id FROM {self._table} WHERE table_fqn IN ({in_list})"  # noqa: S608
+        rows = self._sql.query(sql)
+        return {row[0]: row[1] for row in rows if row and row[0] and row[1]}
+
+    def get_table_fqns(self, binding_ids: set[str]) -> dict[str, str]:
+        """Batched ``binding_id -> table_fqn`` lookup in ONE ``IN (...)`` query.
+
+        A lightweight join key for callers that only need each binding's table
+        name (no score, counts, or owner enrichment). Unknown ids are absent.
+        """
+        if not binding_ids:
+            return {}
+        in_list = ", ".join(f"'{escape_sql_string(b)}'" for b in sorted(binding_ids))
+        sql = f"SELECT binding_id, table_fqn FROM {self._table} WHERE binding_id IN ({in_list})"  # noqa: S608
         rows = self._sql.query(sql)
         return {row[0]: row[1] for row in rows if row and row[0] and row[1]}
 

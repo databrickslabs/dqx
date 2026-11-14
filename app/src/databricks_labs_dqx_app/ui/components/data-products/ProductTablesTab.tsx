@@ -85,7 +85,7 @@ export function ProductTablesTab({ editState, canEdit }: Props) {
             </TableHeader>
             <TableBody>
               {members.map((m) => (
-                <TableRow key={m.binding_id} className="group">
+                <TableRow key={m.binding_id}>
                   <TableCell className="font-mono text-xs">
                     <Link
                       to="/monitored-tables/$bindingId"
@@ -138,8 +138,9 @@ export function ProductTablesTab({ editState, canEdit }: Props) {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-7 w-7 opacity-0 group-hover:opacity-100"
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
                         aria-label={t("dataProducts.removeTableAria", { table: m.table_fqn })}
+                        title={t("dataProducts.removeTableAria", { table: m.table_fqn })}
                         onClick={() => setConfirmMember(m)}
                       >
                         <X className="h-4 w-4" />

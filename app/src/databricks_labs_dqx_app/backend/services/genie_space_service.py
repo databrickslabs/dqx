@@ -49,7 +49,8 @@ questions with a context preamble — ``(Table: <fqn>)`` or
 instructions route on that preamble.
 
 Idempotency: a config hash of the serialized space is stored alongside the
-space id. Unchanged hash -> no-op; changed hash -> PATCH the space in
+space id. Unchanged content is not replaced; warehouse and audience drift
+are reconciled independently. Changed hash -> PATCH the space in
 place (on PATCH failure the new hash is NOT persisted so the next startup
 retries); missing id -> find-or-create by title prefix (Databricks appends
 a timestamp to the title on create). Best-effort throughout — never raises
@@ -65,8 +66,10 @@ from collections.abc import Callable
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
+from databricks.sdk.service.iam import PermissionLevel
 
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.compute_service import WAREHOUSE_USE_LEVELS, ComputeService
 from databricks_labs_dqx_app.backend.services.entitlement_service import FAILING_ROWS_VIEW_NAME
 from databricks_labs_dqx_app.backend.services.metadata_dim_service import (
     DIM_MONITORED_TABLES_TABLE_NAME,
@@ -78,6 +81,8 @@ from databricks_labs_dqx_app.backend.services.score_view_service import (
     METRIC_VIEW_NAME,
     SHAPING_VIEW_NAME,
 )
+from databricks_labs_dqx_app.backend.setup.acl import GENIE_RUN_LEVELS, reconcile_group_acl
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import quote_object_fqn, validate_identifier
 
 logger = logging.getLogger(__name__)
@@ -178,13 +183,15 @@ TEXT_INSTRUCTIONS = [
         "and number of tests).\n"
     ),
     (
-        "A test is one record-level evaluation of one check. Read every metric-view measure with "
-        "MEASURE(); the quality score is the equal-weight mean of rule scores. A rule first averages "
-        "its row-check pass rates and binary dataset-check verdicts. failed_tests "
-        "and total_tests remain row-test diagnostics and do not reconstruct the score. State every score or "
-        'rate as a percentage with one decimal ("91.5%", never a bare fraction like 0.915), and '
-        'report failures as a share of tests with the denominator ("1,250 of 50,000 tests, 2.5%"), '
-        "not a bare count.\n"
+        "A row-level test is one record evaluation of one check; a table-level test is one "
+        "whole-table (dataset) check verdict. Report row-level tests and table-level tests separately "
+        "(failed_tests / total_tests versus table_failed_tests / table_total_tests) and never add them "
+        "together. A filtered check's tests are the rows its filter selected. Read every metric-view "
+        "measure with MEASURE(); the quality score is the equal-weight mean of rule scores (a rule "
+        "averages its checks' pass rates and binary dataset verdicts), not a ratio of tests. State every "
+        'score or rate as a percentage with one decimal ("91.5%", never a bare fraction like 0.915), and '
+        'report row-level failures as a share of tests with the denominator ("1,250 of 50,000 tests, '
+        '2.5%"), not a bare count.\n'
     ),
     (
         "Use human names — the fully-qualified table name (backtick-quoted, like identifiers with "
@@ -225,7 +232,7 @@ TEXT_INSTRUCTIONS = [
     ),
     (
         "A check breaches when its run pass rate (1 - (error_count + warning_count) / "
-        "input_row_count) falls below the pass_threshold frozen into that run — a 0-100 percent on "
+        "evaluated_row_count) falls below the pass_threshold frozen into that run — a 0-100 percent on "
         "v_dq_check_results (NULL = not judged, excluded). List breaches worst-first with pass rate "
         "and threshold. There is otherwise no target or SLA: report rates without judging them "
         "against an invented goal, attribute what you can see, and say plainly when a cause (such as "
@@ -236,7 +243,8 @@ TEXT_INSTRUCTIONS = [
         "before concluding and name each material one unprompted with its category and magnitude — "
         "never settle for reporting that something happened. Compare the latest run with the most "
         "recent prior run whose value differs, pair rules by registry_rule_id where present "
-        "(check_name otherwise), rank by the change in failed tests, and cite the run date and time "
+        "(check_name otherwise), rank by the change in row-level failed tests (report table-level "
+        "test changes beside them, never summed), and cite the run date and time "
         "of both runs (curr_run_ts / prev_run_ts). The contributor categories: rules added (a check "
         "evaluated for the first time — not one that passed before), rules removed, rules renamed "
         "(same registry_rule_id, new check_name — a rename, not an add), rule definitions changed "
@@ -280,6 +288,32 @@ def _lines(sql: str) -> list[str]:
     return [ln + "\n" if i < len(raw) - 1 else ln for i, ln in enumerate(raw)]
 
 
+# Shared by the diagnose queries, after a run_totals CTE (run_ts plus the four test
+# measures per published run). The comparison run is the newest earlier run whose row
+# tests OR table tests differ, falling back to the run just before. IS DISTINCT FROM is
+# null-safe: a dataset-only table has NULL row tests, and a change confined to table
+# tests must still count as a difference.
+_PREV_DIFFERING_RUN_CTES = (
+    "cur_ts AS (SELECT MAX(run_ts) AS run_ts FROM run_totals),\n"
+    "cur_total AS (\n"
+    "  SELECT failed_tests, total_tests, table_failed_tests, table_total_tests\n"
+    "  FROM run_totals WHERE run_ts = (SELECT run_ts FROM cur_ts)\n"
+    "),\n"
+    "prev_ts AS (\n"
+    "  SELECT COALESCE(\n"
+    "    (SELECT MAX(run_ts) FROM run_totals\n"
+    "     WHERE run_ts < (SELECT run_ts FROM cur_ts)\n"
+    "       AND (failed_tests IS DISTINCT FROM (SELECT failed_tests FROM cur_total)\n"
+    "         OR total_tests IS DISTINCT FROM (SELECT total_tests FROM cur_total)\n"
+    "         OR table_failed_tests IS DISTINCT FROM (SELECT table_failed_tests FROM cur_total)\n"
+    "         OR table_total_tests IS DISTINCT FROM (SELECT table_total_tests FROM cur_total))),\n"
+    "    (SELECT MAX(run_ts) FROM run_totals\n"
+    "     WHERE run_ts < (SELECT run_ts FROM cur_ts))\n"
+    "  ) AS run_ts\n"
+    "),\n"
+)
+
+
 def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     """Curated (question, SQL) examples — one per pre-canned chip question.
 
@@ -309,7 +343,9 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     current_score = (
         "SELECT MEASURE(`score`) AS pass_rate,\n"
         "       MEASURE(`failed_tests`) AS failed_tests,\n"
-        "       MEASURE(`total_tests`) AS total_tests\n"
+        "       MEASURE(`total_tests`) AS total_tests,\n"
+        "       MEASURE(`table_failed_tests`) AS table_failed_tests,\n"
+        "       MEASURE(`table_total_tests`) AS table_total_tests\n"
         f"FROM {mv}\n"
         "WHERE `input_location` = :table_name\n"
         "  AND `run_mode` = 'published'\n"
@@ -318,7 +354,9 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
 
     failed_in_latest = (
         "SELECT MEASURE(`failed_tests`) AS failed_tests,\n"
-        "       MEASURE(`total_tests`) AS total_tests\n"
+        "       MEASURE(`total_tests`) AS total_tests,\n"
+        "       MEASURE(`table_failed_tests`) AS table_failed_tests,\n"
+        "       MEASURE(`table_total_tests`) AS table_total_tests\n"
         f"FROM {mv}\n"
         "WHERE `input_location` = :table_name\n"
         "  AND `run_mode` = 'published'\n"
@@ -328,24 +366,32 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     rules_failing = (
         "SELECT `check_name`, `dimension`, `severity`,\n"
         "       MEASURE(`failed_tests`) AS failed_tests,\n"
-        "       MEASURE(`total_tests`) AS total_tests\n"
+        "       MEASURE(`total_tests`) AS total_tests,\n"
+        "       MEASURE(`table_failed_tests`) AS table_failed_tests,\n"
+        "       MEASURE(`table_total_tests`) AS table_total_tests\n"
         f"FROM {mv}\n"
         "WHERE `input_location` = :table_name\n"
         "  AND `run_mode` = 'published'\n"
         f"{latest_published}\n"
         "GROUP BY `check_name`, `dimension`, `severity`\n"
-        "HAVING MEASURE(`failed_tests`) > 0\n"
-        "ORDER BY failed_tests DESC"
+        "HAVING MEASURE(`failed_tests`) > 0 OR MEASURE(`table_failed_tests`) > 0\n"
+        "ORDER BY failed_tests DESC, table_failed_tests DESC"
     )
 
     # Column attribution: each check row carries the AS-OF-RUN mapped
     # `columns` array (from the frozen rendered rule set), so failures are
     # attributed to every column the failing check maps to. This is
     # rule-to-column attribution, NOT row-level column failures (the raw
-    # rows are not in this space by design).
+    # rows are not in this space by design). failed_tests stays row-level;
+    # failing dataset checks count separately as table_failed_tests (the
+    # WHERE keeps every failing check, so a column with only failing dataset
+    # checks still shows up).
     columns_most_failures = (
         "SELECT col AS column_name,\n"
-        "       SUM(`error_count` + `warning_count`) AS failed_tests,\n"
+        "       COALESCE(SUM(`error_count` + `warning_count`)\n"
+        "                FILTER (WHERE `check_granularity` IS DISTINCT FROM 'dataset'), 0) AS failed_tests,\n"
+        "       COUNT(1) FILTER (WHERE `check_granularity` = 'dataset'\n"
+        "                          AND (`error_count` + `warning_count`) > 0) AS table_failed_tests,\n"
         "       COUNT(DISTINCT `check_name`) AS failing_rules\n"
         f"FROM {v}\n"
         "LATERAL VIEW explode(`columns`) c AS col\n"
@@ -355,7 +401,7 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "  AND `run_time` = (SELECT MAX(`run_time`) FROM " + v + "\n"
         "                    WHERE `input_location` = :table_name AND `run_mode` = 'published')\n"
         "GROUP BY col\n"
-        "ORDER BY failed_tests DESC"
+        "ORDER BY failed_tests DESC, table_failed_tests DESC"
     )
 
     # --- row-level questions over the entitlement-gated view (P4.2) ---
@@ -395,13 +441,14 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
 
     most_severe = (
         "SELECT `severity`, `check_name`, `dimension`,\n"
-        "       MEASURE(`failed_tests`) AS failed_tests\n"
+        "       MEASURE(`failed_tests`) AS failed_tests,\n"
+        "       MEASURE(`table_failed_tests`) AS table_failed_tests\n"
         f"FROM {mv}\n"
         "WHERE `input_location` = :table_name\n"
         "  AND `run_mode` = 'published'\n"
         f"{latest_published}\n"
         "GROUP BY `severity`, `check_name`, `dimension`\n"
-        "HAVING MEASURE(`failed_tests`) > 0\n"
+        "HAVING MEASURE(`failed_tests`) > 0 OR MEASURE(`table_failed_tests`) > 0\n"
         "ORDER BY CASE `severity` WHEN 'Critical' THEN 0 WHEN 'High' THEN 1\n"
         "              WHEN 'Medium' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END,\n"
         "         failed_tests DESC"
@@ -415,12 +462,13 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "WITH per_run AS (\n"
         "  SELECT `input_location`, `run_time`,\n"
         "         MEASURE(`score`) AS pass_rate,\n"
-        "         MEASURE(`failed_tests`) AS failed_tests\n"
+        "         MEASURE(`failed_tests`) AS failed_tests,\n"
+        "         MEASURE(`table_failed_tests`) AS table_failed_tests\n"
         f"  FROM {mv}\n"
         "  WHERE `run_mode` = 'published'\n"
         "  GROUP BY `input_location`, `run_time`\n"
         ")\n"
-        "SELECT `input_location`, pass_rate, failed_tests\n"
+        "SELECT `input_location`, pass_rate, failed_tests, table_failed_tests\n"
         "FROM per_run\n"
         "QUALIFY ROW_NUMBER() OVER (PARTITION BY `input_location` ORDER BY `run_time` DESC) = 1\n"
         "ORDER BY pass_rate ASC\n"
@@ -430,7 +478,8 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     weakest_dims = (
         "SELECT `dimension`,\n"
         "       MEASURE(`score`) AS pass_rate,\n"
-        "       MEASURE(`failed_tests`) AS failed_tests\n"
+        "       MEASURE(`failed_tests`) AS failed_tests,\n"
+        "       MEASURE(`table_failed_tests`) AS table_failed_tests\n"
         f"FROM {mv}\n"
         "WHERE `input_location` = :table_name\n"
         "  AND `run_mode` = 'published'\n"
@@ -489,8 +538,8 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     #
     # Look-back: the two NEWEST runs are very often identical, so a naive
     # newest-vs-second-newest comparison shows no change. Instead `cur` is
-    # the latest run and `prev` the most recent PRIOR run whose table-level
-    # failed_tests actually DIFFERS, falling back to the immediately-prior
+    # the latest run and `prev` the most recent PRIOR run whose row or table
+    # test counts actually DIFFER, falling back to the immediately-prior
     # run so the grid stays non-empty and Genie can say "no change over the
     # available history".
     #
@@ -499,7 +548,10 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     # prior self instead of reading as one removal plus one addition. That
     # identity lives only on v_dq_check_results (the metric view carries no
     # registry_rule_id), so this reads the shaping view: failed tests per
-    # check = error_count + warning_count, tests = input_row_count.
+    # check = error_count + warning_count, tests = evaluated_row_count (the
+    # rows the check's filter selected). Row-level tests sum over non-dataset
+    # checks only; table-level tests count dataset checks, one test each, and
+    # ride in their own columns — the two are never added together.
     #
     # The reason column carries the COMPLETE change-contributor taxonomy so
     # Genie narrates categories the SQL hands it instead of inferring them:
@@ -514,23 +566,18 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     # the rollup framing. Ranked by |delta| (polarity-neutral).
     diagnose = (
         "WITH run_totals AS (\n"
-        "  SELECT `run_time` AS run_ts, SUM(`error_count` + `warning_count`) AS failed_tests\n"
+        "  SELECT `run_time` AS run_ts,\n"
+        "         SUM(`error_count` + `warning_count`)\n"
+        "           FILTER (WHERE `check_granularity` IS DISTINCT FROM 'dataset') AS failed_tests,\n"
+        "         SUM(`evaluated_row_count`)\n"
+        "           FILTER (WHERE `check_granularity` IS DISTINCT FROM 'dataset') AS total_tests,\n"
+        "         COUNT(1) FILTER (WHERE `check_granularity` = 'dataset'\n"
+        "                          AND (`error_count` + `warning_count`) > 0) AS table_failed_tests,\n"
+        "         COUNT(`check_name`) FILTER (WHERE `check_granularity` = 'dataset') AS table_total_tests\n"
         f"  FROM {v} WHERE `input_location` = :table_name AND `run_mode` = 'published'\n"
         "  GROUP BY `run_time`\n"
         "),\n"
-        "cur_ts AS (SELECT MAX(run_ts) AS run_ts FROM run_totals),\n"
-        "cur_total AS (\n"
-        "  SELECT failed_tests FROM run_totals WHERE run_ts = (SELECT run_ts FROM cur_ts)\n"
-        "),\n"
-        "prev_ts AS (\n"
-        "  SELECT COALESCE(\n"
-        "    (SELECT MAX(run_ts) FROM run_totals\n"
-        "     WHERE run_ts < (SELECT run_ts FROM cur_ts)\n"
-        "       AND failed_tests <> (SELECT failed_tests FROM cur_total)),\n"
-        "    (SELECT MAX(run_ts) FROM run_totals\n"
-        "     WHERE run_ts < (SELECT run_ts FROM cur_ts))\n"
-        "  ) AS run_ts\n"
-        "),\n"
+        f"{_PREV_DIFFERING_RUN_CTES}"
         "cur AS (\n"
         "  SELECT COALESCE(`registry_rule_id`, `check_name`) AS rule_key,\n"
         "         MAX(`rule_name`) AS rule_name, MAX(`dimension`) AS dim,\n"
@@ -544,8 +591,13 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         # rule contributed, which tracks the column fan-out.
         "         array_distinct(flatten(collect_list(`columns`))) AS col_set,\n"
         "         COUNT(DISTINCT `check_name`) AS check_count,\n"
-        "         SUM(`error_count` + `warning_count`) AS failed_tests,\n"
-        "         SUM(`input_row_count`) AS total_tests\n"
+        "         SUM(`error_count` + `warning_count`)\n"
+        "           FILTER (WHERE `check_granularity` IS DISTINCT FROM 'dataset') AS failed_tests,\n"
+        "         SUM(`evaluated_row_count`)\n"
+        "           FILTER (WHERE `check_granularity` IS DISTINCT FROM 'dataset') AS total_tests,\n"
+        "         COUNT(1) FILTER (WHERE `check_granularity` = 'dataset'\n"
+        "                          AND (`error_count` + `warning_count`) > 0) AS table_failed_tests,\n"
+        "         COUNT(`check_name`) FILTER (WHERE `check_granularity` = 'dataset') AS table_total_tests\n"
         f"  FROM {v} WHERE `input_location` = :table_name AND `run_mode` = 'published'\n"
         "    AND `run_time` = (SELECT run_ts FROM cur_ts)\n"
         "  GROUP BY COALESCE(`registry_rule_id`, `check_name`)\n"
@@ -556,8 +608,13 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "         MAX(`severity`) AS sev, MAX(to_json(`columns`)) AS cols,\n"
         "         array_distinct(flatten(collect_list(`columns`))) AS col_set,\n"
         "         COUNT(DISTINCT `check_name`) AS check_count,\n"
-        "         SUM(`error_count` + `warning_count`) AS failed_tests,\n"
-        "         SUM(`input_row_count`) AS total_tests\n"
+        "         SUM(`error_count` + `warning_count`)\n"
+        "           FILTER (WHERE `check_granularity` IS DISTINCT FROM 'dataset') AS failed_tests,\n"
+        "         SUM(`evaluated_row_count`)\n"
+        "           FILTER (WHERE `check_granularity` IS DISTINCT FROM 'dataset') AS total_tests,\n"
+        "         COUNT(1) FILTER (WHERE `check_granularity` = 'dataset'\n"
+        "                          AND (`error_count` + `warning_count`) > 0) AS table_failed_tests,\n"
+        "         COUNT(`check_name`) FILTER (WHERE `check_granularity` = 'dataset') AS table_total_tests\n"
         f"  FROM {v} WHERE `input_location` = :table_name AND `run_mode` = 'published'\n"
         "    AND `run_time` = (SELECT run_ts FROM prev_ts)\n"
         "  GROUP BY COALESCE(`registry_rule_id`, `check_name`)\n"
@@ -577,6 +634,10 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "       TRY_DIVIDE(c.failed_tests, c.total_tests) AS curr_fail_rate,\n"
         "       COALESCE(p.total_tests, 0) AS prev_total_tests,\n"
         "       COALESCE(c.total_tests, 0) AS curr_total_tests,\n"
+        "       COALESCE(p.table_failed_tests, 0) AS prev_table_failed_tests,\n"
+        "       COALESCE(c.table_failed_tests, 0) AS curr_table_failed_tests,\n"
+        "       COALESCE(p.table_total_tests, 0) AS prev_table_total_tests,\n"
+        "       COALESCE(c.table_total_tests, 0) AS curr_table_total_tests,\n"
         # Structural composition of the rule across the two runs, so Genie
         # can explain a 'rule definition changed' contributor concretely —
         # naming the columns added/removed and how the mapped-column count
@@ -612,41 +673,37 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "            WHEN COALESCE(c.total_tests, 0) <> COALESCE(p.total_tests, 0)\n"
         "                 THEN CASE WHEN COALESCE(c.total_tests, 0) > COALESCE(p.total_tests, 0)\n"
         "                           THEN 'more data' ELSE 'less data' END\n"
+        "            WHEN COALESCE(c.table_failed_tests, 0) <> COALESCE(p.table_failed_tests, 0)\n"
+        "                 THEN 'table test result changed'\n"
         "            WHEN NOT (c.rule_name <=> p.rule_name) THEN 'rule renamed'\n"
         "            ELSE 'unchanged' END AS reason\n"
         "FROM cur c FULL OUTER JOIN prev p ON c.rule_key = p.rule_key\n"
-        "ORDER BY ABS(COALESCE(c.failed_tests, 0) - COALESCE(p.failed_tests, 0)) DESC"
+        "ORDER BY ABS(COALESCE(c.failed_tests, 0) - COALESCE(p.failed_tests, 0)) DESC,\n"
+        "         ABS(COALESCE(c.table_failed_tests, 0) - COALESCE(p.table_failed_tests, 0)) DESC"
     )
 
     dim_diagnose = (
         "WITH run_totals AS (\n"
-        "  SELECT `run_time` AS run_ts, MEASURE(`failed_tests`) AS failed_tests\n"
+        "  SELECT `run_time` AS run_ts, MEASURE(`failed_tests`) AS failed_tests,\n"
+        "         MEASURE(`total_tests`) AS total_tests,\n"
+        "         MEASURE(`table_failed_tests`) AS table_failed_tests,\n"
+        "         MEASURE(`table_total_tests`) AS table_total_tests\n"
         f"  FROM {mv} WHERE `input_location` = :table_name AND `run_mode` = 'published'\n"
         "  GROUP BY `run_time`\n"
         "),\n"
-        "cur_ts AS (SELECT MAX(run_ts) AS run_ts FROM run_totals),\n"
-        "cur_total AS (\n"
-        "  SELECT failed_tests FROM run_totals WHERE run_ts = (SELECT run_ts FROM cur_ts)\n"
-        "),\n"
-        "prev_ts AS (\n"
-        "  SELECT COALESCE(\n"
-        "    (SELECT MAX(run_ts) FROM run_totals\n"
-        "     WHERE run_ts < (SELECT run_ts FROM cur_ts)\n"
-        "       AND failed_tests <> (SELECT failed_tests FROM cur_total)),\n"
-        "    (SELECT MAX(run_ts) FROM run_totals\n"
-        "     WHERE run_ts < (SELECT run_ts FROM cur_ts))\n"
-        "  ) AS run_ts\n"
-        "),\n"
+        f"{_PREV_DIFFERING_RUN_CTES}"
         "cur AS (\n"
         "  SELECT `dimension` AS dim, MEASURE(`score`) AS pass_rate,\n"
-        "         MEASURE(`failed_tests`) AS failed_tests\n"
+        "         MEASURE(`failed_tests`) AS failed_tests,\n"
+        "         MEASURE(`table_failed_tests`) AS table_failed_tests\n"
         f"  FROM {mv} WHERE `input_location` = :table_name AND `run_mode` = 'published'\n"
         "    AND `run_time` = (SELECT run_ts FROM cur_ts)\n"
         "  GROUP BY `dimension`\n"
         "),\n"
         "prev AS (\n"
         "  SELECT `dimension` AS dim, MEASURE(`score`) AS pass_rate,\n"
-        "         MEASURE(`failed_tests`) AS failed_tests\n"
+        "         MEASURE(`failed_tests`) AS failed_tests,\n"
+        "         MEASURE(`table_failed_tests`) AS table_failed_tests\n"
         f"  FROM {mv} WHERE `input_location` = :table_name AND `run_mode` = 'published'\n"
         "    AND `run_time` = (SELECT run_ts FROM prev_ts)\n"
         "  GROUP BY `dimension`\n"
@@ -655,9 +712,12 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "       (SELECT run_ts FROM cur_ts) AS curr_run_ts,\n"
         "       (SELECT run_ts FROM prev_ts) AS prev_run_ts,\n"
         "       p.pass_rate AS prev_pass_rate, c.pass_rate AS curr_pass_rate,\n"
-        "       COALESCE(c.failed_tests, 0) - COALESCE(p.failed_tests, 0) AS delta_failed_tests\n"
+        "       COALESCE(c.failed_tests, 0) - COALESCE(p.failed_tests, 0) AS delta_failed_tests,\n"
+        "       COALESCE(c.table_failed_tests, 0) - COALESCE(p.table_failed_tests, 0)\n"
+        "         AS delta_table_failed_tests\n"
         "FROM cur c FULL OUTER JOIN prev p ON c.dim <=> p.dim\n"
-        "ORDER BY ABS(COALESCE(c.failed_tests, 0) - COALESCE(p.failed_tests, 0)) DESC"
+        "ORDER BY ABS(COALESCE(c.failed_tests, 0) - COALESCE(p.failed_tests, 0)) DESC,\n"
+        "         ABS(COALESCE(c.table_failed_tests, 0) - COALESCE(p.table_failed_tests, 0)) DESC"
     )
 
     # The one deliberately draft-scoped question — the exception to the
@@ -700,7 +760,9 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "  SELECT `input_location`, `run_time`,\n"
         "         MEASURE(`score`) AS pass_rate,\n"
         "         MEASURE(`failed_tests`) AS failed_tests,\n"
-        "         MEASURE(`total_tests`) AS total_tests\n"
+        "         MEASURE(`total_tests`) AS total_tests,\n"
+        "         MEASURE(`table_failed_tests`) AS table_failed_tests,\n"
+        "         MEASURE(`table_total_tests`) AS table_total_tests\n"
         f"  FROM {mv}\n"
         "  WHERE `rule_name` = :rule_name AND `run_mode` = 'published'\n"
         "  GROUP BY `input_location`, `run_time`\n"
@@ -710,7 +772,8 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "  QUALIFY ROW_NUMBER() OVER (PARTITION BY `input_location` ORDER BY `run_time` DESC) = 1\n"
         ")\n"
         "SELECT AVG(pass_rate) AS pass_rate,\n"
-        "       SUM(failed_tests) AS failed_tests, SUM(total_tests) AS total_tests\n"
+        "       SUM(failed_tests) AS failed_tests, SUM(total_tests) AS total_tests,\n"
+        "       SUM(table_failed_tests) AS table_failed_tests, SUM(table_total_tests) AS table_total_tests\n"
         "FROM latest"
     )
 
@@ -724,7 +787,9 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "WITH per_table AS (\n"
         "  SELECT `input_location`, `run_time`,\n"
         "         MEASURE(`failed_tests`) AS failed_tests,\n"
-        "         MEASURE(`total_tests`) AS total_tests\n"
+        "         MEASURE(`total_tests`) AS total_tests,\n"
+        "         MEASURE(`table_failed_tests`) AS table_failed_tests,\n"
+        "         MEASURE(`table_total_tests`) AS table_total_tests\n"
         f"  FROM {mv}\n"
         "  WHERE `rule_name` = :rule_name AND `run_mode` = 'published'\n"
         "  GROUP BY `input_location`, `run_time`\n"
@@ -733,7 +798,8 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "  SELECT * FROM per_table\n"
         "  QUALIFY ROW_NUMBER() OVER (PARTITION BY `input_location` ORDER BY `run_time` DESC) = 1\n"
         ")\n"
-        "SELECT SUM(failed_tests) AS failed_tests, SUM(total_tests) AS total_tests\n"
+        "SELECT SUM(failed_tests) AS failed_tests, SUM(total_tests) AS total_tests,\n"
+        "       SUM(table_failed_tests) AS table_failed_tests, SUM(table_total_tests) AS table_total_tests\n"
         "FROM latest"
     )
 
@@ -744,12 +810,15 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "  SELECT `input_location`, `run_time`,\n"
         "         MEASURE(`score`) AS pass_rate,\n"
         "         MEASURE(`failed_tests`) AS failed_tests,\n"
-        "         MEASURE(`total_tests`) AS total_tests\n"
+        "         MEASURE(`total_tests`) AS total_tests,\n"
+        "         MEASURE(`table_failed_tests`) AS table_failed_tests,\n"
+        "         MEASURE(`table_total_tests`) AS table_total_tests\n"
         f"  FROM {mv}\n"
         "  WHERE `rule_name` = :rule_name AND `run_mode` = 'published'\n"
         "  GROUP BY `input_location`, `run_time`\n"
         ")\n"
-        "SELECT `input_location`, pass_rate, failed_tests, total_tests\n"
+        "SELECT `input_location`, pass_rate, failed_tests, total_tests,\n"
+        "       table_failed_tests, table_total_tests\n"
         "FROM per_table\n"
         "QUALIFY ROW_NUMBER() OVER (PARTITION BY `input_location` ORDER BY `run_time` DESC) = 1\n"
         "ORDER BY failed_tests DESC"
@@ -758,7 +827,8 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
     # Per-column attribution for the rule: explode the mapped columns on the
     # shaping view over each table's latest PUBLISHED run (resolved per table
     # via the latest_runs CTE, so a table whose newest run is a draft still
-    # contributes its newest published run), summing failures per column.
+    # contributes its newest published run), summing failures per column —
+    # row-level as failed_tests, failing dataset checks as table_failed_tests.
     rule_columns_failing = (
         "WITH latest_runs AS (\n"
         "  SELECT `input_location`, MAX(`run_time`) AS run_time\n"
@@ -767,7 +837,10 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "  GROUP BY `input_location`\n"
         ")\n"
         "SELECT col AS column_name,\n"
-        "       SUM(r.`error_count` + r.`warning_count`) AS failed_tests,\n"
+        "       COALESCE(SUM(r.`error_count` + r.`warning_count`)\n"
+        "                FILTER (WHERE r.`check_granularity` IS DISTINCT FROM 'dataset'), 0) AS failed_tests,\n"
+        "       COUNT(1) FILTER (WHERE r.`check_granularity` = 'dataset'\n"
+        "                          AND (r.`error_count` + r.`warning_count`) > 0) AS table_failed_tests,\n"
         "       COUNT(DISTINCT r.`input_location`) AS tables\n"
         f"FROM {v} r\n"
         "JOIN latest_runs lr\n"
@@ -777,13 +850,14 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "  AND r.`run_mode` = 'published'\n"
         "  AND (r.`error_count` + r.`warning_count`) > 0\n"
         "GROUP BY col\n"
-        "ORDER BY failed_tests DESC"
+        "ORDER BY failed_tests DESC, table_failed_tests DESC"
     )
 
     # Pooled pass-rate trend for the rule across all its tables per run instant.
     rule_pass_rate_trend = (
         "SELECT `run_time`, MEASURE(`score`) AS pass_rate,\n"
-        "       MEASURE(`failed_tests`) AS failed_tests\n"
+        "       MEASURE(`failed_tests`) AS failed_tests,\n"
+        "       MEASURE(`table_failed_tests`) AS table_failed_tests\n"
         f"FROM {mv}\n"
         "WHERE `rule_name` = :rule_name AND `run_mode` = 'published'\n"
         "GROUP BY `run_time`\n"
@@ -804,13 +878,13 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         ")\n"
         "SELECT r.`input_location`, r.`check_name`, r.`severity`, r.`dimension`,\n"
         "       r.`pass_threshold`,\n"
-        "       1 - TRY_DIVIDE(r.`error_count` + r.`warning_count`, r.`input_row_count`) AS pass_rate\n"
+        "       1 - TRY_DIVIDE(r.`error_count` + r.`warning_count`, r.`evaluated_row_count`) AS pass_rate\n"
         f"FROM {v} r\n"
         "JOIN latest_runs lr\n"
         "  ON lr.`input_location` = r.`input_location` AND lr.`run_time` = r.`run_time`\n"
         "WHERE r.`run_mode` = 'published'\n"
         "  AND r.`pass_threshold` IS NOT NULL\n"
-        "  AND 1 - TRY_DIVIDE(r.`error_count` + r.`warning_count`, r.`input_row_count`)\n"
+        "  AND 1 - TRY_DIVIDE(r.`error_count` + r.`warning_count`, r.`evaluated_row_count`)\n"
         "        < r.`pass_threshold` / 100.0\n"
         "ORDER BY pass_rate ASC"
     )
@@ -834,7 +908,7 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
         "WHERE `created_at` >= current_timestamp() - INTERVAL 7 DAYS"
     )
 
-    rules_running = "SELECT COUNT(*) AS running_rules\n" f"FROM {dim_rules}\n" "WHERE `status` = 'approved'"
+    rules_running = f"SELECT COUNT(*) AS running_rules\nFROM {dim_rules}\nWHERE `status` = 'approved'"
 
     table_param = [
         {
@@ -867,7 +941,8 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
             "parameters": table_param,
             "usage_guidance": [
                 "Latest published-run pass rate for one table from mv_dq_scores. "
-                "Report the score (pass rate) as the headline; failed/total tests as context."
+                "Report the score (pass rate) as the headline; row-level and table-level tests as "
+                "separate context, never summed."
             ],
         },
         {
@@ -876,7 +951,8 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
             "parameters": table_param,
             "usage_guidance": [
                 "failed_tests at the table's latest published run from mv_dq_scores, "
-                "with total_tests as the denominator."
+                "with total_tests as the denominator (row-level tests); table_failed_tests / "
+                "table_total_tests report the table-level tests separately."
             ],
         },
         {
@@ -897,7 +973,9 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
                 "Attribution-based: explodes each failing check's mapped columns array on "
                 "v_dq_check_results (latest published run), so failed tests are attributed to "
                 "every column the failing rule maps to. This is rule-to-column attribution — "
-                "row-level column failures are not available in this space."
+                "row-level column failures are not available in this space. "
+                "failed_tests counts row-level tests; table_failed_tests counts failing table-level "
+                "(dataset) checks separately — never add them."
             ],
         },
         {
@@ -1082,7 +1160,7 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
             "sql": _lines(rule_table_count),
             "parameters": rule_name_param,
             "usage_guidance": [
-                "Distinct published-run tables the rule runs on, from mv_dq_scores scoped by " "rule_name."
+                "Distinct published-run tables the rule runs on, from mv_dq_scores scoped by rule_name."
             ],
         },
         {
@@ -1122,7 +1200,9 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
                 "Attribution-based: explodes the rule's mapped columns on v_dq_check_results over "
                 "each table's latest published run (scoped by rule_name), so failed tests are "
                 "attributed to every column the rule maps to, most first. This is rule-to-column "
-                "attribution — row-level column failures are not available in this space."
+                "attribution — row-level column failures are not available in this space. "
+                "failed_tests counts row-level tests; table_failed_tests counts failing table-level "
+                "(dataset) checks separately — never add them."
             ],
         },
         {
@@ -1141,7 +1221,7 @@ def _curated_sqls(catalog: str, schema: str) -> list[dict]:
             "usage_guidance": [
                 "Checks whose pass rate at their table's latest published run fell below the "
                 "pass_threshold frozen into that run (a 0-100 percentage on v_dq_check_results). "
-                "pass_rate = 1 - (error_count + warning_count) / input_row_count; a breach is "
+                "pass_rate = 1 - (error_count + warning_count) / evaluated_row_count; a breach is "
                 "pass_rate < pass_threshold / 100. Checks with a NULL pass_threshold (legacy runs "
                 "predating the stamp) cannot be judged and are excluded. Worst pass rate first."
             ],
@@ -1363,8 +1443,28 @@ def _sql_snippets(catalog: str, schema: str) -> dict:
             "sql": [f"MEASURE({mv}.`failed_tests`)"],
             "synonyms": ["failures", "failed test count", "number of failures"],
             "instruction": [
-                "Count of record-level tests that failed (errors + warnings). Rank "
-                "period-over-period changes by the change in this."
+                "Count of row-level tests that failed (errors + warnings) over the rows each check "
+                "evaluated. Rank period-over-period changes by the change in this. Table-level "
+                "tests are separate: see table_failed_tests."
+            ],
+        },
+        {
+            "alias": "table_failed_tests",
+            "display_name": "Failed Table Tests",
+            "sql": [f"MEASURE({mv}.`table_failed_tests`)"],
+            "synonyms": ["failed table-level tests", "failed dataset checks"],
+            "instruction": [
+                "Count of table-level (dataset) checks that failed, one test each. Report beside "
+                "failed_tests, never added to it."
+            ],
+        },
+        {
+            "alias": "table_total_tests",
+            "display_name": "Total Table Tests",
+            "sql": [f"MEASURE({mv}.`table_total_tests`)"],
+            "synonyms": ["table-level tests", "dataset checks run"],
+            "instruction": [
+                "Count of table-level (dataset) checks, one test each. Report beside total_tests, never added to it."
             ],
         },
         {
@@ -1473,7 +1573,8 @@ def build_serialized_space(catalog: str, schema: str, *, id_factory: IdFactory =
                     "Per-check DQ results — one row per (run_id, input_location, check_name) "
                     "across all runs. Columns: run_id, input_location (the monitored table's "
                     "fully-qualified name), run_time, is_latest_run, check_name, error_count, "
-                    "warning_count, input_row_count (tests evaluated for the check), check_score "
+                    "warning_count, input_row_count (table rows in the run), evaluated_row_count (rows the "
+                    "check evaluated, after its filter), check_score "
                     "(the check's 0-1 contribution to quality score), check_granularity "
                     "('row' | 'dataset'), rule_instance_key, rule_check_count, run_mode "
                     "('published' | 'draft' — default to published), binding_version, and the "
@@ -1498,7 +1599,8 @@ def build_serialized_space(catalog: str, schema: str, *, id_factory: IdFactory =
                     "them), as_of_time (the consolidated instant — group by it for trends), "
                     "then the same shape as v_dq_check_results: run_id, input_location, "
                     "run_time (the carried run's own time), is_latest_run, check_name, "
-                    "error_count, warning_count, input_row_count, check_score, check_granularity, "
+                    "error_count, warning_count, input_row_count, evaluated_row_count, check_score, "
+                    "check_granularity, "
                     "rule_instance_key, rule_check_count, "
                     "run_mode, binding_version, "
                     "criticality, severity, dimension, registry_rule_id, columns. Use ONLY for "
@@ -1589,8 +1691,11 @@ def build_serialized_space(catalog: str, schema: str, *, id_factory: IdFactory =
                 {
                     "identifier": mv,
                     "description": [
-                        "DQ score metric view: measures score (pass rate, 0-1), failed_tests, "
-                        "error_tests, warning_tests (active warnings), total_tests, failed_checks, "
+                        "DQ score metric view: measures score (pass rate, 0-1), failed_tests and total_tests "
+                        "(row-level tests only), table_failed_tests and table_total_tests (table-level "
+                        "dataset checks, one test each; never add to row-level tests), "
+                        "error_tests, warning_tests (row-level failed tests split by criticality; "
+                        "warnings are active warnings), failed_checks, "
                         "total_checks, rule_count (distinct rules that ran — the answer to 'how many "
                         "rules'), and failed_rule_count (distinct rules with a failing test) over "
                         "dimensions input_location, run_id, run_time, is_latest_run, run_mode, "
@@ -1661,7 +1766,7 @@ def config_hash(catalog: str, schema: str) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _find_space_id_by_title(ws: WorkspaceClient, title: str, parent_path: str) -> str | None:
+def _find_space_by_title(ws: WorkspaceClient, title: str, parent_path: str) -> dict[str, object] | None:
     """Find an existing space to REUSE (so we don't recreate one per boot).
 
     Databricks appends a timestamp to the space title on create — e.g.
@@ -1710,7 +1815,7 @@ def _find_space_id_by_title(ws: WorkspaceClient, title: str, parent_path: str) -
                 unclassified_match = True
                 continue
             if isinstance(detail, dict) and detail.get("parent_path") == parent_path:
-                return space_id
+                return detail
         if unclassified_match:
             # Some title-matching candidates could not be classified (their
             # detail GET failed — e.g. an ACL denial on another deployment's
@@ -1727,23 +1832,32 @@ def _find_space_id_by_title(ws: WorkspaceClient, title: str, parent_path: str) -
     return None
 
 
-def _update_serialized_space(ws: WorkspaceClient, space_id: str, catalog: str, schema: str) -> bool:
-    """PATCH the existing space's serialized_space with the freshly-built config.
-
-    The Genie REST API supports updating a space via
-    PATCH /api/2.0/genie/spaces/{space_id} with a {"serialized_space": "..."}
-    body. Returns True on success.
-    """
-    body = {"serialized_space": json.dumps(build_serialized_space(catalog, schema))}
+def _update_space(ws: WorkspaceClient, space_id: str, body: dict[str, str]) -> bool:
+    """Apply only the changed fields, retaining retry-on-failure semantics."""
     try:
         ws.api_client.do("PATCH", f"/api/2.0/genie/spaces/{space_id}", body=body)
         return True
-    except Exception as e:
+    except Exception:
         # Best-effort resilience contract: a failed PATCH must never break
         # startup — the existing space still answers with its old config and
         # the un-persisted hash makes the next startup retry.
-        logger.warning(f"Genie space update skipped: {type(e).__name__}: {e}")
+        logger.warning("Genie space update skipped; will retry on next provision.")
         return False
+
+
+def _reconcile_audience(ws: WorkspaceClient, space_id: str, audience_groups: tuple[str, ...]) -> None:
+    """Add minimum chat access without replacing unrelated or stronger ACLs."""
+    if not audience_groups:
+        logger.info("Genie space ACLs are administrator-managed; no audience groups configured.")
+        return
+    status, _ = reconcile_group_acl(
+        ws, "genie", space_id, tuple(dict.fromkeys(audience_groups)), PermissionLevel.CAN_RUN, GENIE_RUN_LEVELS
+    )
+    if status != "granted":
+        logger.warning(
+            "Could not reconcile Genie audience permissions; an administrator must grant CAN_RUN "
+            "to the configured groups. Will retry on next provision."
+        )
 
 
 def ensure_dq_genie_space(
@@ -1753,6 +1867,7 @@ def ensure_dq_genie_space(
     warehouse_id: str,
     catalog: str,
     schema: str,
+    audience_groups: tuple[str, ...] = (),
 ) -> str | None:
     """Idempotent, self-healing provision of the DQ Genie space (SP identity).
 
@@ -1761,7 +1876,7 @@ def ensure_dq_genie_space(
 
     - stored id missing remotely -> find-or-create a replacement
     - no space id              -> find-or-create (POST), store id + hash, status ready
-    - id present, hash same    -> no-op (return id, leave status as-is)
+    - id present, hash same    -> reconcile warehouse and configured audience
     - id present, hash changed -> update the space (PATCH serialized_space);
       on success store the new hash; on failure keep the OLD hash so the
       next startup sees a mismatch and RETRIES the update (persisting the
@@ -1771,6 +1886,12 @@ def ensure_dq_genie_space(
     Best-effort: returns the space_id or None and never raises out of the
     app lifespan. Maintains ``dq_genie_space_status``
     (provisioning|ready|error).
+
+    Warehouse changes require an API-confirmed CAN_USE (or stronger) grant
+    or a successful app-SP SELECT 1 probe with bounded completion polling.
+    Unverified access retains the old warehouse.
+    Audience grants use the Permissions API's *genie* object type and
+    additive UPDATE; empty *audience_groups* leaves ACLs administrator-managed.
     """
     try:
         # Fail fast on a misconfigured catalog/schema before emitting dozens of
@@ -1783,9 +1904,11 @@ def ensure_dq_genie_space(
         stored_hash = settings.get_setting(SETTING_CONFIG_HASH)
         desired_hash = config_hash(catalog, schema)
 
+        detail: dict[str, object] = {}
         if existing:
             try:
-                ws.api_client.do("GET", f"/api/2.0/genie/spaces/{existing}")
+                response = ws.api_client.do("GET", f"/api/2.0/genie/spaces/{existing}")
+                detail = response if isinstance(response, dict) else {}
             except Exception as error:
                 error_code = getattr(error, "error_code", None)
                 if isinstance(error, NotFound) or error_code == "NOT_FOUND":
@@ -1799,73 +1922,78 @@ def ensure_dq_genie_space(
                     logger.info(f"Genie space verification skipped: {type(error).__name__}")
                     return existing
 
-        # A matching hash needs no update, but only after verifying that the
-        # persisted space has not been deleted or trashed.
-        if existing and stored_hash == desired_hash:
-            return existing
-
-        # Already-provisioned but the config drifted: update in place.
-        if existing:
+        if not existing:
             settings.save_setting(SETTING_STATUS, STATUS_PROVISIONING)
-            updated = _update_serialized_space(ws, existing, catalog, schema)
-            if updated:
-                settings.save_setting(SETTING_CONFIG_HASH, desired_hash)
-                settings.save_setting(SETTING_STATUS, STATUS_READY)
-            else:
-                # The PATCH failed (usually a transient flap). Do NOT persist
-                # the new hash: leaving stored_hash at its OLD value means the
-                # next provision sees a mismatch and RETRIES the update. The
-                # space still exists and answers, so keep it usable — never
-                # delete a space we can't cleanly recreate.
-                settings.save_setting(SETTING_STATUS, STATUS_READY)
-                logger.warning(
-                    f"Genie space update failed; left existing space {existing} in place — will retry on next provision"
-                )
-            return existing
-
-        # No id stored: find-or-create.
-        settings.save_setting(SETTING_STATUS, STATUS_PROVISIONING)
-        try:
-            parent_path = space_parent_path()
-        except ValueError as error:
-            # No per-deployment client id: fail closed rather than provision
-            # into the shared root, where a second deployment could adopt this
-            # space (or vice versa). A clean skip, not a crash.
-            logger.warning(f"Genie space provisioning skipped: {error}")
-            settings.save_setting(SETTING_STATUS, STATUS_ERROR)
-            return None
-        try:
-            space_id = _find_space_id_by_title(ws, SPACE_TITLE, parent_path)
-        except _SpaceLookupError:
-            logger.info("Genie space lookup skipped; provisioning will retry on next startup")
-            settings.save_setting(SETTING_STATUS, STATUS_ERROR)
-            return None
-        if space_id is None:
-            ws.workspace.mkdirs(parent_path)
-            payload = build_create_payload(
-                catalog,
-                schema,
-                warehouse_id=warehouse_id,
-                parent_path=parent_path,
-            )
             try:
-                resp = ws.api_client.do("POST", "/api/2.0/genie/spaces", body=payload)
-                space_id = resp.get("space_id") if isinstance(resp, dict) else None
-            except Exception as e:
-                # Best-effort resilience contract: space creation failing
-                # (permissions, API availability) must degrade to "no Genie"
-                # rather than a crash-looping app.
-                logger.warning(f"Genie space create skipped: {type(e).__name__}: {e}")
+                parent_path = space_parent_path()
+            except ValueError:
+                logger.warning("Genie space provisioning skipped: DATABRICKS_CLIENT_ID is required.")
                 settings.save_setting(SETTING_STATUS, STATUS_ERROR)
                 return None
+            try:
+                detail = _find_space_by_title(ws, SPACE_TITLE, parent_path) or {}
+            except _SpaceLookupError:
+                logger.info("Genie space lookup skipped; provisioning will retry on next startup")
+                settings.save_setting(SETTING_STATUS, STATUS_ERROR)
+                return None
+            found_id = detail.get("space_id")
+            existing = found_id if isinstance(found_id, str) and found_id else None
+            if existing:
+                # A discovered space has no verified content hash yet.
+                stored_hash = ""
+                settings.save_setting(SETTING_CONFIG_HASH, stored_hash)
+                settings.save_setting(SETTING_SPACE_ID, existing)
+            else:
+                ws.workspace.mkdirs(parent_path)
+                payload = build_create_payload(catalog, schema, warehouse_id=warehouse_id, parent_path=parent_path)
+                try:
+                    resp = ws.api_client.do("POST", "/api/2.0/genie/spaces", body=payload)
+                    existing = resp.get("space_id") if isinstance(resp, dict) else None
+                except Exception:
+                    logger.warning("Genie space create skipped; will retry on next provision.")
+                    settings.save_setting(SETTING_STATUS, STATUS_ERROR)
+                    return None
+                if not existing:
+                    settings.save_setting(SETTING_STATUS, STATUS_ERROR)
+                    return None
+                settings.save_setting(SETTING_SPACE_ID, existing)
+                settings.save_setting(SETTING_CONFIG_HASH, desired_hash)
+                settings.save_setting(SETTING_STATUS, STATUS_READY)
+                _reconcile_audience(ws, existing, audience_groups)
+                return existing
 
-        if space_id:
-            settings.save_setting(SETTING_SPACE_ID, space_id)
-            settings.save_setting(SETTING_CONFIG_HASH, desired_hash)
+        body: dict[str, str] = {}
+        content_changed = stored_hash != desired_hash
+        if content_changed:
+            body["serialized_space"] = json.dumps(build_serialized_space(catalog, schema))
+        if detail.get("warehouse_id") != warehouse_id:
+            access = ComputeService(ws, settings).warehouse_access_status(
+                warehouse_id, reader_ws=ws, sufficient=WAREHOUSE_USE_LEVELS
+            )
+            can_use = access == "granted"
+            if not can_use:
+                try:
+                    SqlExecutor(ws, warehouse_id, catalog, schema).execute("SELECT 1", timeout_seconds=30)
+                    can_use = True
+                except Exception:
+                    # Best-effort proof: failed or timed-out probes must retain
+                    # the old binding without exposing raw SQL/API diagnostics.
+                    can_use = False
+            if can_use:
+                body["warehouse_id"] = warehouse_id
+            else:
+                logger.warning(
+                    "Genie warehouse change skipped: app SP access could not be verified. "
+                    "An administrator must verify CAN_USE on the configured warehouse."
+                )
+        if body:
+            settings.save_setting(SETTING_STATUS, STATUS_PROVISIONING)
+            updated = _update_space(ws, existing, body)
+            if updated and content_changed:
+                settings.save_setting(SETTING_CONFIG_HASH, desired_hash)
             settings.save_setting(SETTING_STATUS, STATUS_READY)
-        else:
-            settings.save_setting(SETTING_STATUS, STATUS_ERROR)
-        return space_id
+        _reconcile_audience(ws, existing, audience_groups)
+        return existing
     except Exception:
         # Best-effort resilience contract: never raise out of the app
         # lifespan — Genie is an optional feature, not a startup dependency.

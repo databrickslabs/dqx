@@ -13,9 +13,23 @@ the Delta-flavoured renderer :func:`_render_value` and Delta's backtick
 default value-encoding contract that both dialects inherit.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import PermissionDenied
+from databricks.sdk.service.sql import (
+    BaseChunkInfo,
+    ColumnInfo,
+    ResultData,
+    ResultManifest,
+    ResultSchema,
+    ServiceError,
+    StatementExecutionAPI,
+    StatementResponse,
+    StatementState,
+    StatementStatus,
+)
 
 from databricks_labs_dqx_app.backend.sql_executor import (
     RawSql,
@@ -29,6 +43,286 @@ from databricks_labs_dqx_app.backend.sql_executor import (
     _build_where,
     _render_value,
 )
+
+
+def query_response(
+    *,
+    columns: tuple[str | None, ...] = ("principal", "actionType"),
+    rows: list[list[str]] | None = None,
+    next_chunk_index: int | None = None,
+) -> StatementResponse:
+    return StatementResponse(
+        statement_id="statement-1",
+        status=StatementStatus(state=StatementState.SUCCEEDED),
+        manifest=ResultManifest(schema=ResultSchema(columns=[ColumnInfo(name=name) for name in columns])),
+        result=ResultData(chunk_index=0, data_array=rows or [], next_chunk_index=next_chunk_index),
+    )
+
+
+@pytest.fixture
+def statement_api() -> MagicMock:
+    api = create_autospec(StatementExecutionAPI, instance=True)
+    api.execute_statement.return_value = query_response(rows=[["scheduler-sp", "USE CATALOG"]])
+    return api
+
+
+@pytest.fixture
+def query_executor(statement_api: MagicMock) -> SqlExecutor:
+    ws = create_autospec(WorkspaceClient, instance=True)
+    ws.statement_execution = statement_api
+    return SqlExecutor(ws, "test-wh", "dqx", "public")
+
+
+def test_complete_query_reads_all_chunks_including_empty_first_chunk(
+    query_executor: SqlExecutor, statement_api: MagicMock
+) -> None:
+    statement_api.execute_statement.return_value = query_response(next_chunk_index=1)
+    statement_api.get_statement_result_chunk_n.side_effect = [
+        ResultData(chunk_index=1, data_array=[["scheduler-sp", "USE CATALOG"]], next_chunk_index=2),
+        ResultData(chunk_index=2, data_array=[["runner-sp", "USE CATALOG"]]),
+    ]
+    assert query_executor.query_dicts("SHOW GRANTS ON CATALOG dqx", require_complete=True) == [
+        {"principal": "scheduler-sp", "actionType": "USE CATALOG"},
+        {"principal": "runner-sp", "actionType": "USE CATALOG"},
+    ]
+    assert [c.args for c in statement_api.get_statement_result_chunk_n.call_args_list] == [
+        ("statement-1", 1),
+        ("statement-1", 2),
+    ]
+
+
+def test_complete_query_accepts_known_empty_result(query_executor: SqlExecutor, statement_api: MagicMock) -> None:
+    statement_api.execute_statement.return_value = query_response()
+    assert query_executor.query_dicts("SHOW GRANTS ON CATALOG dqx", require_complete=True) == []
+
+
+@pytest.mark.parametrize("later_chunk", [False, True])
+@pytest.mark.parametrize("total_rows,chunk_rows", [(1, 1), (1, None), (None, 1), (None, None)])
+def test_complete_query_rejects_absent_payload_not_known_empty(
+    query_executor: SqlExecutor,
+    statement_api: MagicMock,
+    later_chunk: bool,
+    total_rows: int | None,
+    chunk_rows: int | None,
+) -> None:
+    response = query_response(rows=[["scheduler-sp", "USE CATALOG"]] if later_chunk else [])
+    response.manifest.total_row_count = total_rows + int(later_chunk) if total_rows is not None else None
+    if later_chunk:
+        response.result.next_chunk_index = 1
+        statement_api.get_statement_result_chunk_n.return_value = ResultData(
+            chunk_index=1, row_count=chunk_rows, data_array=None
+        )
+    else:
+        response.result.row_count = chunk_rows
+        response.result.data_array = None
+    statement_api.execute_statement.return_value = response
+    with pytest.raises(RuntimeError, match="complete SQL results"):
+        query_executor.query_dicts("SHOW GRANTS ON CATALOG dqx", require_complete=True)
+
+
+@pytest.mark.parametrize("empty_count_source", ["chunk", "manifest", "manifest_chunk", "zero_chunks"])
+def test_complete_query_accepts_absent_payload_when_explicitly_empty(
+    query_executor: SqlExecutor, statement_api: MagicMock, empty_count_source: str
+) -> None:
+    response = query_response()
+    response.result.data_array = None
+    if empty_count_source == "chunk":
+        response.result.row_count = 0
+    elif empty_count_source == "manifest_chunk":
+        response.manifest.chunks = [BaseChunkInfo(chunk_index=0, row_count=0)]
+    else:
+        response.manifest.total_row_count = 0
+        if empty_count_source == "zero_chunks":
+            response.manifest.total_chunk_count = 0
+            response.manifest.chunks = []
+    statement_api.execute_statement.return_value = response
+    assert query_executor.query_dicts("SHOW GRANTS ON CATALOG dqx", require_complete=True) == []
+
+
+@pytest.mark.parametrize("metadata_source", ["total_rows", "total_chunks", "manifest_chunks", "chunk_rows"])
+def test_complete_query_rejects_premature_termination(
+    query_executor: SqlExecutor, statement_api: MagicMock, metadata_source: str
+) -> None:
+    response = query_response(rows=[["scheduler-sp", "USE CATALOG"]])
+    if metadata_source == "total_rows":
+        response.manifest.total_row_count = 2
+    elif metadata_source == "total_chunks":
+        response.manifest.total_chunk_count = 2
+    elif metadata_source == "manifest_chunks":
+        response.manifest.chunks = [
+            BaseChunkInfo(chunk_index=0, row_count=1),
+            BaseChunkInfo(chunk_index=1, row_count=1),
+        ]
+    else:
+        response.result.row_count = 2
+    statement_api.execute_statement.return_value = response
+    with pytest.raises(RuntimeError, match="complete SQL results"):
+        query_executor.query_dicts("SHOW GRANTS ON CATALOG dqx", require_complete=True)
+
+
+@pytest.mark.parametrize("metadata_source", ["total_rows", "total_chunks", "manifest_rows", "chunk_rows"])
+def test_complete_query_rejects_payload_exceeding_declared_counts(
+    query_executor: SqlExecutor, statement_api: MagicMock, metadata_source: str
+) -> None:
+    response = query_response(rows=[["scheduler-sp", "USE CATALOG"]])
+    if metadata_source == "total_rows":
+        response.manifest.total_row_count = 0
+    elif metadata_source == "total_chunks":
+        response.manifest.total_chunk_count = 0
+    elif metadata_source == "manifest_rows":
+        response.manifest.chunks = [BaseChunkInfo(chunk_index=0, row_count=0)]
+    else:
+        response.result.row_count = 0
+    statement_api.execute_statement.return_value = response
+    with pytest.raises(RuntimeError, match="complete SQL results"):
+        query_executor.query_dicts("SHOW GRANTS ON CATALOG dqx", require_complete=True)
+
+
+def test_complete_query_validates_matching_counts_across_all_chunks(
+    query_executor: SqlExecutor, statement_api: MagicMock
+) -> None:
+    response = query_response(next_chunk_index=1)
+    response.manifest.total_row_count = 1
+    response.manifest.total_chunk_count = 2
+    response.manifest.chunks = [
+        BaseChunkInfo(chunk_index=0, row_count=0),
+        BaseChunkInfo(chunk_index=1, row_count=1),
+    ]
+    response.result.data_array = None
+    response.result.row_count = 0
+    statement_api.execute_statement.return_value = response
+    statement_api.get_statement_result_chunk_n.return_value = ResultData(
+        chunk_index=1, row_count=1, data_array=[["scheduler-sp", "USE CATALOG"]]
+    )
+    assert query_executor.query_dicts("SHOW GRANTS ON CATALOG dqx", require_complete=True) == [
+        {"principal": "scheduler-sp", "actionType": "USE CATALOG"}
+    ]
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        StatementResponse(status=StatementStatus(state=StatementState.SUCCEEDED), result=ResultData(data_array=[])),
+        StatementResponse(
+            status=StatementStatus(state=StatementState.SUCCEEDED),
+            manifest=ResultManifest(),
+            result=ResultData(data_array=[]),
+        ),
+        query_response(columns=()),
+        query_response(columns=(None, "actionType")),
+        query_response(columns=("", "actionType")),
+        query_response(columns=(" ", "actionType")),
+        query_response(columns=("principal", "principal")),
+        query_response(columns=("principal", "PRINCIPAL")),
+        StatementResponse(
+            status=StatementStatus(state=StatementState.SUCCEEDED),
+            manifest=ResultManifest(schema=ResultSchema(columns=[ColumnInfo(name="principal")])),
+        ),
+        query_response(rows=[["scheduler-sp"]]),
+        query_response(rows=[["scheduler-sp", "USE CATALOG", "extra"]]),
+    ],
+)
+def test_complete_query_rejects_missing_or_ambiguous_results(
+    query_executor: SqlExecutor, statement_api: MagicMock, response: StatementResponse
+) -> None:
+    statement_api.execute_statement.return_value = response
+    with pytest.raises(RuntimeError, match="complete SQL results"):
+        query_executor.query_dicts("SHOW GRANTS ON CATALOG dqx", require_complete=True)
+
+
+def test_complete_query_rejects_truncation(query_executor: SqlExecutor, statement_api: MagicMock) -> None:
+    response = query_response(rows=[["scheduler-sp", "USE CATALOG"]])
+    response.manifest.truncated = True
+    statement_api.execute_statement.return_value = response
+    with pytest.raises(RuntimeError, match="complete SQL results"):
+        query_executor.query_dicts("SHOW GRANTS ON CATALOG dqx", require_complete=True)
+
+
+def test_complete_query_rejects_malformed_later_row(query_executor: SqlExecutor, statement_api: MagicMock) -> None:
+    statement_api.execute_statement.return_value = query_response(next_chunk_index=1)
+    statement_api.get_statement_result_chunk_n.return_value = ResultData(chunk_index=1, data_array=[["scheduler-sp"]])
+    with pytest.raises(RuntimeError, match="complete SQL results"):
+        query_executor.query_dicts("SHOW GRANTS ON CATALOG dqx", require_complete=True)
+
+
+@pytest.mark.parametrize("next_chunk_index", [0, 1])
+def test_complete_query_rejects_repeated_chunk_index(
+    query_executor: SqlExecutor, statement_api: MagicMock, next_chunk_index: int
+) -> None:
+    statement_api.execute_statement.return_value = query_response(next_chunk_index=next_chunk_index)
+    statement_api.get_statement_result_chunk_n.return_value = ResultData(
+        chunk_index=1, data_array=[["scheduler-sp", "USE CATALOG"]], next_chunk_index=next_chunk_index
+    )
+    with pytest.raises(RuntimeError, match="complete SQL results"):
+        query_executor.query_dicts("SHOW GRANTS ON CATALOG dqx", require_complete=True)
+    assert statement_api.get_statement_result_chunk_n.call_count <= 1
+
+
+def test_complete_query_rejects_missing_statement_id(query_executor: SqlExecutor, statement_api: MagicMock) -> None:
+    response = query_response(next_chunk_index=1)
+    response.statement_id = None
+    statement_api.execute_statement.return_value = response
+    with pytest.raises(RuntimeError, match="complete SQL results"):
+        query_executor.query_dicts("SHOW GRANTS ON CATALOG dqx", require_complete=True)
+    statement_api.get_statement_result_chunk_n.assert_not_called()
+
+
+@pytest.mark.parametrize("boundary", ["execute_statement", "get_statement", "get_statement_result_chunk_n"])
+def test_complete_query_sanitizes_sdk_failures(
+    query_executor: SqlExecutor, statement_api: MagicMock, boundary: str
+) -> None:
+    response = query_response(next_chunk_index=1)
+    if boundary == "get_statement":
+        response.status = StatementStatus(state=StatementState.RUNNING)
+    statement_api.execute_statement.return_value = response
+    getattr(statement_api, boundary).side_effect = PermissionDenied("sensitive-sdk-detail")
+    with pytest.raises(RuntimeError, match="complete SQL results") as error:
+        query_executor.query_dicts("SELECT 'sensitive-query-value'", require_complete=True)
+    assert "sensitive" not in str(error.value)
+    assert error.value.__cause__ is None
+    assert error.value.__suppress_context__
+
+
+@pytest.mark.parametrize("state", [None, StatementState.FAILED, StatementState.CANCELED])
+def test_complete_query_sanitizes_statement_failures(
+    query_executor: SqlExecutor, statement_api: MagicMock, state: StatementState | None
+) -> None:
+    response = query_response()
+    response.statement_id = None
+    response.status = StatementStatus(state=state, error=ServiceError(message="sensitive-status-detail"))
+    statement_api.execute_statement.return_value = response
+    with pytest.raises(RuntimeError, match="complete SQL results") as error:
+        query_executor.query_dicts("SELECT 'sensitive-query-value'", require_complete=True)
+    assert "sensitive" not in str(error.value)
+
+
+def test_complete_query_polls_and_uses_final_manifest(query_executor: SqlExecutor, statement_api: MagicMock) -> None:
+    statement_api.execute_statement.return_value = StatementResponse(
+        statement_id="statement-1", status=StatementStatus(state=StatementState.RUNNING)
+    )
+    statement_api.get_statement.return_value = query_response(rows=[["scheduler-sp", "USE CATALOG"]])
+    assert query_executor.query_dicts("SHOW GRANTS ON CATALOG dqx", require_complete=True) == [
+        {"principal": "scheduler-sp", "actionType": "USE CATALOG"}
+    ]
+
+
+@pytest.mark.parametrize("explicit_default", [False, True])
+@pytest.mark.parametrize("missing_schema", [False, True])
+def test_default_query_keeps_permissive_first_chunk_behavior(
+    query_executor: SqlExecutor, statement_api: MagicMock, explicit_default: bool, missing_schema: bool
+) -> None:
+    response = query_response(rows=[["scheduler-sp"]], next_chunk_index=1)
+    response.manifest.truncated = True
+    if missing_schema:
+        response.manifest.schema = None
+    statement_api.execute_statement.return_value = response
+    if explicit_default:
+        rows = query_executor.query_dicts("SHOW GRANTS ON CATALOG dqx", require_complete=False)
+    else:
+        rows = query_executor.query_dicts("SHOW GRANTS ON CATALOG dqx")
+    assert rows == ([{}] if missing_schema else [{"principal": "scheduler-sp"}])
+    statement_api.get_statement_result_chunk_n.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Helpers

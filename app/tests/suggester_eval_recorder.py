@@ -10,7 +10,7 @@ How it works, and why it works this way
 ---------------------------------------
 The recorder does not know how the suggester builds its query texts, and that
 is the point. It runs the **real** pipeline with the embedding cache in
-fill-on-miss mode, so every text that crosses the ``serving_endpoints.query``
+fill-on-miss mode, so every text that crosses the model-service embeddings call
 boundary is captured exactly as the suggester produced it. Nothing here
 restates a format string from ``rule_suggester.py`` or ``rule_embeddings.py``,
 so the fixtures cannot drift from the code — if a query text changes, the next

@@ -146,6 +146,7 @@ _SEVERITY_SEED_MAP: dict[str, str] = {
     "is_geo_intersects": "Low",
     "is_geo_touches": "Low",
     "is_geo_within": "Low",
+    "is_geo_within_distance": "Low",
     "is_geography": "Low",
     "is_geometry": "Low",
     "is_geometrycollection": "Low",

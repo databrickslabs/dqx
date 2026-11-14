@@ -7,7 +7,10 @@ a schedule is due.
 
 Persistence of *last run / next run* timestamps lives in
 ``dq_schedule_runs`` so the scheduler survives app restarts without
-re-triggering runs that already completed.
+re-triggering runs that already completed. A due tick whose previous
+firing still has an active task-runner job records ``skipped`` and
+advances to the next cadence occurrence, so overlapping scheduled runs
+cannot interleave results.
 
 **Data Products product ticks (design spec §4.3, Task 5):** each tick also
 polls ``dq_data_products`` for approved products with a non-null
@@ -22,8 +25,9 @@ import asyncio
 import calendar
 import json
 import re
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -41,6 +45,15 @@ from databricks_labs_dqx_app.backend.services.data_product_service import (
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
+from databricks_labs_dqx_app.backend.run_status_manager import ended_job_run_status, update_run_status
+from databricks_labs_dqx_app.backend.config import AppConfig
+from databricks_labs_dqx_app.backend.services.scheduler_wake import MarkerVersion, SchedulerWakeMarker
+from databricks_labs_dqx_app.backend.services.task_runner_runs import (
+    RECENT_RUNS_LIMIT,
+    TaskRunnerRun,
+    list_active_task_runner_runs,
+    list_recent_completed_runs,
+)
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql, SqlExecutor
 
@@ -48,7 +61,7 @@ logger = get_logger("scheduler")
 
 _SQL_CHECK_PREFIX = "__sql_check__/"
 
-_VALID_TRACKER_STATUSES = {"pending", "success", "partial_failure", "failed"}
+_VALID_TRACKER_STATUSES = {"pending", "success", "partial_failure", "failed", "skipped"}
 
 # Schedule scope (B2-52): what a due schedule actually runs. Mirrors the
 # ``schedule_kind`` column on ``dq_monitored_tables`` / ``dq_data_products``.
@@ -69,18 +82,50 @@ def _normalize_schedule_kind(value: object) -> str:
     return _SCHEDULE_KIND_DEFAULT
 
 
+def _parse_tracker_run_ids(last_run_id: object) -> set[str]:
+    """Split a ``dq_schedule_runs.last_run_id`` value into app run ids.
+
+    Newer firings store a comma-separated list of the Jobs ``run_id`` values
+    they submitted. Legacy rows store a single scheduler-minted id.
+    """
+    if not isinstance(last_run_id, str) or not last_run_id.strip():
+        return set()
+    return {part.strip() for part in last_run_id.split(",") if part.strip()}
+
+
 # Fallback gap used to push ``next_run_at`` into the future when a schedule's
 # trigger fails *and* its next occurrence cannot be computed. Prevents a
 # deterministic failure from re-firing the schedule on every tick.
 _FAILURE_BACKOFF = timedelta(hours=1)
 
+# Hung or queued task-runner jobs older than this no longer block a due
+# firing. Keep in sync with the job ``timeout_seconds`` (4 hours).
+_IN_FLIGHT_MAX_AGE = timedelta(hours=4)
+
+# Task-runner types that write ``dq_validation_runs`` / quarantine / scores.
+# Preview runs (``is_preview``) and profiling runs do not, so they must not
+# consume a cadence skip at the table level.
+_DQ_OVERLAP_TASK_TYPES = frozenset({"dryrun", "scheduled"})
+
+# Wait this long before skip-to-next when the overlapping run is someone
+# else's (a manual run or another schedule). Two 60s ticks is enough for a
+# short dry-run to finish without burning a daily occurrence.
+_FOREIGN_OVERLAP_GRACE = timedelta(minutes=2)
+
 # How long a scheduler-launched run stays tracked for the completion
-# score-cache refresh (:meth:`SchedulerService._refresh_scores_for_completed_runs`)
+# score-cache refresh (:meth:`SchedulerService.refresh_scores_for_completed_runs`)
 # while waiting for its ``dq_validation_runs`` terminal row. A run whose
 # job dies before the runner writes any terminal result would otherwise
 # be re-checked on every tick forever; 24h comfortably outlives any real
 # validation run.
 _SCORE_REFRESH_TTL = timedelta(hours=24)
+
+# A tracked run is looked up in ``dq_validation_runs`` only once its job has
+# finished, read from the Jobs API so a pending run costs no warehouse time.
+# A run the Jobs API has never listed as active is treated as finished only
+# after this grace period, covering a run-set member recorded just before its
+# job was submitted.
+_JOB_STATE_GRACE = timedelta(minutes=2)
 
 # Recent-run-set sweep bounds (P5.3). Every tick, one bounded OLTP query
 # lists the member run ids of run sets created inside this window so
@@ -218,6 +263,17 @@ _TAG_RECONCILE_INTERVAL_HOURS = 6
 _ACTIVE_POLL_SECONDS = 60
 _IDLE_POLL_SECONDS = 3600
 
+# Wake signal (see :mod:`.scheduler_wake`). Run-start routes and the Tables,
+# Collections and Results list endpoints signal the wake marker; while idle the
+# loop checks it every ``_WAKE_CHECK_SECONDS`` (one ``stat`` call) and ticks
+# early when it changed, so a run started with no schedules — and no browser
+# watching — is tracked within seconds instead of after the hour-long idle
+# sleep. A wake never shortens the ``_ACTIVE_POLL_SECONDS`` cadence, and ticks
+# triggered by wakes are at least ``_WAKE_MIN_TICK_GAP_SECONDS`` apart so
+# repeated page loads can't turn into per-second OLTP work.
+_WAKE_CHECK_SECONDS = 5.0
+_WAKE_MIN_TICK_GAP_SECONDS = 15.0
+
 # System attribution for scheduler-initiated writes (mirrors the
 # ``user_email="scheduler"`` the product/table run ticks already use).
 _SCHEDULER_SYSTEM_USER = "scheduler"
@@ -233,6 +289,7 @@ _DELTA_RETENTION_TABLES: tuple[tuple[str, str], ...] = (
     ("dq_profiling_results", "created_at"),
     (_QUARANTINE_TABLE_NAME, "created_at"),
     ("dq_metrics", "run_time"),
+    ("dq_run_configs", "created_at"),
 )
 _OLTP_RETENTION_TABLES: tuple[tuple[str, str], ...] = (
     ("dq_resolved_rules_history", "changed_at"),
@@ -258,6 +315,9 @@ class SchedulerService:
         monitored_table_service: MonitoredTableService | None = None,
         tag_reconcile_service: TagReconcileService | None = None,
         reconcile_scores_on_start: bool = False,
+        wake_marker: SchedulerWakeMarker | None = None,
+        wake_check_seconds: float = _WAKE_CHECK_SECONDS,
+        wake_min_tick_gap_seconds: float = _WAKE_MIN_TICK_GAP_SECONDS,
     ) -> None:
         """Construct the scheduler.
 
@@ -292,7 +352,7 @@ class SchedulerService:
             launches is tracked in memory and, once its
             ``dq_validation_runs`` terminal row lands, the affected
             tables' scores are refreshed best-effort on the next tick
-            (:meth:`_refresh_scores_for_completed_runs`) — closing the
+            (:meth:`refresh_scores_for_completed_runs`) — closing the
             gap where the browser-side refresh-scores POST never fires
             because no browser observed the scheduled run complete.
             When ``None`` the refresh step is a no-op.
@@ -323,6 +383,12 @@ class SchedulerService:
             per boot (the "reconciled this boot" flag), best-effort
             with a small retry budget. Default False keeps legacy /
             unit-test constructions on the pure per-run refresh.
+        wake_marker:
+            Cross-process wake signal (:class:`.SchedulerWakeMarker`). While
+            idle, the loop checks it every *wake_check_seconds* and ticks
+            early when it changed — ticks triggered this way are at least
+            *wake_min_tick_gap_seconds* apart. ``None`` (legacy / unit tests)
+            leaves the idle sleep interruptible only by :meth:`reload`.
         """
         self._ws = ws
         self._job_id = job_id
@@ -344,6 +410,10 @@ class SchedulerService:
         self._task: asyncio.Task[None] | None = None
         self._reload_event = asyncio.Event()
         self._force_recalc = False
+        self._wake_marker = wake_marker
+        self._wake_check_seconds = wake_check_seconds
+        self._wake_min_tick_gap_seconds = wake_min_tick_gap_seconds
+        self._wake_marker_seen: MarkerVersion = wake_marker.version() if wake_marker is not None else None
         # Both backend layouts qualify the table differently — let the
         # OLTP executor's catalog/schema decide.
         self._table = self._oltp_sql.fqn("dq_schedule_runs")
@@ -364,8 +434,20 @@ class SchedulerService:
         # next scheduled completion. Entries expire after
         # :data:`_SCORE_REFRESH_TTL`.
         self._pending_score_runs: dict[str, datetime] = {}
+        # Active task-runner runs for the current ``_tick``. ``_tick_active_runs_loaded``
+        # is False until listed; ``None`` means the Jobs API could not be queried.
+        self._tick_active_runs: list[TaskRunnerRun] | None = None
+        self._tick_active_runs_loaded = False
+        # First time we saw a *foreign* table-level overlap for a schedule;
+        # skip-to-next only after :data:`_FOREIGN_OVERLAP_GRACE`.
+        self._foreign_overlap_since: dict[str, datetime] = {}
         self._completed_view_fqns_buffer: list[str] = []
         self._runs_table = self._sql.fqn("dq_validation_runs")
+        # Tracked runs the Jobs API has listed as active at least once, and
+        # those whose finished job had no terminal row on the last lookup
+        # (dropped if the next lookup still finds none).
+        self._score_runs_seen_active: set[str] = set()
+        self._score_runs_missing_row: set[str] = set()
         # Run-set sweep state (P5.3): run ids already tracked or
         # processed this boot, so the recurring 24h-window query never
         # re-tracks a run it has already handled. Pruned every sweep to
@@ -455,6 +537,7 @@ class SchedulerService:
             # report, keep polling tightly rather than risk backing off while
             # real work is pending.
             has_active_work = True
+            self._consume_wake_signal()
             try:
                 recalc = self._force_recalc
                 self._force_recalc = False
@@ -468,12 +551,46 @@ class SchedulerService:
             except Exception:
                 logger.exception("Scheduler tick failed")
 
+            await self.wait_for_next_tick(has_active_work)
+
+    async def wait_for_next_tick(self, has_active_work: bool) -> None:
+        """Sleep until the next tick is due, :meth:`reload` is called, or (when idle) a wake arrives.
+
+        With active work the sleep is the fixed ``_ACTIVE_POLL_SECONDS``
+        cadence. When idle it lasts up to ``_IDLE_POLL_SECONDS``, but the wake
+        marker is checked between short waits and a signal from any worker
+        ends the sleep early (no sooner than the minimum gap since the
+        previous tick). Returns without consuming the wake signal; the loop
+        records it when the next tick starts.
+        """
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        deadline = started + self._poll_interval_seconds(has_active_work)
+        wakeable = not has_active_work and self._wake_marker is not None
+        slice_seconds = self._wake_check_seconds if wakeable else float("inf")
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return
             try:
-                timeout = self._poll_interval_seconds(has_active_work)
-                await asyncio.wait_for(self._reload_event.wait(), timeout=timeout)
+                await asyncio.wait_for(self._reload_event.wait(), timeout=min(remaining, slice_seconds))
                 self._reload_event.clear()
+                return
             except asyncio.TimeoutError:
                 pass
+            if wakeable and self._wake_signalled():
+                gap_left = started + self._wake_min_tick_gap_seconds - loop.time()
+                if gap_left > 0:
+                    await asyncio.sleep(gap_left)
+                return
+
+    def _wake_signalled(self) -> bool:
+        return self._wake_marker is not None and self._wake_marker.version() != self._wake_marker_seen
+
+    def _consume_wake_signal(self) -> None:
+        """Record the wake marker as seen; the tick about to run handles whatever it was for."""
+        if self._wake_marker is not None:
+            self._wake_marker_seen = self._wake_marker.compact()
 
     def _poll_interval_seconds(self, has_active_work: bool) -> int:
         """Seconds to sleep before the next tick.
@@ -511,6 +628,8 @@ class SchedulerService:
         unaffected either way.
         """
         now = datetime.now(timezone.utc)
+        self._tick_active_runs = None
+        self._tick_active_runs_loaded = False
         configs = await asyncio.to_thread(self._load_schedule_configs)
         if not configs:
             logger.info("Scheduler tick: no schedule configs found")
@@ -569,18 +688,41 @@ class SchedulerService:
                 if next_run_dt is None or next_run_dt > now:
                     continue
 
+                overlap = self._overlap_decision(name, tracker, await asyncio.to_thread(self._resolve_scope, cfg), now)
+                if overlap != "fire":
+                    logger.warning(
+                        "Schedule '%s' is due (next_run_at=%s) but an overlapping run is still in flight; %s",
+                        name,
+                        next_run,
+                        "skipping" if overlap == "skip" else "waiting",
+                    )
+                    if overlap == "skip":
+                        try:
+                            new_next = self._compute_next_run(cfg, now)
+                        except Exception:
+                            new_next = now + _FAILURE_BACKOFF
+                        await asyncio.to_thread(self._record_skip, name, new_next, tracker)
+                    continue
+
                 run_id = uuid4().hex[:16]
                 logger.info("Schedule '%s' is due (next_run_at=%s), triggering run %s", name, next_run, run_id)
 
                 try:
-                    errors = await asyncio.to_thread(self._trigger_run, name, cfg, run_id)
+                    errors, submitted_ids = await asyncio.to_thread(self._trigger_run, name, cfg, run_id)
 
                     new_next = self._compute_next_run(cfg, now)
                     status = "success" if not errors else "partial_failure"
                     if errors:
                         logger.warning("Schedule '%s' run %s had errors: %s", name, run_id, errors)
 
-                    await asyncio.to_thread(self._upsert_tracker, name, now, new_next, run_id, status)
+                    await asyncio.to_thread(
+                        self._upsert_tracker,
+                        name,
+                        now,
+                        new_next,
+                        ",".join(sorted(submitted_ids)) if submitted_ids else run_id,
+                        status,
+                    )
                 except Exception:
                     # A hard failure inside ``_trigger_run`` (e.g. ``_resolve_scope``,
                     # ``_load_custom_metrics``, or DB access) — anything outside the
@@ -632,7 +774,7 @@ class SchedulerService:
         # extra loop) and is fully best-effort — a failure here never
         # affects the due-ness sources above.
         try:
-            await asyncio.to_thread(self._refresh_scores_for_completed_runs, now)
+            await asyncio.to_thread(self.refresh_scores_for_completed_runs, now)
         except Exception:
             logger.exception("Scheduler failed refreshing the score cache for completed runs")
 
@@ -646,6 +788,128 @@ class SchedulerService:
         # configured), so a non-empty pending set keeps the tight cadence until
         # the run's terminal row is observed.
         return active_configs > 0 or product_active or table_active or bool(self._pending_score_runs)
+
+    def _active_task_runner_runs(self) -> list[TaskRunnerRun] | None:
+        """Active task-runner runs for this tick, or *None* if they could not be listed.
+
+        The Jobs API is queried at most once per :meth:`_tick`. An empty list
+        means we looked and nothing is active.
+        """
+        if self._tick_active_runs_loaded:
+            return None if self._tick_active_runs is None else list(self._tick_active_runs)
+        if not self._job_id:
+            self._tick_active_runs = []
+            self._tick_active_runs_loaded = True
+            return []
+        try:
+            job_id = int(self._job_id)
+        except (TypeError, ValueError):
+            self._tick_active_runs = None
+            self._tick_active_runs_loaded = True
+            return None
+        try:
+            self._tick_active_runs = list_active_task_runner_runs(self._ws, job_id)
+        except Exception:
+            logger.warning("Could not list active task-runner runs; treating in-flight state as unknown", exc_info=True)
+            self._tick_active_runs = None
+        self._tick_active_runs_loaded = True
+        return None if self._tick_active_runs is None else list(self._tick_active_runs)
+
+    def _run_started_at(self, run: TaskRunnerRun) -> datetime | None:
+        if run.start_time_ms is None:
+            return None
+        return datetime.fromtimestamp(run.start_time_ms / 1000, tz=timezone.utc)
+
+    def _is_stale_in_flight(self, started: datetime | None, now: datetime) -> bool:
+        return started is not None and now - started > _IN_FLIGHT_MAX_AGE
+
+    def _dq_run_covers_tables(self, run: TaskRunnerRun, tables: set[str]) -> bool:
+        """Whether *run* is a non-preview DQ job on one of *tables*."""
+        if run.is_preview or run.task_type not in _DQ_OVERLAP_TASK_TYPES:
+            return False
+        fqn = (run.source_table_fqn or "").casefold()
+        return bool(fqn and fqn in tables)
+
+    def _overlap_decision(
+        self,
+        schedule_name: str,
+        tracker: dict[str, Any] | None,
+        table_fqns: Iterable[str],
+        now: datetime,
+    ) -> Literal["fire", "defer", "skip"]:
+        """Whether firing *schedule_name* would overlap an active task-runner job.
+
+        ``skip`` advances to the next occurrence. ``defer`` holds this tick
+        without consuming the cadence — used briefly when the overlap is a
+        foreign DQ run (manual or another schedule) so a short dry-run does
+        not burn a daily slot. This schedule's own previous firing skips
+        immediately.
+
+        Table-level matches ignore preview and profiling runs: those do not
+        write ``dq_validation_runs``, quarantine or scores. Runs older than
+        :data:`_IN_FLIGHT_MAX_AGE` are ignored so a hung job cannot block
+        forever. When the Jobs API is unreachable, a recent ``last_run_at``
+        is treated as still in flight for this schedule only.
+        """
+        tables = {fqn.casefold() for fqn in table_fqns if fqn}
+        stored_ids = _parse_tracker_run_ids(tracker.get("last_run_id") if tracker else None)
+        last_run_at = self._parse_ts(tracker.get("last_run_at")) if tracker and tracker.get("last_run_at") else None
+        active_runs = self._active_task_runner_runs()
+        if active_runs is None:
+            self._foreign_overlap_since.pop(schedule_name, None)
+            if stored_ids and last_run_at is not None and not self._is_stale_in_flight(last_run_at, now):
+                logger.warning(
+                    "Schedule '%s': Jobs API unavailable; skipping while previous firing is still recent",
+                    schedule_name,
+                )
+                return "skip"
+            return "fire"
+
+        own_in_flight = False
+        foreign_table = False
+        for run in active_runs:
+            started = self._run_started_at(run)
+            if self._is_stale_in_flight(started, now):
+                logger.warning(
+                    "Schedule '%s': ignoring stale in-flight run %s older than %s",
+                    schedule_name,
+                    run.app_run_id,
+                    _IN_FLIGHT_MAX_AGE,
+                )
+                continue
+            if run.app_run_id in stored_ids:
+                own_in_flight = True
+                break
+            if self._dq_run_covers_tables(run, tables):
+                foreign_table = True
+
+        if own_in_flight:
+            self._foreign_overlap_since.pop(schedule_name, None)
+            return "skip"
+        if not foreign_table:
+            self._foreign_overlap_since.pop(schedule_name, None)
+            return "fire"
+        first_seen = self._foreign_overlap_since.setdefault(schedule_name, now)
+        if now - first_seen < _FOREIGN_OVERLAP_GRACE:
+            return "defer"
+        self._foreign_overlap_since.pop(schedule_name, None)
+        return "skip"
+
+    def _record_skip(self, schedule_name: str, next_run_at: datetime, tracker: dict[str, Any] | None) -> None:
+        """Advance ``next_run_at`` and stamp ``skipped`` without changing last-run ids."""
+        last_run = tracker.get("last_run_at") if tracker else None
+        last_dt = self._parse_ts(last_run) if last_run else None
+        last_id = tracker.get("last_run_id") if tracker else None
+        try:
+            self._upsert_tracker(
+                schedule_name,
+                last_dt,
+                next_run_at,
+                last_id if isinstance(last_id, str) else None,
+                "skipped",
+            )
+        except Exception:
+            logger.exception("Schedule '%s': failed to persist skipped tracker", schedule_name)
 
     def _advance_after_failure(self, name: str, cfg: dict[str, Any], now: datetime, run_id: str) -> None:
         """Persist a failed run and push ``next_run_at`` forward after a trigger failure.
@@ -796,6 +1060,8 @@ class SchedulerService:
         schedule_name = f"product:{product_id}"
 
         tracker = self._get_tracker(schedule_name)
+        if tracker and tracker.get("paused"):
+            return
         next_run = tracker.get("next_run_at") if tracker else None
 
         if next_run is None:
@@ -843,6 +1109,30 @@ class SchedulerService:
         if next_run_dt is None or next_run_dt > now:
             return
 
+        member_fqns: list[str] = []
+        if self._data_product_service is not None:
+            try:
+                member_fqns = list(self._data_product_service.member_table_fqns(product_id))
+            except Exception:
+                logger.warning(
+                    "Product schedule '%s': could not list members for overlap check", schedule_name, exc_info=True
+                )
+        overlap = self._overlap_decision(schedule_name, tracker, member_fqns, now)
+        if overlap != "fire":
+            logger.warning(
+                "Product schedule '%s' is due (next_run_at=%s) but an overlapping run is still in flight; %s",
+                schedule_name,
+                next_run,
+                "skipping" if overlap == "skip" else "waiting",
+            )
+            if overlap == "skip":
+                try:
+                    new_next = self._compute_next_cron_run(cron_expr, now, tz_name)
+                except Exception:
+                    new_next = now + _FAILURE_BACKOFF
+                self._record_skip(schedule_name, new_next, tracker)
+            return
+
         run_id = uuid4().hex[:16]
         kind = _normalize_schedule_kind(product.get("schedule_kind"))
         logger.info(
@@ -861,6 +1151,7 @@ class SchedulerService:
         # per firing.
         any_succeeded = False
         any_failed = False
+        submitted_ids: list[str] = []
 
         if kind in _KINDS_WITH_DQ:
             try:
@@ -882,6 +1173,7 @@ class SchedulerService:
                 )
                 for submission in result.submitted:
                     self._track_run_for_score_refresh(submission.run_id)
+                    submitted_ids.append(submission.run_id)
                 any_succeeded = True
                 if result.skipped:
                     any_failed = True  # some members skipped → partial
@@ -908,12 +1200,21 @@ class SchedulerService:
                     logger.info(
                         "Product schedule '%s': submitted profiling run %s for %s", schedule_name, prof_run_id, fqn
                     )
+                    submitted_ids.append(prof_run_id)
                     any_succeeded = True
                 except Exception:
                     logger.exception("Product schedule '%s': profiling run failed for %s", schedule_name, fqn)
                     any_failed = True
 
-        self._finish_schedule_firing(schedule_name, cron_expr, tz_name, now, run_id, any_succeeded, any_failed)
+        self._finish_schedule_firing(
+            schedule_name,
+            cron_expr,
+            tz_name,
+            now,
+            ",".join(sorted(submitted_ids)) if submitted_ids else run_id,
+            any_succeeded,
+            any_failed,
+        )
 
     # ------------------------------------------------------------------
     # Monitored-table ticks (P21 item 14)
@@ -1021,6 +1322,8 @@ class SchedulerService:
         schedule_name = f"table:{binding_id}"
 
         tracker = self._get_tracker(schedule_name)
+        if tracker and tracker.get("paused"):
+            return
         next_run = tracker.get("next_run_at") if tracker else None
 
         if next_run is None:
@@ -1061,9 +1364,25 @@ class SchedulerService:
         if next_run_dt is None or next_run_dt > now:
             return
 
+        table_fqn = table.get("table_fqn")
+        overlap = self._overlap_decision(schedule_name, tracker, (table_fqn,) if table_fqn else (), now)
+        if overlap != "fire":
+            logger.warning(
+                "Table schedule '%s' is due (next_run_at=%s) but an overlapping run is still in flight; %s",
+                schedule_name,
+                next_run,
+                "skipping" if overlap == "skip" else "waiting",
+            )
+            if overlap == "skip":
+                try:
+                    new_next = self._compute_next_cron_run(cron_expr, now, tz_name)
+                except Exception:
+                    new_next = now + _FAILURE_BACKOFF
+                self._record_skip(schedule_name, new_next, tracker)
+            return
+
         run_id = uuid4().hex[:16]
         kind = _normalize_schedule_kind(table.get("schedule_kind"))
-        table_fqn = table.get("table_fqn")
         logger.info(
             "Table schedule '%s' is due (next_run_at=%s, kind=%s), triggering run %s",
             schedule_name,
@@ -1081,6 +1400,7 @@ class SchedulerService:
         # firing regardless of how many sub-runs it launches.
         any_succeeded = False
         any_failed = False
+        submitted_ids: list[str] = []
 
         if kind in _KINDS_WITH_DQ:
             try:
@@ -1101,6 +1421,7 @@ class SchedulerService:
                     result.run_set_id,
                 )
                 self._track_run_for_score_refresh(result.run_id)
+                submitted_ids.append(result.run_id)
                 any_succeeded = True
             except BindingRunError as e:
                 # An expected, deterministic domain failure (never approved,
@@ -1126,6 +1447,7 @@ class SchedulerService:
                         profile_run_id,
                         table_fqn,
                     )
+                    submitted_ids.append(profile_run_id)
                     any_succeeded = True
                 except Exception:
                     logger.exception(
@@ -1133,7 +1455,15 @@ class SchedulerService:
                     )
                     any_failed = True
 
-        self._finish_schedule_firing(schedule_name, cron_expr, tz_name, now, run_id, any_succeeded, any_failed)
+        self._finish_schedule_firing(
+            schedule_name,
+            cron_expr,
+            tz_name,
+            now,
+            ",".join(sorted(submitted_ids)) if submitted_ids else run_id,
+            any_succeeded,
+            any_failed,
+        )
 
     def _finish_schedule_firing(
         self,
@@ -1255,7 +1585,7 @@ class SchedulerService:
         # (scheduler-launched product/table runs also mint run sets).
         self._seen_score_runs.add(run_id)
 
-    def _refresh_scores_for_completed_runs(self, now: datetime) -> None:
+    def refresh_scores_for_completed_runs(self, now: datetime) -> None:
         """Refresh the score cache for tracked runs that reached a terminal state.
 
         One batched ``dq_validation_runs`` lookup over the pending run ids:
@@ -1364,8 +1694,11 @@ class SchedulerService:
         """Pop every tracked run with a terminal row; return their table FQNs.
 
         The expiry + batched terminal lookup extracted from
-        :meth:`_refresh_scores_for_completed_runs` so the reconcile pass
-        can fold the completed runs' tables into its own recompute.
+        :meth:`refresh_scores_for_completed_runs` so the reconcile pass
+        can fold the completed runs' tables into its own recompute. Only
+        runs whose job the Jobs API reports finished are looked up, so a
+        run still executing (or one that never writes a row) does not cost
+        a warehouse query on every tick.
         """
         from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
 
@@ -1376,12 +1709,16 @@ class SchedulerService:
 
         expired = [rid for rid, started in self._pending_score_runs.items() if now - started > _SCORE_REFRESH_TTL]
         for rid in expired:
-            del self._pending_score_runs[rid]
+            self._forget_score_run(rid)
             logger.warning("Run %s never reached a terminal state; dropping its score-refresh tracking", rid)
         if not self._pending_score_runs:
             return set()
 
-        in_list = ", ".join(f"'{escape_sql_string(rid)}'" for rid in self._pending_score_runs)
+        finished = self._score_runs_with_finished_jobs(now)
+        if not finished:
+            return set()
+
+        in_list = ", ".join(f"'{escape_sql_string(rid)}'" for rid in sorted(finished))
         sql = (
             f"SELECT DISTINCT run_id, source_table_fqn, view_fqn FROM {self._runs_table} "  # noqa: S608
             f"WHERE run_id IN ({in_list}) AND UPPER(status) <> 'RUNNING'"
@@ -1393,14 +1730,108 @@ class SchedulerService:
             run_id = row[0] if row else None
             if not run_id:
                 continue
-            self._pending_score_runs.pop(run_id, None)
+            self._forget_score_run(run_id)
             fqn = row[1] if len(row) > 1 else None
             if fqn and not fqn.startswith(_SQL_CHECK_PREFIX):
                 fqns.add(fqn)
             view_fqn = row[2] if len(row) > 2 else None
             if isinstance(view_fqn, str) and view_fqn:
                 self._completed_view_fqns_buffer.append(view_fqn)
+
+        missing = finished & set(self._pending_score_runs)
+        ended_jobs = self._ended_job_runs(missing)
+        for run_id in sorted(missing):
+            # The job ended without the runner writing its result (cancelled,
+            # crashed, timed out): record FAILED / CANCELED now rather than
+            # leaving the run RUNNING until the daily tmp-view sweep, and
+            # refresh its table like any other completion.
+            job_run = ended_jobs.get(run_id)
+            outcome = (
+                ended_job_run_status(job_run.life_cycle_state, job_run.result_state, job_run.state_message)
+                if job_run is not None
+                else None
+            )
+            if job_run is None or outcome is None:
+                continue
+            try:
+                self._mark_run_ended("dq_validation_runs", run_id, *outcome)
+            except Exception:
+                logger.exception(f"Could not record the ended job for run {run_id}; retrying next tick")
+                continue
+            self._forget_score_run(run_id)
+            logger.info(f"Run {run_id} ended as {outcome[0]} before writing a result; recorded it in run history")
+            fqn = job_run.source_table_fqn
+            if fqn and not fqn.startswith(_SQL_CHECK_PREFIX):
+                fqns.add(fqn)
+
+        # A finished job with no terminal row will never get one: drop it after
+        # a second empty lookup instead of re-querying until the 24h TTL.
+        for run_id in finished & set(self._pending_score_runs):
+            if run_id in self._score_runs_missing_row:
+                self._forget_score_run(run_id)
+                logger.warning(
+                    "Run %s finished without a terminal result row; dropping its score-refresh tracking", run_id
+                )
+            else:
+                self._score_runs_missing_row.add(run_id)
         return fqns
+
+    def _score_runs_with_finished_jobs(self, now: datetime) -> set[str]:
+        """Return the tracked runs whose task-runner job has finished, per the Jobs API.
+
+        Falls back to every tracked run (the previous behaviour) when the job id
+        is unset or the Jobs API call fails, so completion is never missed.
+        """
+        pending = set(self._pending_score_runs)
+        active_runs = self._active_task_runner_runs()
+        if active_runs is None:
+            return pending
+        active = {run.app_run_id for run in active_runs}
+        self._score_runs_seen_active |= active & pending
+        return {
+            run_id
+            for run_id in pending - active
+            if run_id in self._score_runs_seen_active or now - self._pending_score_runs[run_id] >= _JOB_STATE_GRACE
+        }
+
+    def _ended_job_runs(self, run_ids: set[str]) -> dict[str, TaskRunnerRun]:
+        """Return the ended task-runner job run of each of *run_ids* the Jobs API still lists.
+
+        Only consulted for finished runs with no terminal result row (rare),
+        so the bounded completed-runs listing costs nothing on a normal tick.
+        Empty when the job id is unset or the Jobs API call fails — those
+        runs then fall back to the drop-after-a-second-lookup path.
+        """
+        if not run_ids or not self._job_id:
+            return {}
+        try:
+            recent = list_recent_completed_runs(self._ws, int(self._job_id), RECENT_RUNS_LIMIT)
+        except Exception:
+            logger.warning("Could not list completed task-runner runs; ended runs are reconciled later")
+            return {}
+        return {run.app_run_id: run for run in recent if run.app_run_id in run_ids and run.is_terminal}
+
+    def _mark_run_ended(self, table_name: str, run_id: str, status: str, error_message: str) -> None:
+        """Flip *run_id*'s RUNNING placeholder in *table_name* to *status* (FAILED / CANCELED).
+
+        Raises:
+            RuntimeError: The UPDATE failed, so the row is still RUNNING.
+        """
+        updated = update_run_status(
+            self._sql,
+            AppConfig(catalog=self._catalog, schema_name=self._schema),
+            table_name,
+            run_id,
+            status=status,
+            error_message=error_message,
+        )
+        if not updated:
+            raise RuntimeError(f"Could not update the status of run {run_id} in {table_name}")
+
+    def _forget_score_run(self, run_id: str) -> None:
+        self._pending_score_runs.pop(run_id, None)
+        self._score_runs_seen_active.discard(run_id)
+        self._score_runs_missing_row.discard(run_id)
 
     def _drop_completed_run_views(self, view_fqns: list[str]) -> None:
         """Best-effort drop of temp views for runs observed terminal this tick.
@@ -1661,7 +2092,7 @@ class SchedulerService:
     # Tracker (dq_schedule_runs)
     # ------------------------------------------------------------------
 
-    def _get_tracker(self, name: str) -> dict[str, str] | None:
+    def _get_tracker(self, name: str) -> dict[str, Any] | None:
         from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, validate_schedule_name
 
         validate_schedule_name(name)
@@ -1669,7 +2100,7 @@ class SchedulerService:
         ts = self._oltp_sql.ts_text
         sql = (
             f"SELECT schedule_name, {ts('last_run_at')}, {ts('next_run_at')}, "
-            f"last_run_id, status "
+            f"last_run_id, status, paused "
             f"FROM {self._table} WHERE schedule_name = '{escaped}'"
         )
         rows = self._oltp_sql.query(sql)
@@ -1682,12 +2113,13 @@ class SchedulerService:
             "next_run_at": row[2],
             "last_run_id": row[3],
             "status": row[4],
+            "paused": len(row) > 5 and row[5] in (True, "true", "t", 1),
         }
 
     def _realign_next_run(
         self,
         schedule_name: str,
-        tracker: dict[str, str],
+        tracker: dict[str, Any],
         next_run: Any,
         cron_expr: str,
         tz_name: str | None,
@@ -1724,20 +2156,26 @@ class SchedulerService:
         missed-window contract already allows, and that firing re-anchors
         ``last_run_at`` to now, so this cannot become a retry loop.
 
-        Two cases deliberately keep the stored value: a cron that no longer
-        parses, and a ``failed`` status. Both mean ``next_run_at`` may be a
-        :data:`_FAILURE_BACKOFF` stamp rather than a real occurrence, and
-        replacing a backoff with "next occurrence after the failed run" is
-        exactly the tight retry loop the backoff exists to prevent. A cron
-        edited during a backoff window takes effect when it expires.
+        One case deliberately keeps the stored value: a cron that no longer
+        parses. Its ``next_run_at`` is a :data:`_FAILURE_BACKOFF` stamp rather
+        than a real occurrence, and the ``_compute_next_cron_run`` call below
+        raises for it — the ``except`` returns the stored stamp untouched, so a
+        malformed cron can never have its backoff replaced by "next occurrence
+        after the failed run" (the tight retry loop the backoff exists to
+        prevent).
+
+        A ``failed`` status does NOT skip realignment. When a firing fails under
+        a VALID cron, :meth:`_finish_schedule_firing` advances ``next_run_at``
+        to a real cron occurrence (not a backoff) and stamps ``failed``; if the
+        cron is then edited, that occurrence must realign like any other —
+        otherwise a single failed run freezes the schedule on its old cadence
+        and silently ignores every later edit. This cannot loop: the
+        re-derived occurrence is anchored on ``last_run_at`` and firing it
+        re-anchors ``last_run_at`` to now.
 
         Returns the ``next_run_at`` the caller should evaluate — the stored one
         or, when realigned, the new occurrence.
         """
-        status = tracker.get("status")
-        if status == "failed":
-            return next_run
-
         stored_dt = self._parse_ts(next_run) if isinstance(next_run, str) else next_run
         if stored_dt is None or stored_dt <= now:
             return next_run
@@ -1767,6 +2205,7 @@ class SchedulerService:
         )
         # Only the occurrence moves: last_run_at / last_run_id / status carry
         # over so the Schedules UI keeps showing the previous run's outcome.
+        status = tracker.get("status")
         self._upsert_tracker(
             schedule_name,
             last_dt,
@@ -1817,8 +2256,8 @@ class SchedulerService:
     # Trigger run
     # ------------------------------------------------------------------
 
-    def _trigger_run(self, schedule_name: str, cfg: dict[str, Any], run_id_prefix: str) -> list[str]:
-        """Resolve scope and submit jobs for a schedule. Returns error list.
+    def _trigger_run(self, schedule_name: str, cfg: dict[str, Any], run_id_prefix: str) -> tuple[list[str], list[str]]:
+        """Resolve scope and submit jobs for a schedule. Returns (errors, submitted run ids).
 
         Scheduled runs pass the source table FQN directly to the task runner
         instead of creating temporary views.  This avoids Unity Catalog metadata
@@ -1832,7 +2271,7 @@ class SchedulerService:
         table_fqns = self._resolve_scope(cfg)
         if not table_fqns:
             logger.info("Schedule '%s': no approved rules matched scope", schedule_name)
-            return [f"No approved rules matched scope for schedule '{schedule_name}'"]
+            return [f"No approved rules matched scope for schedule '{schedule_name}'"], []
 
         sample_size = cfg.get("sample_size") or 0
         sample_interval_minutes = cfg.get("sample_interval_minutes") or None
@@ -1842,6 +2281,7 @@ class SchedulerService:
         sample_interval_columns = cfg.get("sample_interval_columns")
         sample_interval_selected_column = cfg.get("sample_interval_selected_column") or None
         errors: list[str] = []
+        submitted_ids: list[str] = []
 
         # Fetch custom metrics once per schedule tick — they apply
         # globally to every dq_metrics row produced by this trigger.
@@ -1916,6 +2356,7 @@ class SchedulerService:
                     },
                 )
                 logger.info("Schedule '%s': submitted run for %s (run_id=%s)", schedule_name, table_fqn, run_id)
+                submitted_ids.append(run_id)
                 # Synthetic cross-table keys never carry a real table FQN,
                 # so there is no score-cache row to refresh for them.
                 if not is_synthetic:
@@ -1924,7 +2365,7 @@ class SchedulerService:
                 logger.error("Schedule '%s': failed for %s: %s", schedule_name, table_fqn, e)
                 errors.append(f"{table_fqn}: {e}")
 
-        return errors
+        return errors, submitted_ids
 
     # ------------------------------------------------------------------
     # Scope resolution
@@ -2120,11 +2561,11 @@ class SchedulerService:
             return
         self._next_tmp_view_sweep_at = now + timedelta(hours=_TMP_VIEW_SWEEP_INTERVAL_HOURS)
         try:
-            await asyncio.to_thread(self._sweep_stale_tmp_views)
+            await asyncio.to_thread(self.sweep_stale_tmp_views)
         except Exception:
             logger.exception("Tmp-view sweep failed (non-fatal)")
 
-    def _sweep_stale_tmp_views(self) -> None:
+    def sweep_stale_tmp_views(self) -> None:
         """Reap tmp views left behind when status polling never ran ``drop_view``.
 
         Three sources:
@@ -2135,7 +2576,6 @@ class SchedulerService:
         3. Age-based orphans (delegates to :meth:`_gc_orphan_views` logic
            with a shorter threshold) — catches views with no metadata row.
         """
-        from databricks_labs_dqx_app.backend.run_status_manager import update_run_status
         from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
 
         views_to_drop: set[str] = set()
@@ -2186,20 +2626,10 @@ class SchedulerService:
                         continue
                     views_to_drop.add(view_fqn.strip())
                     result_state = state.result_state.value if state and state.result_state else None
-                    if result_state != "SUCCESS" and isinstance(run_id, str) and run_id:
-                        new_status = "CANCELED" if result_state == "CANCELED" else "FAILED"
-                        message = (state.state_message if state else None) or f"Run finished with state: {lifecycle}"
+                    outcome = ended_job_run_status(lifecycle, result_state, state.state_message if state else None)
+                    if outcome is not None and isinstance(run_id, str) and run_id:
                         try:
-                            from databricks_labs_dqx_app.backend.config import AppConfig
-
-                            update_run_status(
-                                self._sql,
-                                AppConfig(catalog=self._catalog, schema_name=self._schema),
-                                table_name,
-                                run_id,
-                                status=new_status,
-                                error_message=message,
-                            )
+                            self._mark_run_ended(table_name, run_id, *outcome)
                         except Exception as exc:
                             logger.warning(
                                 "Tmp-view sweep: failed to reconcile RUNNING row %s in %s: %s",
@@ -2528,7 +2958,6 @@ class SchedulerService:
         self._ensure_tmp_schema()
         sql = f"CREATE OR REPLACE VIEW {quoted_view} AS SELECT * FROM {quoted_source}"
         self._tmp_sql.execute(sql)
-        self._grant_view(view_name)
         if not self._view_exists(view_name):
             raise RuntimeError(f"Scheduler: view creation succeeded but view not found: {view_name}")
         return view_name
@@ -2549,18 +2978,9 @@ class SchedulerService:
         self._ensure_tmp_schema()
         sql = f"CREATE OR REPLACE VIEW {quoted_view} AS {sql_query}"
         self._tmp_sql.execute(sql)
-        self._grant_view(view_name)
         if not self._view_exists(view_name):
             raise RuntimeError(f"Scheduler: view creation succeeded but view not found: {view_name}")
         return view_name
-
-    def _grant_view(self, view_name: str) -> None:
-        from databricks_labs_dqx_app.backend.sql_utils import quote_fqn
-
-        try:
-            self._tmp_sql.execute(f"GRANT SELECT ON VIEW {quote_fqn(view_name)} TO `account users`")
-        except Exception as e:
-            logger.warning("Failed to grant SELECT on %s: %s", view_name, e)
 
     _tmp_schema_ensured = False
 

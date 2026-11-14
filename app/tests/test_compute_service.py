@@ -91,31 +91,39 @@ class TestListClusters:
         sp_ws.clusters.list.assert_not_called()
 
 
-class TestWarehouseAccessStatus:
-    def _acl(self, principal, level):
-        return SimpleNamespace(
-            access_control_list=[
-                SimpleNamespace(
-                    service_principal_name=principal,
-                    all_permissions=[SimpleNamespace(permission_level=SimpleNamespace(value=level))],
-                )
-            ]
-        )
+def _ace(group=None, level="CAN_USE", sp=None):
+    return SimpleNamespace(
+        group_name=group,
+        service_principal_name=sp,
+        user_name=None,
+        all_permissions=[SimpleNamespace(permission_level=level)],
+    )
 
-    def test_granted_when_sp_has_can_use(self, service, sp_ws):
-        sp_ws.warehouses.get_permissions.return_value = self._acl("sp-app-id", "CAN_USE")
+
+def _acl(*entries):
+    return SimpleNamespace(access_control_list=list(entries))
+
+
+class TestWarehouseAccessStatus:
+    def test_granted_when_sp_has_can_manage(self, service, sp_ws):
+        sp_ws.warehouses.get_permissions.return_value = _acl(_ace(sp="sp-app-id", level="CAN_MANAGE"))
 
         assert service.warehouse_access_status("wh", reader_ws=MagicMock()) == "granted"
 
+    def test_can_use_is_not_enough(self, service, sp_ws):
+        sp_ws.warehouses.get_permissions.return_value = _acl(_ace(sp="sp-app-id", level="CAN_USE"))
+
+        assert service.warehouse_access_status("wh", reader_ws=MagicMock()) == "missing"
+
     def test_missing_when_sp_absent_from_acl(self, service, sp_ws):
-        sp_ws.warehouses.get_permissions.return_value = self._acl("someone-else", "CAN_MANAGE")
+        sp_ws.warehouses.get_permissions.return_value = _acl(_ace(sp="someone-else", level="CAN_MANAGE"))
 
         assert service.warehouse_access_status("wh", reader_ws=MagicMock()) == "missing"
 
     def test_falls_back_to_reader_when_sp_cannot_read_acl(self, service, sp_ws):
         sp_ws.warehouses.get_permissions.side_effect = PermissionError("no manage")
         reader = MagicMock()
-        reader.warehouses.get_permissions.return_value = self._acl("sp-app-id", "CAN_USE")
+        reader.warehouses.get_permissions.return_value = _acl(_ace(sp="sp-app-id", level="CAN_MANAGE"))
 
         assert service.warehouse_access_status("wh", reader_ws=reader) == "granted"
 
@@ -133,24 +141,63 @@ class TestWarehouseAccessStatus:
         assert svc.warehouse_access_status("wh", reader_ws=MagicMock()) == "unknown"
 
 
-class TestGrantWarehouseCanUse:
-    def test_grants_via_grantor(self, service):
+class TestGrantWarehouseManage:
+    def test_grants_manage_via_grantor(self, service):
         grantor = MagicMock()
 
-        service.grant_warehouse_can_use("wh", grantor_ws=grantor)
+        service.grant_warehouse_manage("wh", grantor_ws=grantor)
 
         grantor.warehouses.update_permissions.assert_called_once()
         args, kwargs = grantor.warehouses.update_permissions.call_args
         assert args[0] == "wh"
         acl = kwargs["access_control_list"]
         assert acl[0].service_principal_name == "sp-app-id"
+        assert acl[0].permission_level.value == "CAN_MANAGE"
+        grantor.warehouses.set_permissions.assert_not_called()
 
     def test_raises_when_sp_identity_unresolved(self, sp_ws, app_settings):
         svc = ComputeService(sp_ws=sp_ws, app_settings=app_settings)
         svc.sp_application_id = MagicMock(return_value="")  # type: ignore[method-assign]
 
         with pytest.raises(RuntimeError):
-            svc.grant_warehouse_can_use("wh", grantor_ws=MagicMock())
+            svc.grant_warehouse_manage("wh", grantor_ws=MagicMock())
+
+
+class TestReconcileWarehouseAudience:
+    def test_adds_only_missing_groups(self, sp_ws, service):
+        before = _acl(_ace(group="ops", level="CAN_MANAGE"))
+        after = _acl(_ace(group="ops", level="CAN_MANAGE"), _ace(group="data-team", level="CAN_USE"))
+        sp_ws.warehouses.get_permissions.side_effect = [before, after]
+
+        status = service.reconcile_warehouse_audience("wh", ["ops", "data-team"])
+
+        assert status == "granted"
+        request = sp_ws.warehouses.update_permissions.call_args.kwargs["access_control_list"]
+        assert [(item.group_name, item.permission_level.value) for item in request] == [("data-team", "CAN_USE")]
+        sp_ws.warehouses.set_permissions.assert_not_called()
+
+    def test_no_update_when_all_present(self, sp_ws, service):
+        sp_ws.warehouses.get_permissions.return_value = _acl(_ace(group="Ops", level="CAN_USE"))
+
+        assert service.reconcile_warehouse_audience("wh", ["ops"]) == "granted"
+        sp_ws.warehouses.update_permissions.assert_not_called()
+
+    def test_missing_when_grant_does_not_take_effect(self, sp_ws, service):
+        sp_ws.warehouses.get_permissions.return_value = _acl()
+
+        assert service.reconcile_warehouse_audience("wh", ["ops"]) == "missing"
+
+    def test_unknown_when_acl_unreadable(self, sp_ws, service):
+        sp_ws.warehouses.get_permissions.side_effect = PermissionError("denied")
+
+        assert service.reconcile_warehouse_audience("wh", ["ops"]) == "unknown"
+        sp_ws.warehouses.update_permissions.assert_not_called()
+
+    def test_unknown_when_update_fails(self, sp_ws, service):
+        sp_ws.warehouses.get_permissions.return_value = _acl()
+        sp_ws.warehouses.update_permissions.side_effect = PermissionError("denied")
+
+        assert service.reconcile_warehouse_audience("wh", ["ops"]) == "unknown"
 
 
 class TestResolveWarehouseId:

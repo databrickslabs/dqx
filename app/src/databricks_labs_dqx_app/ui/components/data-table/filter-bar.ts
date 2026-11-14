@@ -4,14 +4,14 @@
  * bars stay visually consistent (P25 item 29).
  *
  * `FILTER_TRIGGER_CLASS` is applied to every trigger-style filter control —
- * plain `Select` triggers, the searchable-combobox triggers, and the free-text
- * tag input — so they share one width. It is deliberately a touch wider than
- * the old per-page values (RR was `w-36`, MT/TS were `w-40`) so longer option
- * labels (statuses, owners, score buckets) don't crowd the chevron. The
+ * plain `Select` triggers, the searchable-combobox triggers, the label filter
+ * and the Group by select — so the pills share one compact width and a full
+ * filter bar wraps cleanly beside the Edit View button instead of pushing
+ * it out of line. Option lists open wider than the trigger when needed. The
  * search box keeps its own wider `w-56` and is intentionally not tokenized
  * here.
  */
-export const FILTER_TRIGGER_CLASS = "h-8 w-44 text-xs";
+export const FILTER_TRIGGER_CLASS = "h-8 w-36 text-xs";
 
 /**
  * DQ-score bucket filter shared by the Monitored Tables and Table Spaces
@@ -53,4 +53,16 @@ export function matchesDqScoreBucket(score: number | null | undefined, bucket: s
     default:
       return true;
   }
+}
+
+/**
+ * The DQ-score bucket a row falls in — the same bands as
+ * {@link matchesDqScoreBucket}, so grouping by score and filtering by score
+ * always agree. A null/undefined score is `"none"`.
+ */
+export function dqScoreBucketOf(score: number | null | undefined): string {
+  const bucket = DQ_SCORE_BUCKETS.find(
+    (b) => b.value !== DQ_SCORE_FILTER_ALL && matchesDqScoreBucket(score, b.value),
+  );
+  return bucket?.value ?? "none";
 }

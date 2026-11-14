@@ -60,6 +60,12 @@ PROFILE_OPTION_HAS_NO_OUTLIERS_ALLOW_COLUMNS = "has_no_outliers_allow_columns"
 # List of denied columns to generate *has_no_outliers* profile for
 PROFILE_OPTION_HAS_NO_OUTLIERS_DENY_COLUMNS = "has_no_outliers_deny_columns"
 
+# Whether to profile native GEOMETRY/GEOGRAPHY columns.
+PROFILE_OPTION_PROFILE_GEOSPATIAL = "profile_geospatial"
+
+# SRID used to transform geometries before computing areas for geospatial area profiles.
+PROFILE_OPTION_GEOSPATIAL_SRID = "geospatial_srid"
+
 # Default values for all DQProfiler options.
 DEFAULT_PROFILE_OPTIONS: dict[str, None | bool | int | float | str | list[int] | list[float] | list[str]] = {
     PROFILE_OPTION_ROUND: True,
@@ -82,4 +88,6 @@ DEFAULT_PROFILE_OPTIONS: dict[str, None | bool | int | float | str | list[int] |
     PROFILE_OPTION_HAS_NO_OUTLIERS: False,
     PROFILE_OPTION_HAS_NO_OUTLIERS_ALLOW_COLUMNS: [],
     PROFILE_OPTION_HAS_NO_OUTLIERS_DENY_COLUMNS: [],
+    PROFILE_OPTION_PROFILE_GEOSPATIAL: False,
+    PROFILE_OPTION_GEOSPATIAL_SRID: 3857,
 }
