@@ -4376,6 +4376,57 @@ export interface ScheduleConfigOut {
 }
 
 /**
+ * Body of ``POST /schedule-grants/apply``: only table names, never SQL.
+
+The server re-derives the GRANT statements from its own preflight of these tables.
+There is no size cap beyond the preflight's: the preflight takes any number of
+tables, and a statement shared by several tables runs only once.
+ */
+export interface ScheduleGrantApplyIn {
+  /**
+   * Fully qualified names of the tables whose missing scheduler grants to run
+   * @minItems 1
+   */
+  table_fqns: string[];
+}
+
+/**
+ * Outcome of running the missing scheduler grants as the signed-in user.
+ */
+export interface ScheduleGrantApplyOut {
+  /** Fresh preflight taken after the grants ran */
+  preflight: SchedulePreflightOut;
+  applied: number;
+  total: number;
+  failed?: ScheduleGrantFailureOut[];
+  /** The check after the grants couldn't run, so preflight is the one taken before them */
+  recheck_failed?: boolean;
+}
+
+export type ScheduleGrantFailureOutErrorCode = typeof ScheduleGrantFailureOutErrorCode[keyof typeof ScheduleGrantFailureOutErrorCode];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ScheduleGrantFailureOutErrorCode = {
+  permission_denied: 'permission_denied',
+  warehouse_unavailable: 'warehouse_unavailable',
+  not_found: 'not_found',
+  rate_limited: 'rate_limited',
+  unknown: 'unknown',
+} as const;
+
+/**
+ * A missing scheduler grant that could not be run, with a sanitized error code.
+ */
+export interface ScheduleGrantFailureOut {
+  /** First requested table that needed the grant */
+  fqn: string;
+  /** The GRANT statement, as the preflight showed it */
+  statement: string;
+  error_code: ScheduleGrantFailureOutErrorCode;
+}
+
+/**
  * A catalog or schema usage grant a scheduler service principal still needs.
  */
 export interface ScheduleMissingGrantOut {
@@ -4600,7 +4651,18 @@ export const SetupActionId = {
   verify_again: 'verify_again',
   configure: 'configure',
   override: 'override',
+  choose_task_runner: 'choose_task_runner',
 } as const;
+
+/**
+ * Outcome of running a step's GRANT statements as the signed-in administrator.
+ */
+export interface SetupApplyGrantsResponse {
+  report: SetupReport;
+  applied: number;
+  total: number;
+  failed?: SetupGrantFailure[];
+}
 
 /**
  * Administrator-submitted catalog, prefix and audience group (Marketplace path).
@@ -4635,6 +4697,37 @@ export interface SetupConfigurationView {
   schemas?: string[];
   broad_audience?: boolean;
   locked?: boolean;
+}
+
+export type SetupGrantFailureErrorCode = typeof SetupGrantFailureErrorCode[keyof typeof SetupGrantFailureErrorCode];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const SetupGrantFailureErrorCode = {
+  permission_denied: 'permission_denied',
+  warehouse_unavailable: 'warehouse_unavailable',
+  not_found: 'not_found',
+  rate_limited: 'rate_limited',
+  unknown: 'unknown',
+} as const;
+
+/**
+ * A setup GRANT statement that could not be run, with a sanitized error code.
+ */
+export interface SetupGrantFailure {
+  statement: string;
+  error_code: SetupGrantFailureErrorCode;
+}
+
+/**
+ * Display names of the workspace groups an administrator can choose as the default user group.
+
+*truncated* is true when the workspace has more groups than are listed, so the
+administrator may need to type the name.
+ */
+export interface SetupGroupsResponse {
+  groups?: string[];
+  truncated?: boolean;
 }
 
 /**
@@ -4687,6 +4780,9 @@ export interface SetupStatusResponse {
 
 /**
  * Sanitized status for one setup step.
+
+*instructions* is prose for the administrator; *grant_statements* holds the GRANT
+statements the step still needs, kept apart so they can be copied or run as SQL.
  */
 export interface SetupStep {
   id: SetupStepId;
@@ -4694,6 +4790,7 @@ export interface SetupStep {
   code?: string;
   summary?: string;
   instructions?: string[];
+  grant_statements?: string[];
   actions?: SetupActionId[];
 }
 
@@ -4949,6 +5046,78 @@ with HTTP 200, never a 500 (mirroring the suggest-rules contract).
  */
 export interface TagSuggestionsOut {
   suggestions?: TagRuleSuggestionOut[];
+}
+
+export type TaskRunnerAccessResponseSpPermission = typeof TaskRunnerAccessResponseSpPermission[keyof typeof TaskRunnerAccessResponseSpPermission];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const TaskRunnerAccessResponseSpPermission = {
+  confirmed: 'confirmed',
+  missing: 'missing',
+  unverified: 'unverified',
+} as const;
+
+/**
+ * Whether a picked service principal is ready to run Studio's task-runner job.
+
+*sp_permission* says whether the app may use the service principal: *confirmed*,
+*missing*, or *unverified* when Studio can't read that permission. *grant_statements*
+are the GRANT statements only a person can run for it; *automatic_grants* are the ones
+setup runs itself on Studio's own objects once the task-runner job runs as it.
+*grants_unverified* is true when some of its access couldn't be read.
+ */
+export interface TaskRunnerAccessResponse {
+  sp_permission: TaskRunnerAccessResponseSpPermission;
+  grant_statements?: string[];
+  automatic_grants?: string[];
+  grants_unverified?: boolean;
+}
+
+/**
+ * Outcome of running a picked service principal's GRANT statements as the administrator.
+
+*grant_statements* are the statements the service principal still needs afterwards.
+ */
+export interface TaskRunnerGrantsResponse {
+  applied: number;
+  total: number;
+  failed?: SetupGrantFailure[];
+  grant_statements?: string[];
+  grants_unverified?: boolean;
+}
+
+/**
+ * A workspace service principal the task-runner job could run as.
+ */
+export interface TaskRunnerPrincipal {
+  id: string;
+  display_name: string;
+  application_id: string;
+}
+
+/**
+ * The service principal an administrator picked for the task-runner job, by Application ID.
+ */
+export interface TaskRunnerPrincipalRequest {
+  /** @maxLength 64 */
+  application_id: string;
+}
+
+/**
+ * Service principals an administrator can choose for the task-runner job.
+
+*available* is false when Studio couldn't list them, so the administrator pastes an
+Application ID instead. *app_name* names the DQX Studio app so the administrator can
+find it when giving it access to the chosen service principal. *truncated* is true
+when the workspace has more service principals than are listed, so the administrator
+may need to paste the Application ID.
+ */
+export interface TaskRunnerPrincipalsResponse {
+  available: boolean;
+  principals?: TaskRunnerPrincipal[];
+  app_name?: string;
+  truncated?: boolean;
 }
 
 export type TestRowOutCells = {[key: string]: string | null};
@@ -6528,6 +6697,156 @@ export function useGetSetupStatusSuspense<TData = Awaited<ReturnType<typeof getS
 
 
 /**
+ * List workspace groups for the default user group picker, without the built-in ones.
+
+Listed as the app, like the group existence check: no user token scope covers groups.
+A deployment that supplies storage also supplies the group, so there is nothing to choose.
+ * @summary List Setup Groups
+ */
+export const listSetupGroups = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SetupGroupsResponse>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/setup/groups`,options
+    );
+  }
+
+
+
+
+export const getListSetupGroupsQueryKey = () => {
+    return [
+    `/api/v1/setup/groups`
+    ] as const;
+    }
+
+    
+export const getListSetupGroupsQueryOptions = <TData = Awaited<ReturnType<typeof listSetupGroups>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListSetupGroupsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSetupGroups>>> = ({ signal }) => listSetupGroups({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListSetupGroupsQueryResult = NonNullable<Awaited<ReturnType<typeof listSetupGroups>>>
+export type ListSetupGroupsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListSetupGroups<TData = Awaited<ReturnType<typeof listSetupGroups>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listSetupGroups>>,
+          TError,
+          Awaited<ReturnType<typeof listSetupGroups>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListSetupGroups<TData = Awaited<ReturnType<typeof listSetupGroups>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listSetupGroups>>,
+          TError,
+          Awaited<ReturnType<typeof listSetupGroups>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListSetupGroups<TData = Awaited<ReturnType<typeof listSetupGroups>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Setup Groups
+ */
+
+export function useListSetupGroups<TData = Awaited<ReturnType<typeof listSetupGroups>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListSetupGroupsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListSetupGroupsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listSetupGroups>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListSetupGroupsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSetupGroups>>> = ({ signal }) => listSetupGroups({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListSetupGroupsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listSetupGroups>>>
+export type ListSetupGroupsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListSetupGroupsSuspense<TData = Awaited<ReturnType<typeof listSetupGroups>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListSetupGroupsSuspense<TData = Awaited<ReturnType<typeof listSetupGroups>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListSetupGroupsSuspense<TData = Awaited<ReturnType<typeof listSetupGroups>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Setup Groups
+ */
+
+export function useListSetupGroupsSuspense<TData = Awaited<ReturnType<typeof listSetupGroups>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSetupGroups>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListSetupGroupsSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
  * Validate and save catalog, prefix and audience group, then run the setup workflow.
  * @summary Configure Setup
  */
@@ -6711,6 +7030,417 @@ export const useOverrideSetupStep = <TError = AxiosError<HTTPValidationError>,
       > => {
 
       const mutationOptions = getOverrideSetupStepMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Run a step's GRANT statements as the signed-in administrator, then re-verify setup.
+
+The request carries only the step; the statements are re-derived on the server. A failure
+while re-deriving them or re-checking setup afterwards is reported as *setup_grants_failed*,
+without the error's text.
+ * @summary Apply Setup Step Grants
+ */
+export const applySetupStepGrants = (
+    stepId: SetupStepId, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SetupApplyGrantsResponse>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/setup/steps/${stepId}/apply-grants`,undefined,options
+    );
+  }
+
+
+
+export const getApplySetupStepGrantsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applySetupStepGrants>>, TError,{stepId: SetupStepId}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof applySetupStepGrants>>, TError,{stepId: SetupStepId}, TContext> => {
+
+const mutationKey = ['applySetupStepGrants'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof applySetupStepGrants>>, {stepId: SetupStepId}> = (props) => {
+          const {stepId} = props ?? {};
+
+          return  applySetupStepGrants(stepId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApplySetupStepGrantsMutationResult = NonNullable<Awaited<ReturnType<typeof applySetupStepGrants>>>
+    
+    export type ApplySetupStepGrantsMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Apply Setup Step Grants
+ */
+export const useApplySetupStepGrants = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applySetupStepGrants>>, TError,{stepId: SetupStepId}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof applySetupStepGrants>>,
+        TError,
+        {stepId: SetupStepId},
+        TContext
+      > => {
+
+      const mutationOptions = getApplySetupStepGrantsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * List the service principals the task-runner job could run as, without the app's own.
+
+Listed as the app. When the app can't list them, *available* is false so the
+administrator pastes an Application ID instead. A job from the deployment bundle gets
+its service principal from the deployment, so there is nothing to choose.
+ * @summary List Task Runner Service Principals
+ */
+export const listTaskRunnerServicePrincipals = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<TaskRunnerPrincipalsResponse>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/setup/task-runner/service-principals`,options
+    );
+  }
+
+
+
+
+export const getListTaskRunnerServicePrincipalsQueryKey = () => {
+    return [
+    `/api/v1/setup/task-runner/service-principals`
+    ] as const;
+    }
+
+    
+export const getListTaskRunnerServicePrincipalsQueryOptions = <TData = Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListTaskRunnerServicePrincipalsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>> = ({ signal }) => listTaskRunnerServicePrincipals({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListTaskRunnerServicePrincipalsQueryResult = NonNullable<Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>>
+export type ListTaskRunnerServicePrincipalsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListTaskRunnerServicePrincipals<TData = Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>,
+          TError,
+          Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListTaskRunnerServicePrincipals<TData = Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>,
+          TError,
+          Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListTaskRunnerServicePrincipals<TData = Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Task Runner Service Principals
+ */
+
+export function useListTaskRunnerServicePrincipals<TData = Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListTaskRunnerServicePrincipalsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListTaskRunnerServicePrincipalsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListTaskRunnerServicePrincipalsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>> = ({ signal }) => listTaskRunnerServicePrincipals({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListTaskRunnerServicePrincipalsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>>
+export type ListTaskRunnerServicePrincipalsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListTaskRunnerServicePrincipalsSuspense<TData = Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListTaskRunnerServicePrincipalsSuspense<TData = Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListTaskRunnerServicePrincipalsSuspense<TData = Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Task Runner Service Principals
+ */
+
+export function useListTaskRunnerServicePrincipalsSuspense<TData = Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listTaskRunnerServicePrincipals>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListTaskRunnerServicePrincipalsSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Check a picked service principal: whether the app may use it, and the data access it still needs.
+ * @summary Check Task Runner Access
+ */
+export const checkTaskRunnerAccess = (
+    taskRunnerPrincipalRequest: TaskRunnerPrincipalRequest, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<TaskRunnerAccessResponse>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/setup/task-runner/access`,
+      taskRunnerPrincipalRequest,options
+    );
+  }
+
+
+
+export const getCheckTaskRunnerAccessMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkTaskRunnerAccess>>, TError,{data: TaskRunnerPrincipalRequest}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof checkTaskRunnerAccess>>, TError,{data: TaskRunnerPrincipalRequest}, TContext> => {
+
+const mutationKey = ['checkTaskRunnerAccess'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof checkTaskRunnerAccess>>, {data: TaskRunnerPrincipalRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  checkTaskRunnerAccess(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CheckTaskRunnerAccessMutationResult = NonNullable<Awaited<ReturnType<typeof checkTaskRunnerAccess>>>
+    export type CheckTaskRunnerAccessMutationBody = TaskRunnerPrincipalRequest
+    export type CheckTaskRunnerAccessMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Check Task Runner Access
+ */
+export const useCheckTaskRunnerAccess = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof checkTaskRunnerAccess>>, TError,{data: TaskRunnerPrincipalRequest}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof checkTaskRunnerAccess>>,
+        TError,
+        {data: TaskRunnerPrincipalRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getCheckTaskRunnerAccessMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Run a picked service principal's GRANT statements as the signed-in administrator.
+
+The request carries only the service principal; the statements are re-derived on the server.
+ * @summary Apply Task Runner Grants
+ */
+export const applyTaskRunnerGrants = (
+    taskRunnerPrincipalRequest: TaskRunnerPrincipalRequest, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<TaskRunnerGrantsResponse>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/setup/task-runner/grants`,
+      taskRunnerPrincipalRequest,options
+    );
+  }
+
+
+
+export const getApplyTaskRunnerGrantsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyTaskRunnerGrants>>, TError,{data: TaskRunnerPrincipalRequest}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof applyTaskRunnerGrants>>, TError,{data: TaskRunnerPrincipalRequest}, TContext> => {
+
+const mutationKey = ['applyTaskRunnerGrants'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof applyTaskRunnerGrants>>, {data: TaskRunnerPrincipalRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  applyTaskRunnerGrants(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApplyTaskRunnerGrantsMutationResult = NonNullable<Awaited<ReturnType<typeof applyTaskRunnerGrants>>>
+    export type ApplyTaskRunnerGrantsMutationBody = TaskRunnerPrincipalRequest
+    export type ApplyTaskRunnerGrantsMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Apply Task Runner Grants
+ */
+export const useApplyTaskRunnerGrants = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyTaskRunnerGrants>>, TError,{data: TaskRunnerPrincipalRequest}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof applyTaskRunnerGrants>>,
+        TError,
+        {data: TaskRunnerPrincipalRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getApplyTaskRunnerGrantsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Make the task-runner job run as the picked service principal, then re-run setup.
+
+The job is updated as the app, which manages the job it created; Databricks refuses until
+the app may use the service principal. A job from the deployment bundle is never changed.
+ * @summary Set Task Runner Run As
+ */
+export const setTaskRunnerRunAs = (
+    taskRunnerPrincipalRequest: TaskRunnerPrincipalRequest, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SetupReport>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/setup/task-runner/run-as`,
+      taskRunnerPrincipalRequest,options
+    );
+  }
+
+
+
+export const getSetTaskRunnerRunAsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setTaskRunnerRunAs>>, TError,{data: TaskRunnerPrincipalRequest}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof setTaskRunnerRunAs>>, TError,{data: TaskRunnerPrincipalRequest}, TContext> => {
+
+const mutationKey = ['setTaskRunnerRunAs'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setTaskRunnerRunAs>>, {data: TaskRunnerPrincipalRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  setTaskRunnerRunAs(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetTaskRunnerRunAsMutationResult = NonNullable<Awaited<ReturnType<typeof setTaskRunnerRunAs>>>
+    export type SetTaskRunnerRunAsMutationBody = TaskRunnerPrincipalRequest
+    export type SetTaskRunnerRunAsMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Set Task Runner Run As
+ */
+export const useSetTaskRunnerRunAs = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setTaskRunnerRunAs>>, TError,{data: TaskRunnerPrincipalRequest}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setTaskRunnerRunAs>>,
+        TError,
+        {data: TaskRunnerPrincipalRequest},
+        TContext
+      > => {
+
+      const mutationOptions = getSetTaskRunnerRunAsMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }
@@ -12677,6 +13407,7 @@ export function useListAvailableRolesSuspense<TData = Awaited<ReturnType<typeof 
 
 
 /**
+ * List the catalogs the calling user can see; available before setup is ready.
  * @summary List Catalogs
  */
 export const listCatalogs = (
@@ -30571,6 +31302,72 @@ export const usePreflightScheduleGrants = <TError = AxiosError<HTTPValidationErr
       > => {
 
       const mutationOptions = getPreflightScheduleGrantsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Run the missing scheduler grants for these tables as the signed-in user, then re-check.
+
+The request carries only table names; the statements come from the server's own
+preflight and run under the caller's credentials, never the app service principal.
+ * @summary Apply Schedule Grants
+ */
+export const applyScheduleGrants = (
+    scheduleGrantApplyIn: ScheduleGrantApplyIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ScheduleGrantApplyOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/schedule-grants/apply`,
+      scheduleGrantApplyIn,options
+    );
+  }
+
+
+
+export const getApplyScheduleGrantsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyScheduleGrants>>, TError,{data: ScheduleGrantApplyIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof applyScheduleGrants>>, TError,{data: ScheduleGrantApplyIn}, TContext> => {
+
+const mutationKey = ['applyScheduleGrants'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof applyScheduleGrants>>, {data: ScheduleGrantApplyIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  applyScheduleGrants(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApplyScheduleGrantsMutationResult = NonNullable<Awaited<ReturnType<typeof applyScheduleGrants>>>
+    export type ApplyScheduleGrantsMutationBody = ScheduleGrantApplyIn
+    export type ApplyScheduleGrantsMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Apply Schedule Grants
+ */
+export const useApplyScheduleGrants = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyScheduleGrants>>, TError,{data: ScheduleGrantApplyIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof applyScheduleGrants>>,
+        TError,
+        {data: ScheduleGrantApplyIn},
+        TContext
+      > => {
+
+      const mutationOptions = getApplyScheduleGrantsMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }

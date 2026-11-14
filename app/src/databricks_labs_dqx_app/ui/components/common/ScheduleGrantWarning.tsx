@@ -1,6 +1,6 @@
 /** Yellow warning card shown above the schedule settings when the current user
  *  cannot grant the scheduler read access to the table(s) a schedule would run
- *  against (Task 12). Scheduled runs read the source table as a service account,
+ *  against (Task 12). Scheduled runs read the source table as a service principal,
  *  so setting up a schedule requires the MANAGE privilege (or ownership) to
  *  grant that account SELECT. When the user lacks it we hard-block the save and
  *  render this card naming the users/groups that DO hold MANAGE, asking the user
@@ -22,7 +22,10 @@ import { useTranslation } from "react-i18next";
 import { AlertTriangle, Info } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { SqlCodeBlock } from "@/components/common/SqlCodeBlock";
+import { GrantOutcomeNotice } from "@/components/setup/GrantOutcomeNotice";
 import type { SchedulePreflightTableOut } from "@/lib/api";
+import { grantStatementsSql } from "@/lib/setup-grants";
 import type { ScheduleGrantPreflight } from "@/components/schedules/useScheduleGrantPreflight";
 
 type Entity = "table" | "collection";
@@ -110,7 +113,8 @@ function MissingGrantList({ grants }: { grants: NonNullable<SchedulePreflightTab
 
 /** Amber card for tables whose catalog or schema Studio's service principals
  *  can't use yet. Lists the missing grants (per table for a collection), then
- *  every distinct GRANT statement once, for an owner to run. */
+ *  every distinct GRANT statement once. The user can copy them for an owner,
+ *  or run them with their own Databricks access. */
 function MissingGrantsNotice({ entity, preflight }: Props) {
   const { t } = useTranslation();
   const single = entity === "table";
@@ -124,7 +128,7 @@ function MissingGrantsNotice({ entity, preflight }: Props) {
       <div className="flex items-start gap-2">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
         <div className="space-y-1">
-          <h4 className="text-sm font-medium">{t("schedule.grantWarning.title")}</h4>
+          <h4 className="text-sm font-medium">{t("schedule.grantWarning.missingGrantsTitle")}</h4>
           <p className="text-xs text-amber-800 dark:text-amber-200/90">
             {single
               ? t("schedule.grantWarning.missingGrantsDescriptionTable")
@@ -146,10 +150,39 @@ function MissingGrantsNotice({ entity, preflight }: Props) {
           ))
         )}
         <p className="text-xs font-medium">{t("schedule.grantWarning.missingGrantsInstructions")}</p>
-        <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-md border border-amber-500/40 bg-background/60 p-3 font-mono text-xs leading-relaxed">
-          {statements.join("\n")}
-        </pre>
-        <Button size="sm" variant="outline" onClick={preflight.retry} disabled={preflight.isFetching}>
+        <div className="text-foreground">
+          <SqlCodeBlock
+            sql={grantStatementsSql(statements)}
+            onRun={preflight.applyGrants}
+            runLabel={t("schedule.grantWarning.apply.run")}
+            isRunning={preflight.isApplying}
+            runDisabled={preflight.isFetching}
+            result={
+              (preflight.recheckFailed || preflight.applyOutcome) && (
+                <div className="space-y-2">
+                  {preflight.recheckFailed && (
+                    <p role="status" className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+                      {t("schedule.grantWarning.apply.recheckFailed", preflight.recheckFailed)}
+                    </p>
+                  )}
+                  {preflight.applyOutcome && (
+                    <GrantOutcomeNotice
+                      outcome={preflight.applyOutcome}
+                      summaryKey="schedule.grantWarning.apply.partial"
+                      messageKey={(code) => `schedule.grantWarning.apply.errors.${code}`}
+                    />
+                  )}
+                </div>
+              )
+            }
+          />
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={preflight.retry}
+          disabled={preflight.isFetching || preflight.isApplying}
+        >
           {t("schedule.grantWarning.retry")}
         </Button>
       </div>

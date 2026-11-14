@@ -46,7 +46,14 @@ class DQRuleExecutor(abc.ABC):
         self.rule = rule
 
     @abc.abstractmethod
-    def apply(self, df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame] | None = None) -> DQCheckResult:
+    def apply(
+        self,
+        df: DataFrame,
+        spark: SparkSession,
+        ref_dfs: dict[str, DataFrame] | None = None,
+        input_df: DataFrame | None = None,
+        reference_cache: dict[tuple[str, str], DataFrame] | None = None,
+    ) -> DQCheckResult:
         """Apply a rule and return results"""
 
 
@@ -70,7 +77,14 @@ class DQRowRuleExecutor(DQRuleExecutor):
     def __init__(self, rule: DQRowRule):
         super().__init__(rule)
 
-    def apply(self, df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame] | None = None) -> DQCheckResult:
+    def apply(
+        self,
+        df: DataFrame,
+        spark: SparkSession,
+        ref_dfs: dict[str, DataFrame] | None = None,
+        input_df: DataFrame | None = None,
+        reference_cache: dict[tuple[str, str], DataFrame] | None = None,
+    ) -> DQCheckResult:
         """
         Apply the row-level data quality rule to the provided DataFrame.
 
@@ -82,6 +96,8 @@ class DQRowRuleExecutor(DQRuleExecutor):
             df: The input DataFrame to which the rule is applied.
             spark: The SparkSession used for executing the rule (unused for row rules).
             ref_dfs: Optional dictionary of reference DataFrames (unused for row rules).
+            input_df: Optional untouched input DataFrame (unused for row rules).
+            reference_cache: Optional shared reference cache (unused for row rules).
 
         Returns:
             DQCheckResult containing:
@@ -112,12 +128,24 @@ class DQDatasetRuleExecutor(DQRuleExecutor):
     def __init__(self, rule: DQDatasetRule):
         super().__init__(rule)
 
-    def apply(self, df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame] | None = None) -> DQCheckResult:
+    def apply(
+        self,
+        df: DataFrame,
+        spark: SparkSession,
+        ref_dfs: dict[str, DataFrame] | None = None,
+        input_df: DataFrame | None = None,
+        reference_cache: dict[tuple[str, str], DataFrame] | None = None,
+    ) -> DQCheckResult:
         """
         Apply the dataset-level data quality rule to the provided DataFrame.
         This method executes the rules logic by executing check function closure.
         By convention the first argument to the closure is the DataFrame
         and the second argument is optional reference DataFrames.
+
+        The closure can opt in to extra arguments by declaring them in its signature:
+        *spark*, *ref_dfs*, *input_df*, and *reference_cache*. *input_df* is the untouched input DataFrame
+        (without the columns added by earlier checks); closures that compute an aggregate should build it
+        from *input_df* and join only the result onto *df*, so the aggregate does not re-run earlier checks.
 
         The rule produces:
         - A condition (Spark Column) that represents the overall dataset check status.
@@ -127,6 +155,8 @@ class DQDatasetRuleExecutor(DQRuleExecutor):
             df: The input DataFrame to which the rule is applied.
             spark: The SparkSession used for executing the rule.
             ref_dfs: Optional dictionary of reference DataFrames for dataset-level checks.
+            input_df: Optional untouched input DataFrame. Defaults to *df*.
+            reference_cache: Optional per-run cache of compatible reference projections.
 
         Returns:
             DQCheckResult containing:
@@ -143,6 +173,10 @@ class DQDatasetRuleExecutor(DQRuleExecutor):
             kwargs["spark"] = spark
         if "ref_dfs" in closure_func_signature.parameters:
             kwargs["ref_dfs"] = ref_dfs
+        if "input_df" in closure_func_signature.parameters:
+            kwargs["input_df"] = df if input_df is None else input_df
+        if "reference_cache" in closure_func_signature.parameters:
+            kwargs["reference_cache"] = reference_cache
 
         check_df: DataFrame = closure_func(df=df, **kwargs)
 

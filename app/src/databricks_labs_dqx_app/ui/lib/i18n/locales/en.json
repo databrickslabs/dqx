@@ -29,6 +29,7 @@
     },
     "grantWarning": {
       "title": "You can't set up this schedule",
+      "missingGrantsTitle": "This schedule needs access first",
       "descriptionTable": "Schedules need the MANAGE privilege on this table, which you don't have.",
       "descriptionCollection": "Schedules need the MANAGE privilege on every table they read, and you don't have it on one or more of these tables.",
       "holdersLabel": "Ask someone who has it to set up the schedule:",
@@ -44,13 +45,25 @@
       "missingGrantsDescriptionTable": "Scheduled runs read this table as Studio's service principals, and they can't use its catalog or schema yet.",
       "missingGrantsDescriptionCollection": "Scheduled runs read these tables as Studio's service principals, and they can't use some of their catalogs or schemas yet.",
       "missingGrant": "{{name}} needs {{privilege}} on {{securable}}",
-      "missingGrantsInstructions": "Ask the owner of the catalog and schema, or anyone with MANAGE on them, to run these statements in a SQL editor, then click Try again:",
+      "missingGrantsInstructions": "Run the following commands to give this access. If you lack permissions, have the owner of the catalog or schema run them. Then click Try again.",
       "unverifiedPermissionsTitle": "Couldn't check permissions",
       "unverifiedPermissionsDescriptionTable": "Studio couldn't read the permissions on this table, so it can't tell whether you can set up a schedule. Try again, or ask the table's owner to set it up.",
       "unverifiedPermissionsDescriptionCollection": "Studio couldn't read the permissions on these tables, so it can't tell whether you can set up a schedule. Try again, or ask the tables' owners to set it up.",
       "missingGrantsForTable": "For {{fqn}}:",
       "unverifiedConfigurationTitle": "Couldn't check schedule access",
-      "unverifiedConfigurationDescription": "Studio's setup is incomplete (for example, it can't find the task-runner job's service principal), so it can't check whether this schedule can be set up. Ask a Studio administrator to check the setup page."
+      "unverifiedConfigurationDescription": "Studio's setup is incomplete (for example, it can't find the task-runner job's service principal), so it can't check whether this schedule can be set up. Ask a Studio administrator to check the setup page.",
+      "apply": {
+        "run": "Run SQL",
+        "partial": "Done: {{applied}} of {{total}}.",
+        "recheckFailed": "Done: {{applied}} of {{total}}. Studio couldn't check the result just now. Click Try again to refresh.",
+        "errors": {
+          "permission_denied": "Your account isn't allowed to give this access. Have an owner of the catalog or schema run the above commands in the SQL editor.",
+          "warehouse_unavailable": "Studio couldn't start the SQL warehouse (the Databricks compute that runs these commands). It may still be starting up. Try again in a minute, or copy the commands and run them yourself in the SQL Editor (in the Databricks sidebar).",
+          "rate_limited": "Databricks is busy right now. Wait a moment, then try again.",
+          "not_found": "Something these commands refer to no longer exists, such as one of the tables or its schema. Click Try again to refresh the list.",
+          "unknown": "These commands couldn't be run. Copy them and run them in the SQL Editor (in the Databricks sidebar), or send them to the owner of the catalog or schema."
+        }
+      }
     }
   },
   "lifecycle": {
@@ -3091,6 +3104,10 @@
     "added": "Added",
     "alreadyImported": "This rule is already imported"
   },
+  "sqlCodeBlock": {
+    "run": "Run SQL",
+    "copyFailed": "Couldn't copy. Select the commands and copy them yourself."
+  },
   "setup": {
     "title": "Set up DQX Studio",
     "description": "Complete the required steps below to make DQX Studio available.",
@@ -3110,11 +3127,11 @@
       "wheels": "Keeps the task runner on the same DQX and Studio code versions as the application.",
       "migrations": "Creates and upgrades the Delta and Lakebase tables required by this Studio version.",
       "activation": "Starts Studio APIs and background services only after every dependency is ready.",
-      "configuration": "The catalog, storage prefix and audience group that Studio uses for its data and access.",
+      "configuration": "The catalog, storage prefix and default user group that Studio uses for its data and access.",
       "storage": "Creates the Unity Catalog schemas and wheels volume that hold Studio state, temporary views and Genie-facing objects.",
-      "access": "Grants the audience group and administrators the workspace and data access they need to use Studio.",
+      "access": "Grants the default user group and administrators the workspace and data access they need to use Studio.",
       "ai": "Checks that Studio users can use the AI model behind rule suggestions. If they can't, AI features are turned off until access is fixed.",
-      "app_sharing": "Confirms that the audience group can open this app. Sharing is managed in the app permissions."
+      "app_sharing": "Confirms that the default user group can open this app. Sharing is managed in the app permissions."
     },
     "steps": {
       "identity": "Application identity",
@@ -3127,7 +3144,7 @@
       "activation": "Activate Studio",
       "configuration": "Studio configuration",
       "storage": "Storage schemas and volume",
-      "access": "Audience access",
+      "access": "User access",
       "ai": "AI features",
       "app_sharing": "App sharing"
     },
@@ -3152,7 +3169,7 @@
       "description": "Only workspace admins or members of {{adminGroup}} can set up DQX Studio. Ask one of them to finish the steps below.",
       "signedInAs": "You're signed in as {{userName}}.",
       "adminsOnly": "Only workspace admins can set up DQX Studio. Ask one of them to finish the steps below.",
-      "configurationPending": "Waiting for an administrator to choose the catalog, storage prefix and audience group."
+      "configurationPending": "Waiting for an administrator to choose the catalog, storage prefix and default user group."
     },
     "warningsReview": {
       "title": "Studio setup finished with warnings",
@@ -3160,23 +3177,49 @@
       "acknowledge": "I understand, continue to Studio"
     },
     "instructions": "How to resolve this",
+    "grants": {
+      "partial": "Done: {{applied}} of {{total}}.",
+      "leadRun": "Run the following commands to give this access. If you lack permissions, have the catalog's owner run them. Then reverify.",
+      "leadCopy": "Copy the commands below and send them to the catalog's owner or a Databricks admin. Once they've run them in the SQL editor, click Verify again.",
+      "errors": {
+        "permission_denied": "Your account isn't allowed to give this access. Have an owner of the catalog or schema run the above commands in the SQL editor.",
+        "warehouse_unavailable": "Studio couldn't start the SQL warehouse (the Databricks compute that runs these commands). It may still be starting up. Try again in a minute, or copy the commands and run them yourself in the SQL Editor (in the Databricks sidebar).",
+        "rate_limited": "Databricks is busy right now. Wait a moment, then try again.",
+        "not_found": "Something these commands refer to no longer exists. Click Verify again to refresh the list.",
+        "unknown": "These commands couldn't be run. Copy them and run them in the SQL Editor (in the Databricks sidebar), or send them to the catalog's owner.",
+        "setup_grants_failed": "Studio couldn't finish running these commands or check the result, so some of the access may already be in place. Click Verify again to see what's still needed, or copy the commands and send them to the catalog's owner."
+      }
+    },
     "diagnosticCode": "Code: {{code}}",
     "configuration": {
       "catalog": "Catalog",
-      "catalogHelp": "An existing Unity Catalog catalog. Studio creates its schemas here.",
+      "catalogHelp": "An existing Unity Catalog catalog, the top-level container for your data in Databricks. Studio creates its own schemas (folders for its tables) inside it. To create one, open Catalog in the Databricks sidebar and click Create catalog, or ask a Databricks admin.",
+      "catalogPlaceholder": "Choose a catalog",
+      "catalogSearch": "Search or type a catalog name",
+      "useTyped": "Use \"{{name}}\"",
+      "catalogListUnavailable": "Studio couldn't list the catalogs you can see. Type the catalog name instead.",
       "prefix": "Storage prefix",
-      "prefixHelp": "Lower-case letters, digits and underscores. Schemas: <prefix>, <prefix>_tmp, <prefix>_genie, <prefix>_demo.",
-      "audience_group": "Audience group",
-      "audience_groupHelp": "An existing account group assigned to this workspace. Members can use Studio; roles are assigned separately.",
+      "prefixHelp": "A short name for the new schemas Studio creates in this catalog, for example dqx. Use lower-case letters, digits and underscores. Studio creates: <prefix>, <prefix>_tmp, <prefix>_genie and <prefix>_demo, so pick a name that isn't already in use.",
+      "audience_group": "Default user group",
+      "groupPlaceholder": "Choose a group",
+      "groupSearch": "Search or type a group name",
+      "groupListUnavailable": "Studio couldn't list the groups in this workspace. Type the group name instead.",
+      "groupListTruncated_one": "Showing the first {{count}} group. If yours isn't listed, type its name.",
+      "groupListTruncated_other": "Showing the first {{count}} groups. If yours isn't listed, type its name.",
+      "audience_groupHelp": "An existing account group (for example, dqx-users) for the people allowed to use Studio. You give Studio roles, such as administrator, later in Studio itself. To create a group, open your profile menu (top right) → Settings → Identity and access → Groups.",
       "schemas": "Schemas",
       "submit": "Save and continue",
+      "edit": "Change",
       "broadAudience": "Broad audience: all workspace users",
       "errors": {
-        "configuration_invalid": "Check the catalog, prefix and group name.",
-        "catalog_not_found": "The catalog does not exist or you cannot access it.",
-        "audience_group_not_found": "The group does not exist in this workspace.",
-        "configuration_locked": "Storage is already provisioned; the configuration can no longer change.",
-        "configuration_managed_by_deployment": "This configuration is managed by the deployment.",
+        "configuration_invalid": "Use only lower-case letters, digits and underscores for the storage prefix, and don't use the ` character in the group name.",
+        "audience_group_builtin": "Built-in groups such as \"users\", \"account users\" and \"admins\" can't be used. Choose a dedicated account group, for example dqx-users.",
+        "catalog_invalid": "Catalog names can't contain dots, backticks or backslashes. Pick a catalog from the list, or check the name you typed.",
+        "audience_group_required": "Enter the name of an existing account group.",
+        "catalog_not_found": "Studio couldn't find this catalog, or your account can't see it. Check the name, or ask the catalog's owner or a Databricks admin to give you access to it.",
+        "audience_group_not_found": "Studio couldn't find this group in this workspace. Check the name, or create it under Settings → Identity and access → Groups.",
+        "configuration_locked": "Studio has already created its schemas, so the catalog and storage prefix can't be changed any more.",
+        "configuration_managed_by_deployment": "These settings were chosen when Studio was installed and can't be changed here. Ask whoever installed Studio to change them in its deployment settings and deploy again.",
         "catalog_check_failed": "The catalog could not be verified. Try again.",
         "group_check_failed": "The group could not be verified. Try again.",
         "default": "Could not save the configuration."
@@ -3192,6 +3235,70 @@
         "default": "Studio can only see permissions given directly to a user or group, or to all workspace users. If you gave this access through another parent group, or set it up by hand in the workspace, it may look missing here. If you're sure it's in place, you can continue anyway.",
         "app_sharing": "Studio isn't allowed to read who the app is shared with, so it can't check this itself. Once you've shared the app with your users, confirm it here.",
         "ai": "If your users can already use this AI model (for example through a parent group), you can keep AI features on."
+      }
+    },
+    "taskRunner": {
+      "pickFirst": "Pick a service principal first.",
+      "steps": {
+        "pick": "Pick a service principal",
+        "access": "Confirm access",
+        "apply": "Apply it to the task-runner job"
+      },
+      "pick": {
+        "label": "Service principal for scheduled checks",
+        "placeholder": "Choose a service principal",
+        "search": "Search by name or Application ID",
+        "useTyped": "Use Application ID {{id}}",
+        "noMatches": "No service principals match. Paste its Application ID to use it.",
+        "pastePlaceholder": "Application ID, for example 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+        "listUnavailable": "Studio couldn't load the list of service principals. Paste the service principal's Application ID instead. You'll find it on the service principal's page: profile menu (top right) → Settings → Identity and access → Service principals.",
+        "listTruncated_one": "Showing the first {{count}} service principal. If yours isn't listed, paste its Application ID.",
+        "listTruncated_other": "Showing the first {{count}} service principals. If yours isn't listed, paste its Application ID.",
+        "invalidId": "An Application ID looks like 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d.",
+        "createTitle": "Don't have one? Create it",
+        "createStep1": "Open your profile menu (top right) → Settings → Identity and access → Service principals. Click Add service principal and create a new one named dqx-studio-task-runner.",
+        "createStep2": "Come back here and pick it above. You'll set its permissions in step 2.",
+        "openServicePrincipals": "Open service principals"
+      },
+      "access": {
+        "intro": "On this service principal's Permissions tab (profile menu (top right) → Settings → Identity and access → Service principals → {{name}} → Permissions):",
+        "nameFallback": "your service principal",
+        "self": "Click Grant access, find yourself, and give yourself CAN USE (shown as \"Service Principal: User\" on the Permissions tab) and CAN MANAGE (shown as \"Service Principal: Manager\"). If you already have them, skip this.",
+        "app": "Click Grant access, find the DQX Studio app ({{appName}}), and give it CAN USE.",
+        "appFallback": "the app's own service principal",
+        "openServicePrincipal": "Open this service principal",
+        "button": "Confirm access",
+        "result": {
+          "confirmed": "Access confirmed. Studio can use this service principal.",
+          "permissionConfirmed": "Studio can use this service principal.",
+          "missing": "The DQX Studio app doesn't have CAN USE on this service principal yet. Add it on the Permissions tab (step b above), then click Confirm access again. If you're sure Studio already has this permission (for example through an admin group), you can continue to step 3.",
+          "unverified": "Studio can't check this service principal's permissions itself. Make sure you've done steps a and b, then continue. Step 3 will confirm it.",
+          "grantsPending": "This service principal also needs access to Studio's data. Run the following commands. If you lack permissions, have the catalog's owner run them.",
+          "automaticGrants": "Studio will set up the rest of this service principal's access automatically once it's assigned to the job.",
+          "grantsUnverified": "Studio couldn't check all of this service principal's access to Studio's data. Setup checks it again after step 3."
+        },
+        "errors": {
+          "task_runner_principal_invalid": "That isn't an Application ID. Pick the service principal again, or paste its Application ID.",
+          "task_runner_principal_is_app": "That's the DQX Studio app's own service principal. Pick a different one.",
+          "task_runner_managed_by_deployment": "Studio was installed with a deployment bundle, so this job's service principal is chosen at install time and can't be changed here. Ask whoever installed Studio to set dqx_service_principal_application_id in the bundle's settings to the Application ID of a service principal (not the app's own), then deploy Studio again. After that, click Verify again.",
+          "task_runner_job_unavailable": "Studio's task-runner job isn't ready yet. Click Verify again, then try again.",
+          "default": "Studio couldn't check this service principal. Try again in a minute."
+        }
+      },
+      "apply": {
+        "help": "Studio sets its task-runner job, the background job that runs scheduled checks, to use this service principal, then checks setup again.",
+        "button": "Use this service principal",
+        "confirmFirst": "Confirm access first.",
+        "grantsStillMissing": "Some data access is still missing. You can continue. Setup lists it again after this step.",
+        "errors": {
+          "task_runner_run_as_forbidden": "Studio isn't allowed to use this service principal yet. This usually means the DQX Studio app doesn't have CAN USE on it (step 2b). Add it, then click Use this service principal again. Or click Open task-runner job below, find Run as (the identity the job runs under) in the Job details panel, choose this service principal, then click Verify again.",
+          "task_runner_principal_not_found": "Studio couldn't find that service principal. Check that it was created in this workspace, then pick it again.",
+          "task_runner_principal_invalid": "That isn't an Application ID. Pick the service principal again, or paste its Application ID.",
+          "task_runner_principal_is_app": "That's the DQX Studio app's own service principal. Pick a different one.",
+          "task_runner_managed_by_deployment": "Studio was installed with a deployment bundle, so this job's service principal is chosen at install time and can't be changed here. Ask whoever installed Studio to set dqx_service_principal_application_id in the bundle's settings to the Application ID of a service principal (not the app's own), then deploy Studio again. After that, click Verify again.",
+          "task_runner_job_unavailable": "Studio's task-runner job isn't ready yet. Click Verify again, then try again.",
+          "default": "Studio couldn't update its task-runner job. Try again, or open the job and change its Run as setting to this service principal yourself, then click Verify again."
+        }
       }
     }
   },

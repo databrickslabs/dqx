@@ -2,7 +2,7 @@ import functools
 from typing import TYPE_CHECKING, Any, Literal
 
 from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .. import __version__
 from .common.branding import MAX_LOGO_BASE64_LENGTH
@@ -26,6 +26,8 @@ from .registry_models import SCHEDULE_KIND_DEFAULT as REGISTRY_SCHEDULE_KIND_DEF
 from .registry_models import MAX_SCHEDULE_SAMPLE_SIZE
 from .registry_models import MonitoredTableVersion as MonitoredTableVersionDomain
 from .rule_enums import RuleSource, RuleStatus
+from .setup.models import GrantErrorCode
+from .sql_utils import validate_fqn
 from .registry_models import RuleSlot as RegistryRuleSlot
 from .registry_models import RunSetSource as RegistryRunSetSource
 from .registry_models import RunSetTrigger as RegistryRunSetTrigger
@@ -2764,6 +2766,50 @@ class SchedulePreflightOut(BaseModel):
     """Response of the schedule preflight — one entry per requested table."""
 
     tables: list[SchedulePreflightTableOut] = Field(default_factory=list)
+
+
+class ScheduleGrantApplyIn(BaseModel):
+    """Body of ``POST /schedule-grants/apply``: only table names, never SQL.
+
+    The server re-derives the GRANT statements from its own preflight of these tables.
+    There is no size cap beyond the preflight's: the preflight takes any number of
+    tables, and a statement shared by several tables runs only once.
+    """
+
+    table_fqns: list[str] = Field(
+        min_length=1,
+        description="Fully qualified names of the tables whose missing scheduler grants to run",
+    )
+
+    @field_validator("table_fqns")
+    @classmethod
+    def _real_table_names(cls, table_fqns: list[str]) -> list[str]:
+        for fqn in table_fqns:
+            validate_fqn(fqn)
+            if len(fqn.split(".")) != 3:
+                raise ValueError("Each entry must be a catalog.schema.table name.")
+        return list(dict.fromkeys(table_fqns))
+
+
+class ScheduleGrantFailureOut(BaseModel):
+    """A missing scheduler grant that could not be run, with a sanitized error code."""
+
+    fqn: str = Field(description="First requested table that needed the grant")
+    statement: str = Field(description="The GRANT statement, as the preflight showed it")
+    error_code: GrantErrorCode
+
+
+class ScheduleGrantApplyOut(BaseModel):
+    """Outcome of running the missing scheduler grants as the signed-in user."""
+
+    preflight: SchedulePreflightOut = Field(description="Fresh preflight taken after the grants ran")
+    applied: int
+    total: int
+    failed: list[ScheduleGrantFailureOut] = Field(default_factory=list)
+    recheck_failed: bool = Field(
+        default=False,
+        description="The check after the grants couldn't run, so preflight is the one taken before them",
+    )
 
 
 # ---------------------------------------------------------------------------

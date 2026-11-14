@@ -49,6 +49,7 @@ from databricks.labs.dqx.errors import InvalidActionError
 from databricks.labs.dqx.io import save_dataframe_as_table
 from databricks.labs.dqx.utils import (
     ViewColumnSeeds,
+    escape_sql_string_literal,
     quote_column_name,
     sql_str_literal,
     walk_column_lineage,
@@ -500,6 +501,19 @@ def _register_failed_columns_view(spark: SparkSession, failed_columns_df: DataFr
 def _empty_lineage_df(spark: SparkSession) -> DataFrame:
     """Empty DataFrame with *LINEAGE_TABLE_SCHEMA* — identity for *unionByName* composition."""
     return spark.createDataFrame([], LINEAGE_TABLE_SCHEMA)
+
+
+def _sql_str_literal(value: str) -> str:
+    """Wrap a Python string as a single-quoted SQL string literal, escaped by *escape_sql_string_literal*.
+
+    The backslash is doubled, so a value ending in a backslash (e.g. a path-style *input_location*)
+    cannot escape the closing quote and produce a malformed — and potentially injectable — literal.
+    The single quote is escaped as ``\\'``: a doubled ``''`` is concatenated away by Spark, so the
+    lookup would silently miss a table such as ``o'brien``. Used by the lineage queries where
+    parameter markers cannot be applied — e.g. inside ``INTERVAL n DAYS`` — and the table name has
+    to be inlined as a literal.
+    """
+    return f"'{escape_sql_string_literal(value)}'"
 
 
 def _fully_qualified_identifier(name: str) -> str:

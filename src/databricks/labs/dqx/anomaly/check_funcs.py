@@ -21,7 +21,7 @@ from databricks.labs.dqx.anomaly.validation import validate_fully_qualified_name
 from databricks.labs.dqx.check_funcs import make_condition
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
-from databricks.labs.dqx.rule import register_rule
+from databricks.labs.dqx.rule import register_rule, row_preserving
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +115,7 @@ def _validate_anomaly_check_args(
         raise InvalidParameterError("max_groups must be a positive integer.")
 
 
+@row_preserving
 @register_rule("dataset")
 def has_no_row_anomalies(
     model_name: str,

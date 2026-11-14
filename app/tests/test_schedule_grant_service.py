@@ -1,6 +1,6 @@
 """Schedule authorization regressions through public APIs and SDK boundaries."""
 
-from unittest.mock import create_autospec
+from unittest.mock import create_autospec, patch
 
 import pytest
 from databricks.sdk import WorkspaceClient
@@ -40,8 +40,10 @@ from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     StatementFailedError,
     WarehouseUnavailableError,
     inspection_failure_detail,
+    inspection_failure_reason,
     manage_block_detail,
 )
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 FQN = "cat.sch.tbl"
 GRANT_COLUMNS = ("principal", "actionType", "objectType", "objectKey")
@@ -729,3 +731,146 @@ def test_cold_warehouse_is_not_waited_out_again_for_each_table(
 )
 def test_inspection_failure_detail_names_who_can_fix_it(error: WarehouseUnavailableError, expected: str) -> None:
     assert expected in inspection_failure_detail(error)
+
+
+# ----------------------------------------------------------------------
+# Applying the missing scheduler grants as the signed-in user
+# ----------------------------------------------------------------------
+
+_PARENT_GRANTS = [
+    "GRANT USE_CATALOG ON CATALOG `cat` TO `app-sp`",
+    "GRANT USE_SCHEMA ON SCHEMA `cat`.`sch` TO `app-sp`",
+    "GRANT USE_CATALOG ON CATALOG `cat` TO `runner-sp`",
+    "GRANT USE_SCHEMA ON SCHEMA `cat`.`sch` TO `runner-sp`",
+]
+
+
+def _grants_follow_executed_statements(sp: WorkspaceClient, executor: SqlExecutor) -> list[str]:
+    """Scheduler parent usage is missing until the matching GRANT has run through *executor*."""
+    executed: list[str] = []
+
+    def run(statement: str) -> None:
+        executed.append(statement)
+
+    def grants(kind: str, name: str, *, principal: str, page_token: str | None = None) -> EffectivePermissionsList:
+        privilege = "USE_CATALOG" if kind == "catalog" else "USE_SCHEMA"
+        quoted = "`" + "`.`".join(name.split(".")) + "`"
+        granted = f"GRANT {privilege} ON {kind.upper()} {quoted} TO `{principal}`" in executed
+        return effective(principal, [Privilege(privilege)] if granted else [])
+
+    executor.execute_no_schema.side_effect = run
+    sp.grants.get_effective.side_effect = grants
+    return executed
+
+
+@pytest.fixture
+def obo_sql() -> SqlExecutor:
+    return create_autospec(SqlExecutor, instance=True)
+
+
+def test_apply_runs_exactly_the_preflight_parent_grants_through_the_signed_in_users_executor(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient, obo_sql: SqlExecutor
+) -> None:
+    obo.tables.get.return_value = TableInfo(owner="alice@example.com")
+    executed = _grants_follow_executed_statements(sp, obo_sql)
+
+    result = service.apply_missing_grants([FQN, "cat.sch.other"], obo_sql)
+
+    # The two tables share a catalog and schema, so each statement runs once.
+    assert executed == _PARENT_GRANTS
+    assert (result.applied, result.total, result.failed) == (4, 4, ())
+    assert [(t.fqn, t.missing_grants, t.can_manage) for t in result.preflight] == [
+        (FQN, [], True),
+        ("cat.sch.other", [], True),
+    ]
+    # Nothing runs as the app service principal.
+    assert not any(
+        c.kwargs["statement"].startswith("GRANT") for c in sp.statement_execution.execute_statement.call_args_list
+    )
+
+
+def test_apply_continues_past_a_failed_grant_and_reports_it(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient, obo_sql: SqlExecutor
+) -> None:
+    obo.tables.get.return_value = TableInfo(owner="alice@example.com")
+    executed = _grants_follow_executed_statements(sp, obo_sql)
+    record = obo_sql.execute_no_schema.side_effect
+
+    def run(statement: str) -> None:
+        if statement == _PARENT_GRANTS[1]:
+            raise PermissionDenied("User alice lacks MANAGE on schema cat.sch (secret detail)")
+        record(statement)
+
+    obo_sql.execute_no_schema.side_effect = run
+
+    result = service.apply_missing_grants([FQN], obo_sql)
+
+    assert obo_sql.execute_no_schema.call_count == 4
+    assert executed == [_PARENT_GRANTS[0], *_PARENT_GRANTS[2:]]
+    assert (result.applied, result.total) == (3, 4)
+    assert [(f.fqn, f.statement, f.error_code) for f in result.failed] == [
+        (FQN, _PARENT_GRANTS[1] + ";", "permission_denied")
+    ]
+    assert "secret detail" not in repr(result)
+    # A fresh check shows only the grant that is still missing.
+    assert [g["remediation"] for g in result.preflight[0].missing_grants] == [_PARENT_GRANTS[1] + ";"]
+
+
+def test_apply_runs_nothing_for_tables_that_need_no_grant(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient, obo_sql: SqlExecutor
+) -> None:
+    sp.catalogs.get.return_value = CatalogInfo(name="samples", catalog_type=CatalogType.SYSTEM_CATALOG)
+
+    result = service.apply_missing_grants(["samples.bakehouse.sales_customers"], obo_sql)
+
+    obo_sql.execute_no_schema.assert_not_called()
+    assert (result.applied, result.total, result.failed) == (0, 0, ())
+    assert [(t.can_manage, t.missing_grants) for t in result.preflight] == [(True, [])]
+    assert not result.recheck_failed
+
+
+def test_apply_says_the_warehouse_is_unavailable_when_the_check_before_it_could_not_run(
+    service: ScheduleGrantService, obo: WorkspaceClient, obo_sql: SqlExecutor
+) -> None:
+    obo.statement_execution.execute_statement.return_value = sql_response(StatementState.CANCELED)
+
+    with pytest.raises(WarehouseUnavailableError) as raised:
+        service.apply_missing_grants([FQN], obo_sql)
+
+    obo_sql.execute_no_schema.assert_not_called()
+    assert inspection_failure_reason(raised.value) == "warehouse"
+
+
+def test_clearing_the_caches_makes_the_next_check_see_new_grants(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient, obo_sql: SqlExecutor
+) -> None:
+    obo.tables.get.return_value = TableInfo(owner="alice@example.com")
+    executed = _grants_follow_executed_statements(sp, obo_sql)
+    assert service.preflight([FQN])[0].missing_grants
+    executed.extend(_PARENT_GRANTS)
+
+    # The same instance remembers what it saw until its caches are cleared.
+    assert service.preflight([FQN])[0].missing_grants
+    service.clear_caches()
+
+    assert service.preflight([FQN])[0].missing_grants == []
+
+
+@pytest.mark.parametrize("failure", [WarehouseUnavailableError("cold"), RuntimeError("boom (secret detail)")])
+def test_apply_still_reports_the_grants_that_ran_when_the_recheck_fails(
+    service: ScheduleGrantService, obo: WorkspaceClient, sp: WorkspaceClient, obo_sql: SqlExecutor, failure: Exception
+) -> None:
+    obo.tables.get.return_value = TableInfo(owner="alice@example.com")
+    executed = _grants_follow_executed_statements(sp, obo_sql)
+    before = service.preflight([FQN])
+    # Preflight turns every SDK failure into an unverified table, so no workspace response
+    # can make the check after the grants fail; only the check itself is replaced here.
+    with patch.object(service, "preflight", side_effect=[before, failure]):
+        result = service.apply_missing_grants([FQN], obo_sql)
+
+    assert executed == _PARENT_GRANTS
+    assert (result.applied, result.total, result.failed) == (4, 4, ())
+    assert result.recheck_failed
+    # The check taken before the grants is returned, so the commands stay on screen.
+    assert [g["remediation"] for g in result.preflight[0].missing_grants] == [g + ";" for g in _PARENT_GRANTS]
+    assert "secret detail" not in repr(result)

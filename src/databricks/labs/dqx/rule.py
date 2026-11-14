@@ -33,12 +33,15 @@ __all__ = [
     "CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE",
     "register_rule",
     "requires_dbr_version",
+    "row_preserving",
+    "CHECK_FUNC_ROW_PRESERVING_ATTRIBUTE",
 ]
 
 CHECK_FUNC_REGISTRY: dict[str, str] = {}
 CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION: set[str] = set()
 
 CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE = "dqx_requires_dbr_version"
+CHECK_FUNC_ROW_PRESERVING_ATTRIBUTE = "dqx_row_preserving"
 
 
 def register_rule(rule_type: str) -> Callable:
@@ -102,6 +105,33 @@ def requires_dbr_version(version: str) -> Callable:
         return func
 
     return wrapper
+
+
+def row_preserving(func: Callable) -> Callable:
+    """Marks a dataset-level check function whose closure retains all rows from the input DataFrame.
+
+    The closure must return every input row exactly once and no other rows. The engine then lets later
+    dataset-level checks read the original input DataFrame, so they can share aggregates and do not
+    re-run earlier checks. Modifying rows (e.g. by adding new columns) does not violate row-preserving.
+    Unmarked checks are treated as possibly changing the rows.
+
+    Example usage:
+
+    ```python
+    @row_preserving
+    @register_rule("dataset")
+    def my_check(column: str) -> tuple[Column, Callable]:
+        ...
+    ```
+
+    Args:
+        func: The check function to mark.
+
+    Returns:
+        The same function, marked with the *dqx_row_preserving* attribute.
+    """
+    setattr(func, CHECK_FUNC_ROW_PRESERVING_ATTRIBUTE, True)
+    return func
 
 
 class Criticality(Enum):
@@ -370,6 +400,30 @@ class DQRule(BaseModel, abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleCol
             A hex-encoded SHA-256 hash string.
         """
         return compute_rule_fingerprint(self.to_dict())
+
+    @ft.cached_property
+    def effective_filter(self) -> str | None:
+        """Filter applied when evaluating the rule, or None.
+
+        Covers every way a filter can reach a check function: the rule-level *filter*, and a *row_filter*
+        passed through *check_func_kwargs* or positionally via *check_func_args*.
+
+        Returns:
+            The filter expression, or None when the rule has no filter.
+        """
+        if self.filter:
+            return self.filter
+        args, kwargs = self.prepare_check_func_args_and_kwargs()
+        row_filter = kwargs.get("row_filter")
+        if row_filter is None:
+            sig = inspect.signature(self.check_func)
+            if "row_filter" in sig.parameters:
+                try:
+                    bound = sig.bind_partial(*args, **kwargs)
+                    row_filter = bound.arguments.get("row_filter")
+                except TypeError:
+                    row_filter = None
+        return row_filter if isinstance(row_filter, str) else None
 
     def to_dict(self) -> dict:
         """

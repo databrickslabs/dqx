@@ -7,7 +7,7 @@ from typing import Literal, NamedTuple
 from pyspark.sql import Column, DataFrame
 import pyspark.sql.functions as F
 
-from databricks.labs.dqx.rule import register_rule, requires_dbr_version
+from databricks.labs.dqx.rule import register_rule, requires_dbr_version, row_preserving
 from databricks.labs.dqx.check_funcs import make_condition, get_normalized_column_and_expr, get_limit_expr
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.utils import is_spark_column, safe_filter_expr
@@ -957,6 +957,7 @@ def _compare_spatial_sql_function_result(
 
 
 @requires_dbr_version("17.1")
+@row_preserving
 @register_rule("dataset")
 def are_polygons_mutually_disjoint(
     column: str | Column,

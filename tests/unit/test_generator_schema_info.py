@@ -63,7 +63,7 @@ def test_generate_for_backticked_uc_table_reads_schema_without_spark(uc_workspac
 
 def test_generate_for_three_level_hive_metastore_table_uses_workspace_client(uc_workspace_client, mock_spark):
     """A 3-level hive_metastore name is a valid UC namespace, so it is read via the workspace client, not Spark."""
-    captured: dict = {}
+    captured = {}
     generator = DQGenerator(workspace_client=uc_workspace_client, spark=mock_spark)
     generator.llm_engine = _stub_llm_engine(captured)
 

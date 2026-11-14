@@ -310,7 +310,7 @@ def _build_genie_reprovision(sp_ws: WorkspaceClient, app_settings: AppSettingsSe
     from .services.genie_space_service import ensure_dq_genie_space
 
     def _reprovision() -> object:
-        return ensure_dq_genie_space(
+        space_id = ensure_dq_genie_space(
             settings=app_settings,
             ws=sp_ws,
             warehouse_id=warehouse_id,
@@ -318,6 +318,9 @@ def _build_genie_reprovision(sp_ws: WorkspaceClient, app_settings: AppSettingsSe
             schema=resources.genie_schema,
             audience_groups=resources.audience.workspace_principals,
         )
+        # A reset can recreate the space, so tag it like startup does (best-effort).
+        ResourceTaggingService(sp_ws).tag_genie_space(space_id)
+        return space_id
 
     return _reprovision
 
@@ -606,9 +609,19 @@ async def get_ai_bootstrap(
     return AiBootstrap(embeddings=embeddings, registry=registry)
 
 
+async def get_obo_user_id(obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)]) -> str:
+    """Identify the calling user for per-user cache keys: their user name, else their ID.
+
+    Every discovery service takes its user from here, so their cache keys always agree.
+    """
+    me = await asyncio.to_thread(obo_ws.current_user.me)
+    return me.user_name or me.id or "unknown"
+
+
 async def get_discovery_service(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     obo_sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
+    user_id: Annotated[str, Depends(get_obo_user_id)],
 ) -> DiscoveryService:
     """Create a DiscoveryService using the OBO-authenticated WorkspaceClient.
 
@@ -618,9 +631,20 @@ async def get_discovery_service(
     tags from ``information_schema.column_tags`` (the reliable source) under the
     caller's Unity Catalog permissions.
     """
-    me = await asyncio.to_thread(obo_ws.current_user.me)
-    user_id = me.user_name or me.id or "unknown"
     return DiscoveryService(ws=obo_ws, user_id=user_id, sql=obo_sql)
+
+
+async def get_catalog_discovery_service(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    user_id: Annotated[str, Depends(get_obo_user_id)],
+) -> DiscoveryService:
+    """Create a DiscoveryService for catalog listing that needs only the OBO WorkspaceClient.
+
+    Unlike :func:`get_discovery_service` it builds no SQL executor, so it needs no
+    bound warehouse or storage and works before setup is ready (the setup form's
+    catalog picker). It still runs on-behalf-of the calling user, never as the app SP.
+    """
+    return DiscoveryService(ws=obo_ws, user_id=user_id)
 
 
 async def get_rule_suggester(

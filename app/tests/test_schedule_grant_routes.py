@@ -28,17 +28,19 @@ from databricks.sdk.service.sql import (
     StatementStatus,
 )
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.models import (
     ScheduleConfigIn,
+    ScheduleGrantApplyIn,
     SchedulePreflightIn,
     UpdateDataProductIn,
     UpdateMonitoredTableScheduleIn,
 )
 from databricks_labs_dqx_app.backend.routes.v1.data_products import update_data_product
 from databricks_labs_dqx_app.backend.routes.v1.monitored_tables import update_monitored_table_schedule
-from databricks_labs_dqx_app.backend.routes.v1.schedule_grants import preflight_schedule_grants
+from databricks_labs_dqx_app.backend.routes.v1.schedule_grants import apply_schedule_grants, preflight_schedule_grants
 from databricks_labs_dqx_app.backend.routes.v1.schedules import list_schedule_overview, save_schedule
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
@@ -47,10 +49,14 @@ from databricks_labs_dqx_app.backend.services.schedule_config_service import Sch
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import (
     CannotManageError,
     PrivilegeInspectionError,
+    ScheduleGrantApplication,
+    ScheduleGrantFailure,
     ScheduleGrantService,
     TablePreflight,
     WarehouseUnavailableError,
 )
+
+from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 
 FQN = "cat.sch.tbl"
 # An SDK/SQL error message that embeds internal names; it must never reach the client.
@@ -527,6 +533,86 @@ class TestSchedulePreflightRoute:
         )
         assert out.tables[1].manage_holders[0].display_name == "dqx-task-runner-sp"
         assert [t.unverified_reason for t in out.tables] == [None, None, "permissions"]
+
+
+class TestScheduleGrantApplyRoute:
+    async def test_runs_the_grants_as_the_signed_in_user_and_returns_a_fresh_check(self, grant_svc):
+        obo_sql = create_autospec(SqlExecutor, instance=True)
+        statement = "GRANT USE_SCHEMA ON SCHEMA `cat`.`sch` TO `runner-sp`;"
+        grant_svc.apply_missing_grants_async.return_value = ScheduleGrantApplication(
+            preflight=[TablePreflight(fqn="cat.sch.t1", can_manage=True, manage_holders=[])],
+            applied=1,
+            total=2,
+            failed=(ScheduleGrantFailure(fqn="cat.sch.t1", statement=statement, error_code="permission_denied"),),
+        )
+
+        out = await apply_schedule_grants(ScheduleGrantApplyIn(table_fqns=["cat.sch.t1"]), grant_svc, obo_sql)
+
+        grant_svc.apply_missing_grants_async.assert_awaited_once_with(["cat.sch.t1"], obo_sql)
+        assert [(t.fqn, t.can_manage) for t in out.preflight.tables] == [("cat.sch.t1", True)]
+        assert (out.applied, out.total) == (1, 2)
+        assert [(f.fqn, f.statement, f.error_code) for f in out.failed] == [
+            ("cat.sch.t1", statement, "permission_denied")
+        ]
+        assert not out.recheck_failed
+
+    async def test_a_failed_recheck_still_returns_the_counts(self, grant_svc):
+        grant_svc.apply_missing_grants_async.return_value = ScheduleGrantApplication(
+            preflight=[TablePreflight(fqn="cat.sch.t1", can_manage=False, manage_holders=[])],
+            applied=2,
+            total=2,
+            failed=(),
+            recheck_failed=True,
+        )
+
+        out = await apply_schedule_grants(
+            ScheduleGrantApplyIn(table_fqns=["cat.sch.t1"]), grant_svc, create_autospec(SqlExecutor, instance=True)
+        )
+
+        assert (out.applied, out.total, out.failed, out.recheck_failed) == (2, 2, [], True)
+
+    async def test_an_inconclusive_check_is_a_503_without_raw_error_text(self, grant_svc):
+        grant_svc.apply_missing_grants_async.side_effect = WarehouseUnavailableError(_LEAKY)
+
+        with pytest.raises(HTTPException) as exc:
+            await apply_schedule_grants(
+                ScheduleGrantApplyIn(table_fqns=["cat.sch.t1"]), grant_svc, create_autospec(SqlExecutor, instance=True)
+            )
+
+        assert exc.value.status_code == 503
+        assert "secret_cat" not in str(exc.value.detail)
+
+    async def test_an_unexpected_failure_is_a_500_without_raw_error_text(self, grant_svc):
+        grant_svc.apply_missing_grants_async.side_effect = RuntimeError(_LEAKY)
+
+        with pytest.raises(HTTPException) as exc:
+            await apply_schedule_grants(
+                ScheduleGrantApplyIn(table_fqns=["cat.sch.t1"]), grant_svc, create_autospec(SqlExecutor, instance=True)
+            )
+
+        assert exc.value.status_code == 500
+        assert "secret_cat" not in str(exc.value.detail)
+
+    @pytest.mark.parametrize(
+        "table_fqns",
+        [
+            [],
+            ["cat.sch"],
+            ["cat.sch.t`1"],
+            ["__sql_check__/orders_vs_payments"],
+        ],
+    )
+    def test_only_real_table_names_are_accepted(self, table_fqns):
+        with pytest.raises(ValidationError):
+            ScheduleGrantApplyIn(table_fqns=table_fqns)
+
+    def test_a_collection_of_any_size_is_accepted_with_repeats_dropped(self):
+        # The preflight takes any number of tables, so the grants for all of them must run too.
+        fqns = [f"cat.sch.t{i}" for i in range(500)]
+
+        body = ScheduleGrantApplyIn(table_fqns=[*fqns, "cat.sch.t0", "cat.sch.t1"])
+
+        assert body.table_fqns == fqns
 
 
 class TestScheduleOverviewRoute:

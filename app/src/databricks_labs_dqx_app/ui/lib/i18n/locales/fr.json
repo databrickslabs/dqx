@@ -29,6 +29,7 @@
     },
     "grantWarning": {
       "title": "Vous ne pouvez pas configurer cette planification",
+      "missingGrantsTitle": "Cette planification a d'abord besoin d'un accès",
       "descriptionTable": "Les planifications nécessitent le privilège MANAGE sur cette table, que vous n'avez pas.",
       "descriptionCollection": "Les planifications nécessitent le privilège MANAGE sur chaque table qu'elles lisent, et vous ne l'avez pas sur une ou plusieurs de ces tables.",
       "holdersLabel": "Demandez à quelqu'un qui l'a de configurer la planification :",
@@ -50,7 +51,19 @@
       "unverifiedPermissionsDescriptionCollection": "Studio n'a pas pu lire les autorisations de ces tables et ne peut donc pas savoir si vous pouvez configurer une planification. Réessayez ou demandez aux propriétaires des tables de la configurer.",
       "missingGrantsForTable": "Pour {{fqn}} :",
       "unverifiedConfigurationTitle": "Impossible de vérifier l'accès de la planification",
-      "unverifiedConfigurationDescription": "La configuration de Studio est incomplète (par exemple, il ne trouve pas le principal de service du job d'exécution des tâches), il ne peut donc pas vérifier si cette planification peut être configurée. Demandez à un administrateur Studio de consulter la page de configuration."
+      "unverifiedConfigurationDescription": "La configuration de Studio est incomplète (par exemple, il ne trouve pas le principal de service du job d'exécution des tâches), il ne peut donc pas vérifier si cette planification peut être configurée. Demandez à un administrateur Studio de consulter la page de configuration.",
+      "apply": {
+        "run": "Exécuter le SQL",
+        "partial": "Terminé : {{applied}} sur {{total}}.",
+        "recheckFailed": "Terminé : {{applied}} sur {{total}}. Studio n'a pas pu vérifier le résultat à l'instant. Cliquez sur Réessayer pour actualiser.",
+        "errors": {
+          "permission_denied": "Votre compte n'est pas autorisé à accorder cet accès. Demandez à un propriétaire du catalogue ou du schéma d'exécuter les commandes ci-dessus dans l'éditeur SQL.",
+          "warehouse_unavailable": "Studio n'a pas pu démarrer l'entrepôt SQL (le calcul Databricks qui exécute ces commandes). Il est peut-être encore en cours de démarrage. Réessayez dans une minute, ou copiez les commandes et exécutez-les vous-même dans le SQL Editor (dans la barre latérale de Databricks).",
+          "rate_limited": "Databricks est très sollicité en ce moment. Patientez un instant, puis réessayez.",
+          "not_found": "Un élément auquel ces commandes se réfèrent n'existe plus, par exemple l'une des tables ou son schéma. Cliquez sur Réessayer pour actualiser la liste.",
+          "unknown": "Ces commandes n'ont pas pu être exécutées. Copiez-les et exécutez-les dans le SQL Editor (dans la barre latérale de Databricks), ou envoyez-les au propriétaire du catalogue ou du schéma."
+        }
+      }
     }
   },
   "lifecycle": {
@@ -411,7 +424,7 @@
     "computeWarehouseDefaultSuffix": "(par défaut)",
     "computeWarehouseCustomOption": "enregistré",
     "computeNoWarehouses": "Aucun warehouse trouvé",
-    "computeSpAccessMissing": "Le service principal de l'application a besoin de CAN MANAGE sur ce warehouse.",
+    "computeSpAccessMissing": "Le principal de service de l'application a besoin de CAN MANAGE sur ce warehouse.",
     "computeGrantButton": "Accorder l'accès",
     "computeGrantAdminOnly": "Seuls les administrateurs peuvent accorder l'accès.",
     "computeJobsLabel": "Compute des jobs",
@@ -3091,6 +3104,10 @@
     "added": "Ajoutée",
     "alreadyImported": "Cette règle est déjà importée"
   },
+  "sqlCodeBlock": {
+    "run": "Exécuter le SQL",
+    "copyFailed": "Copie impossible. Sélectionnez les commandes et copiez-les vous-même."
+  },
   "setup": {
     "title": "Configurer DQX Studio",
     "description": "Effectuez les étapes requises ci-dessous pour rendre DQX Studio disponible.",
@@ -3160,19 +3177,45 @@
       "acknowledge": "J'ai compris, continuer vers Studio"
     },
     "instructions": "Comment résoudre ce problème",
+    "grants": {
+      "partial": "Terminé : {{applied}} sur {{total}}.",
+      "leadRun": "Exécutez les commandes suivantes pour accorder cet accès. Si vous n'avez pas les autorisations nécessaires, demandez au propriétaire du catalogue de les exécuter. Puis vérifiez à nouveau.",
+      "leadCopy": "Copiez les commandes ci-dessous et envoyez-les au propriétaire du catalogue ou à un administrateur Databricks. Une fois qu'il les a exécutées dans l'éditeur SQL, cliquez sur Vérifier à nouveau.",
+      "errors": {
+        "permission_denied": "Votre compte n'est pas autorisé à accorder cet accès. Demandez à un propriétaire du catalogue ou du schéma d'exécuter les commandes ci-dessus dans l'éditeur SQL.",
+        "warehouse_unavailable": "Studio n'a pas pu démarrer l'entrepôt SQL (le calcul Databricks qui exécute ces commandes). Il est peut-être encore en cours de démarrage. Réessayez dans une minute, ou copiez les commandes et exécutez-les vous-même dans le SQL Editor (dans la barre latérale de Databricks).",
+        "rate_limited": "Databricks est très sollicité en ce moment. Patientez un instant, puis réessayez.",
+        "not_found": "Un élément auquel ces commandes se réfèrent n'existe plus. Cliquez sur Vérifier à nouveau pour actualiser la liste.",
+        "unknown": "Ces commandes n'ont pas pu être exécutées. Copiez-les et exécutez-les dans le SQL Editor (dans la barre latérale de Databricks), ou envoyez-les au propriétaire du catalogue.",
+        "setup_grants_failed": "Studio n'a pas pu terminer l'exécution de ces commandes ni vérifier le résultat : une partie de l'accès est peut-être déjà en place. Cliquez sur Vérifier à nouveau pour voir ce qu'il reste à faire, ou copiez les commandes et envoyez-les au propriétaire du catalogue."
+      }
+    },
     "diagnosticCode": "Code : {{code}}",
     "configuration": {
       "catalog": "Catalogue",
       "catalogHelp": "Un catalogue Unity Catalog existant. Studio y crée ses schémas.",
+      "catalogPlaceholder": "Choisir un catalogue",
+      "catalogSearch": "Rechercher ou saisir un nom de catalogue",
+      "useTyped": "Utiliser « {{name}} »",
+      "catalogListUnavailable": "Studio n'a pas pu lister les catalogues que vous pouvez voir. Saisissez plutôt le nom du catalogue.",
       "prefix": "Préfixe de stockage",
       "prefixHelp": "Lettres minuscules, chiffres et traits de soulignement. Schémas : <prefix>, <prefix>_tmp, <prefix>_genie, <prefix>_demo.",
       "audience_group": "Groupe d'audience",
+      "groupPlaceholder": "Choisir un groupe",
+      "groupSearch": "Rechercher ou saisir un nom de groupe",
+      "groupListUnavailable": "Studio n'a pas pu lister les groupes de cet espace de travail. Saisissez plutôt le nom du groupe.",
+      "groupListTruncated_one": "Affichage de {{count}} groupe uniquement. Si le vôtre n'apparaît pas, saisissez son nom.",
+      "groupListTruncated_other": "Affichage des {{count}} premiers groupes. Si le vôtre n'apparaît pas, saisissez son nom.",
       "audience_groupHelp": "Un groupe de compte existant affecté à cet espace de travail. Ses membres peuvent utiliser Studio ; les rôles sont attribués séparément.",
       "schemas": "Schémas",
       "submit": "Enregistrer et continuer",
+      "edit": "Modifier",
       "broadAudience": "Audience large : tous les utilisateurs de l'espace de travail",
       "errors": {
         "configuration_invalid": "Vérifiez le catalogue, le préfixe et le nom du groupe.",
+        "audience_group_builtin": "Les groupes intégrés comme « users », « account users » et « admins » ne peuvent pas être utilisés. Choisissez un groupe de compte dédié, par exemple dqx-users.",
+        "catalog_invalid": "Les noms de catalogue ne peuvent pas contenir de points, d'accents graves ni de barres obliques inverses. Choisissez un catalogue dans la liste, ou vérifiez le nom que vous avez saisi.",
+        "audience_group_required": "Saisissez le nom d'un groupe de compte existant.",
         "catalog_not_found": "Le catalogue n'existe pas ou vous n'y avez pas accès.",
         "audience_group_not_found": "Le groupe n'existe pas dans cet espace de travail.",
         "configuration_locked": "Le stockage est déjà provisionné ; la configuration ne peut plus être modifiée.",
@@ -3192,6 +3235,70 @@
         "default": "Studio ne voit que les autorisations accordées directement à un utilisateur ou à un groupe, ou à tous les utilisateurs de l'espace de travail. Si vous avez accordé cet accès via un autre groupe parent, ou manuellement dans l'espace de travail, il peut sembler manquant ici. Si vous êtes sûr qu'il est en place, vous pouvez continuer quand même.",
         "app_sharing": "Studio n'est pas autorisé à lire avec qui l'application est partagée ; il ne peut donc pas le vérifier lui-même. Une fois l'application partagée avec vos utilisateurs, confirmez-le ici.",
         "ai": "Si vos utilisateurs peuvent déjà utiliser ce modèle d'IA (par exemple via un groupe parent), vous pouvez garder les fonctionnalités d'IA activées."
+      }
+    },
+    "taskRunner": {
+      "pickFirst": "Choisissez d'abord un principal de service.",
+      "steps": {
+        "pick": "Choisir un principal de service",
+        "access": "Confirmer l'accès",
+        "apply": "L'appliquer au job d'exécution"
+      },
+      "pick": {
+        "label": "Principal de service pour les contrôles planifiés",
+        "placeholder": "Choisir un principal de service",
+        "search": "Rechercher par nom ou par ID d'application",
+        "useTyped": "Utiliser l'ID d'application {{id}}",
+        "noMatches": "Aucun principal de service ne correspond. Collez son ID d'application pour l'utiliser.",
+        "pastePlaceholder": "ID d'application, par exemple 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+        "listUnavailable": "Studio n'a pas pu charger la liste des principaux de service. Collez plutôt l'ID d'application du principal de service. Vous le trouverez sur sa page, sous Settings → Identity and access.",
+        "listTruncated_one": "Affichage de {{count}} principal de service uniquement. Si le vôtre n'apparaît pas, collez son ID d'application.",
+        "listTruncated_other": "Affichage des {{count}} premiers principaux de service. Si le vôtre n'apparaît pas, collez son ID d'application.",
+        "invalidId": "Un ID d'application ressemble à 1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d.",
+        "createTitle": "Vous n'en avez pas ? Créez-le",
+        "createStep1": "Ouvrez le menu de votre profil (en haut à droite) → Settings → Identity and access → Service principals. Cliquez sur Add service principal et créez-en un nouveau nommé dqx-studio-task-runner.",
+        "createStep2": "Revenez ici et choisissez-le ci-dessus. Vous définirez ses autorisations à l'étape 2.",
+        "openServicePrincipals": "Ouvrir les principaux de service"
+      },
+      "access": {
+        "intro": "Dans l'onglet Permissions de ce principal de service (menu du profil (en haut à droite) → Settings → Identity and access → Service principals → {{name}} → Permissions) :",
+        "nameFallback": "votre principal de service",
+        "self": "Cliquez sur Grant access, trouvez votre nom et accordez-vous CAN USE (affiché « Service Principal: User » dans l'onglet Permissions) et CAN MANAGE (affiché « Service Principal: Manager »). Si vous les avez déjà, passez cette étape.",
+        "app": "Cliquez sur Grant access, trouvez l'application DQX Studio ({{appName}}) et accordez-lui CAN USE.",
+        "appFallback": "le principal de service propre à l'application",
+        "openServicePrincipal": "Ouvrir ce principal de service",
+        "button": "Confirmer l'accès",
+        "result": {
+          "confirmed": "Accès confirmé. Studio peut utiliser ce principal de service.",
+          "permissionConfirmed": "Studio peut utiliser ce principal de service.",
+          "missing": "L'application DQX Studio n'a pas encore CAN USE sur ce principal de service. Ajoutez-le dans l'onglet Permissions (étape b ci-dessus), puis cliquez à nouveau sur Confirmer l'accès. Si vous êtes sûr que Studio dispose déjà de cette autorisation (par exemple via un groupe d'administrateurs), vous pouvez passer à l'étape 3.",
+          "unverified": "Studio ne peut pas vérifier lui-même les autorisations de ce principal de service. Assurez-vous d'avoir effectué les étapes a et b, puis continuez. L'étape 3 le confirmera.",
+          "grantsPending": "Ce principal de service a aussi besoin d'accéder aux données de Studio. Exécutez les commandes suivantes. Si vous n'avez pas les autorisations nécessaires, demandez au propriétaire du catalogue de les exécuter.",
+          "automaticGrants": "Studio configurera automatiquement le reste de l'accès de ce principal de service une fois qu'il sera affecté au job.",
+          "grantsUnverified": "Studio n'a pas pu vérifier tout l'accès de ce principal de service aux données de Studio. La configuration le vérifie à nouveau après l'étape 3."
+        },
+        "errors": {
+          "task_runner_principal_invalid": "Ce n'est pas un ID d'application. Choisissez à nouveau le principal de service, ou collez son ID d'application.",
+          "task_runner_principal_is_app": "Il s'agit du principal de service propre à l'application DQX Studio. Choisissez-en un autre.",
+          "task_runner_managed_by_deployment": "Studio a été installé avec un bundle de déploiement : le principal de service de ce job est donc choisi à l'installation et ne peut pas être modifié ici. Demandez à la personne qui a installé Studio de définir dqx_service_principal_application_id dans les paramètres du bundle avec l'ID d'application d'un principal de service (pas celui de l'application), puis de redéployer Studio. Ensuite, cliquez sur Vérifier à nouveau.",
+          "task_runner_job_unavailable": "Le job d'exécution de Studio n'est pas encore prêt. Cliquez sur Vérifier à nouveau, puis réessayez.",
+          "default": "Studio n'a pas pu vérifier ce principal de service. Réessayez dans une minute."
+        }
+      },
+      "apply": {
+        "help": "Studio configure son job d'exécution, le job en arrière-plan qui lance les contrôles planifiés, pour qu'il utilise ce principal de service, puis vérifie à nouveau la configuration.",
+        "button": "Utiliser ce principal de service",
+        "confirmFirst": "Confirmez d'abord l'accès.",
+        "grantsStillMissing": "Certains accès aux données manquent encore. Vous pouvez continuer. La configuration les listera à nouveau après cette étape.",
+        "errors": {
+          "task_runner_run_as_forbidden": "Studio n'est pas encore autorisé à utiliser ce principal de service. Cela signifie généralement que l'application DQX Studio n'a pas CAN USE dessus (étape 2b). Ajoutez-le, puis cliquez à nouveau sur Utiliser ce principal de service. Ou cliquez sur Ouvrir le job d'exécution ci-dessous, repérez Run as (l'identité sous laquelle le job s'exécute) dans le panneau Job details, choisissez ce principal de service, puis cliquez sur Vérifier à nouveau.",
+          "task_runner_principal_not_found": "Studio n'a pas trouvé ce principal de service. Vérifiez qu'il a bien été créé dans cet espace de travail, puis choisissez-le à nouveau.",
+          "task_runner_principal_invalid": "Ce n'est pas un ID d'application. Choisissez à nouveau le principal de service, ou collez son ID d'application.",
+          "task_runner_principal_is_app": "Il s'agit du principal de service propre à l'application DQX Studio. Choisissez-en un autre.",
+          "task_runner_managed_by_deployment": "Studio a été installé avec un bundle de déploiement : le principal de service de ce job est donc choisi à l'installation et ne peut pas être modifié ici. Demandez à la personne qui a installé Studio de définir dqx_service_principal_application_id dans les paramètres du bundle avec l'ID d'application d'un principal de service (pas celui de l'application), puis de redéployer Studio. Ensuite, cliquez sur Vérifier à nouveau.",
+          "task_runner_job_unavailable": "Le job d'exécution de Studio n'est pas encore prêt. Cliquez sur Vérifier à nouveau, puis réessayez.",
+          "default": "Studio n'a pas pu mettre à jour son job d'exécution. Réessayez, ou ouvrez le job et définissez vous-même son paramètre Run as sur ce principal de service, puis cliquez sur Vérifier à nouveau."
+        }
       }
     }
   },

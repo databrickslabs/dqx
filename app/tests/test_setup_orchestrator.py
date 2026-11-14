@@ -10,7 +10,8 @@ from unittest.mock import create_autospec
 
 import pytest
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import NotFound
+from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.sdk.errors import NotFound, PermissionDenied
 
 from databricks_labs_dqx_app.backend.setup.audience import resolve_audience
 from databricks_labs_dqx_app.backend.setup.configuration import (
@@ -19,7 +20,13 @@ from databricks_labs_dqx_app.backend.setup.configuration import (
     SetupChoices,
     SetupConfigurationStore,
 )
-from databricks_labs_dqx_app.backend.setup.errors import RequiredViewSetupError
+from databricks_labs_dqx_app.backend.setup.errors import (
+    AppServicePrincipalChosenError,
+    RequiredViewSetupError,
+    TaskRunnerJobUnavailableError,
+    TaskRunnerManagedByDeploymentError,
+)
+from databricks_labs_dqx_app.backend.setup.checks import RunnerGrants
 from databricks_labs_dqx_app.backend.setup.job_manager import ResolvedJob
 from databricks_labs_dqx_app.backend.setup.models import (
     SetupActionId,
@@ -27,6 +34,7 @@ from databricks_labs_dqx_app.backend.setup.models import (
     SetupStep,
     SetupStepId,
     StepState,
+    TaskRunnerSpPermission,
 )
 from databricks_labs_dqx_app.backend.setup.orchestrator import BoundSetup, SetupOrchestrator
 from databricks_labs_dqx_app.backend.setup.overrides import SetupOverrides
@@ -104,6 +112,10 @@ class FakeBound:
     access_observer: Callable[[], None] | None = None
     access_reader: WorkspaceClient | None = None
     warehouse_id: str = "warehouse-id"
+    picked_grants: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    picked_automatic: tuple[str, ...] = ()
+    picked_unreadable: tuple[str, ...] = ()
+    picked_reader_sql: list[SqlExecutor | None] = field(default_factory=list)
 
     def _result(self, step_id: SetupStepId) -> SetupStep:
         self.events.append(step_id.value)
@@ -147,6 +159,24 @@ class FakeBound:
             return self.output_result
         return self.results.get(SetupStepId.TASK_RUNNER, _passed(SetupStepId.TASK_RUNNER))
 
+    def grant_runner_access(self, principal: str, *, include_outputs: bool) -> None:
+        self.events.append(f"grant_runner:{principal}:{include_outputs}")
+
+    def runner_grants(
+        self,
+        principal: str,
+        reader_ws: WorkspaceClient | None = None,
+        *,
+        reader_sql: SqlExecutor | None = None,
+    ) -> RunnerGrants:
+        self.events.append(f"runner_grants:{principal}")
+        self.picked_reader_sql.append(reader_sql)
+        return RunnerGrants(
+            grant_statements=self.picked_grants.get(principal, ()),
+            automatic_grants=self.picked_automatic,
+            unreadable=self.picked_unreadable,
+        )
+
     def reconcile_access(
         self,
         reader_sql: SqlExecutor | None = None,
@@ -167,9 +197,11 @@ class FakeAi:
     result: SetupStep = field(default_factory=lambda: _passed(SetupStepId.AI))
     kept_enabled_by: list[str | None] = field(default_factory=list)
     endpoints: tuple[str, ...] = ("chat-endpoint",)
+    inspect_only_calls: list[bool] = field(default_factory=list)
 
-    def check_ai_access(self, reader_ws: WorkspaceClient | None = None) -> SetupStep:
+    def check_ai_access(self, reader_ws: WorkspaceClient | None = None, *, inspect_only: bool = False) -> SetupStep:
         self.events.append("ai")
+        self.inspect_only_calls.append(inspect_only)
         return self.result
 
     def keep_enabled(self, *, user_email: str | None) -> None:
@@ -210,6 +242,9 @@ class FakeJobs:
     grant_failure: Exception | None = None
     run_as_failure: Exception | None = None
     job_exists: bool = True
+    set_run_as_failure: Exception | None = None
+    managed_by_deployment: list[bool] = field(default_factory=list)
+    app_permission: str = "confirmed"
 
     def resolve(self, configured_job_id: str | None) -> ResolvedJob:
         self.events.append(f"resolve_job:{configured_job_id or 'discover'}")
@@ -224,14 +259,27 @@ class FakeJobs:
         if self.grant_failure is not None:
             raise self.grant_failure
 
-    def validate_run_as(self, job_id: int, app_sp_id: str) -> SetupStep:
+    def validate_run_as(self, job_id: int, app_sp_id: str, *, managed_by_deployment: bool = False) -> SetupStep:
         self.events.append(f"validate_run_as:{job_id}:{app_sp_id}")
+        self.managed_by_deployment.append(managed_by_deployment)
         if self.run_as_failure is not None:
             raise self.run_as_failure
         return self.run_as_result
 
     def configure(self, job_id: int, wheel_paths: list[str]) -> None:
         self.events.append(f"configure_job:{job_id}:{len(wheel_paths)}")
+
+    def app_permission_on(self, application_id: str, app_application_id: str) -> TaskRunnerSpPermission:
+        self.events.append(f"app_permission:{application_id}:{app_application_id}")
+        if self.app_permission == "missing":
+            return "missing"
+        return "unverified" if self.app_permission == "unverified" else "confirmed"
+
+    def set_run_as(self, job_id: int, application_id: str) -> None:
+        self.events.append(f"set_run_as:{job_id}:{application_id}")
+        if self.set_run_as_failure is not None:
+            raise self.set_run_as_failure
+        self.run_as_result = _passed(SetupStepId.TASK_RUNNER)
 
 
 @dataclass
@@ -325,6 +373,7 @@ def _harness(
     activation: FakeActivation | None = None,
     overrides: SetupOverrides | None = None,
     ai: FakeAi | None = None,
+    app_sp_id: str = "app-service-principal",
 ) -> Harness:
     events = [] if events is None else events
     runtime = SetupRuntime()
@@ -352,7 +401,7 @@ def _harness(
         binder=binder,
         jobs=jobs,
         app_settings=FakeAppSettings(events),
-        app_sp_id="app-service-principal",
+        app_sp_id=app_sp_id,
         overrides=overrides,
     )
     return Harness(orchestrator, runtime, bootstrap_checks, bound, binder, configuration, jobs, pg, delta, events)
@@ -1629,3 +1678,490 @@ async def test_explicit_reader_sql_takes_precedence_over_the_factory() -> None:
 
     factory.assert_not_called()
     assert harness.bound.catalog_reader_sql is reader
+
+
+# ---------------------------------------------------------------------------
+# Running a step's GRANT statements as the signed-in administrator
+# ---------------------------------------------------------------------------
+
+_RUNNER_GRANTS = (
+    "GRANT USE_CATALOG ON CATALOG `main` TO `runner`;",
+    "GRANT USE_SCHEMA ON SCHEMA `main`.`studio` TO `runner`;",
+    "GRANT READ_VOLUME ON VOLUME `main`.`studio`.`wheels` TO `runner`;",
+)
+
+
+def _missing_runner_grants(statements: tuple[str, ...] = _RUNNER_GRANTS) -> SetupStep:
+    return SetupStep(
+        id=SetupStepId.TASK_RUNNER,
+        state=StepState.ACTION_REQUIRED,
+        code="task_runner_permissions_missing",
+        summary="runner needs grants",
+        instructions=("Ask the owner to run the following:",),
+        grant_statements=statements,
+        actions=(SetupActionId.VERIFY_AGAIN,),
+    )
+
+
+@pytest.mark.asyncio
+async def test_apply_grants_runs_the_step_statements_as_the_administrator_then_reverifies() -> None:
+    harness = _harness(bound_results={SetupStepId.TASK_RUNNER: _missing_runner_grants()})
+    executor = create_autospec(SqlExecutor, instance=True)
+
+    def run(statement: str) -> None:
+        if executor.execute_no_schema.call_count == len(_RUNNER_GRANTS):
+            harness.bound.results.pop(SetupStepId.TASK_RUNNER)
+
+    executor.execute_no_schema.side_effect = run
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    result = await harness.orchestrator.apply_grants(
+        SetupStepId.TASK_RUNNER,
+        setup_user="admin@example.com",
+        reader_sql_factory=lambda resources: executor,
+    )
+
+    assert result is not None
+    assert [entry.args[0] for entry in executor.execute_no_schema.call_args_list] == [
+        statement.removesuffix(";") for statement in _RUNNER_GRANTS
+    ]
+    assert (result.applied, result.total, result.failed) == (3, 3, ())
+    assert result.report.state == SetupState.READY
+    assert harness.runtime.report() == result.report
+
+
+@pytest.mark.asyncio
+async def test_apply_grants_rederives_only_the_step_then_reverifies_once() -> None:
+    harness = _harness(bound_results={SetupStepId.TASK_RUNNER: _missing_runner_grants()})
+    executor = create_autospec(SqlExecutor, instance=True)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    harness.events.clear()
+
+    await harness.orchestrator.apply_grants(
+        SetupStepId.TASK_RUNNER,
+        setup_user="admin@example.com",
+        reader_sql_factory=lambda resources: executor,
+    )
+
+    # Only the task-runner check runs before the statements, with the administrator's SQL;
+    # one full re-check follows them.
+    assert harness.events[0].startswith("runner:")
+    assert harness.events.count("identity") == 1
+    assert harness.events.index("identity") > 0
+    assert executor.execute_no_schema.call_count == len(_RUNNER_GRANTS)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("step_id", [SetupStepId.UNITY_CATALOG, SetupStepId.ACCESS])
+async def test_apply_grants_rederives_a_step_with_its_own_check(step_id: SetupStepId) -> None:
+    grant = "GRANT USE_CATALOG ON CATALOG `main` TO `data-team`;"
+    missing = SetupStep(
+        id=step_id,
+        state=StepState.ACTION_REQUIRED,
+        code="grants_missing",
+        summary="grants missing",
+        grant_statements=(grant,),
+        actions=(SetupActionId.VERIFY_AGAIN,),
+    )
+    harness = _harness(bound_results={step_id: missing})
+    executor = create_autospec(SqlExecutor, instance=True)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    harness.events.clear()
+
+    result = await harness.orchestrator.apply_grants(
+        step_id, setup_user="admin@example.com", reader_sql_factory=lambda resources: executor
+    )
+
+    assert result is not None
+    assert harness.events[0] == step_id.value
+    assert harness.events.count("identity") == 1
+    executor.execute_no_schema.assert_called_once_with(grant.removesuffix(";"))
+
+
+@pytest.mark.asyncio
+async def test_apply_grants_reports_a_failed_statement_and_runs_the_rest() -> None:
+    harness = _harness(bound_results={SetupStepId.TASK_RUNNER: _missing_runner_grants()})
+    executor = create_autospec(SqlExecutor, instance=True)
+
+    def run(statement: str) -> None:
+        if statement == _RUNNER_GRANTS[1].removesuffix(";"):
+            raise PermissionDenied("internal detail")
+        # Re-verification then only reports the grant that is still missing.
+        harness.bound.results[SetupStepId.TASK_RUNNER] = _missing_runner_grants((_RUNNER_GRANTS[1],))
+
+    executor.execute_no_schema.side_effect = run
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    result = await harness.orchestrator.apply_grants(
+        SetupStepId.TASK_RUNNER,
+        setup_user="admin@example.com",
+        reader_sql_factory=lambda resources: executor,
+    )
+
+    assert result is not None
+    assert executor.execute_no_schema.call_count == 3
+    assert (result.applied, result.total) == (2, 3)
+    assert [(failure.statement, failure.error_code) for failure in result.failed] == [
+        (_RUNNER_GRANTS[1], "permission_denied")
+    ]
+    assert result.report.step(SetupStepId.TASK_RUNNER).grant_statements == (_RUNNER_GRANTS[1],)
+    assert "internal detail" not in result.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_apply_grants_has_nothing_to_apply_for_a_step_without_statements() -> None:
+    harness = _harness(
+        bound_results={SetupStepId.TASK_RUNNER: _action_required(SetupStepId.TASK_RUNNER, "task_runner_identity")}
+    )
+    executor = create_autospec(SqlExecutor, instance=True)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    result = await harness.orchestrator.apply_grants(
+        SetupStepId.TASK_RUNNER,
+        setup_user="admin@example.com",
+        reader_sql_factory=lambda resources: executor,
+    )
+
+    assert result is None
+    executor.execute_no_schema.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_apply_grants_reconciles_when_the_steps_own_check_already_fixed_it() -> None:
+    harness = _harness(bound_results={SetupStepId.TASK_RUNNER: _missing_runner_grants()})
+    executor = create_autospec(SqlExecutor, instance=True)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    assert harness.runtime.report().state != SetupState.READY
+    # The task-runner check gives Studio's own grants itself, so re-deriving it finds nothing left.
+    harness.bound.results.pop(SetupStepId.TASK_RUNNER)
+
+    result = await harness.orchestrator.apply_grants(
+        SetupStepId.TASK_RUNNER,
+        setup_user="admin@example.com",
+        reader_sql_factory=lambda resources: executor,
+    )
+
+    assert result is not None
+    assert (result.applied, result.total, result.failed) == (0, 0, ())
+    executor.execute_no_schema.assert_not_called()
+    assert result.report.step(SetupStepId.TASK_RUNNER).state == StepState.PASSED
+    assert result.report.state == SetupState.READY
+    assert harness.runtime.report() == result.report
+
+
+@pytest.mark.asyncio
+async def test_apply_grants_for_the_ai_step_runs_its_statements_and_rederives_it_inspection_only() -> None:
+    grant = "GRANT EXECUTE ON MODEL SERVICE `system`.`ai`.`chat` TO `data-team`;"
+    events: list[str] = []
+    ai = FakeAi(
+        events,
+        result=SetupStep(
+            id=SetupStepId.AI,
+            state=StepState.WARNING,
+            code="ai_access_missing",
+            summary="AI access missing",
+            grant_statements=(grant,),
+            actions=(SetupActionId.VERIFY_AGAIN, SetupActionId.OVERRIDE),
+        ),
+    )
+    harness = _harness(events, ai=ai)
+    executor = create_autospec(SqlExecutor, instance=True)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    ai.inspect_only_calls.clear()
+
+    result = await harness.orchestrator.apply_grants(
+        SetupStepId.AI, setup_user="admin@example.com", reader_sql_factory=lambda resources: executor
+    )
+
+    assert result is not None
+    executor.execute_no_schema.assert_called_once_with(grant.removesuffix(";"))
+    # Only the final re-check may change the AI setting; re-deriving the statements only inspects.
+    assert ai.inspect_only_calls == [True, False]
+
+
+@pytest.mark.asyncio
+async def test_apply_grants_has_nothing_to_apply_for_a_step_setup_never_reached() -> None:
+    harness = _harness(
+        bound_results={SetupStepId.UNITY_CATALOG: _action_required(SetupStepId.UNITY_CATALOG, "catalog_missing")}
+    )
+    executor = create_autospec(SqlExecutor, instance=True)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    harness.events.clear()
+
+    result = await harness.orchestrator.apply_grants(
+        SetupStepId.ACCESS,
+        setup_user="admin@example.com",
+        reader_sql_factory=lambda resources: executor,
+    )
+
+    assert result is None
+    executor.execute_no_schema.assert_not_called()
+    # Nothing was checked again: the step isn't in the report the administrator saw.
+    assert harness.events == []
+
+
+# ---------------------------------------------------------------------------
+# Choosing the task-runner service principal
+# ---------------------------------------------------------------------------
+
+_APP_ID = "11111111-2222-4333-8444-555555555555"
+_RUNNER_ID = "6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5"
+_APP_CREATED = dataclasses.replace(BOOTSTRAP, job_id=None)
+
+
+def _run_as_required() -> SetupStep:
+    return SetupStep(
+        id=SetupStepId.TASK_RUNNER,
+        state=StepState.ACTION_REQUIRED,
+        code="task_runner_run_as_missing",
+        summary="choose a service principal",
+        actions=(SetupActionId.CHOOSE_TASK_RUNNER, SetupActionId.VERIFY_AGAIN),
+    )
+
+
+@pytest.mark.asyncio
+async def test_bundle_job_run_as_is_validated_as_deployment_managed() -> None:
+    harness = _harness()
+
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert harness.jobs.managed_by_deployment == [True]
+
+
+@pytest.mark.asyncio
+async def test_app_created_job_run_as_is_not_deployment_managed() -> None:
+    harness = _harness(bootstrap=_APP_CREATED)
+
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert harness.jobs.managed_by_deployment == [False]
+
+
+@pytest.mark.asyncio
+async def test_choosing_a_task_runner_sets_run_as_then_shows_its_data_grants() -> None:
+    """Once run_as is set, the re-check moves on to the runner's grants, ready to copy or run."""
+    harness = _harness(
+        bootstrap=_APP_CREATED,
+        app_sp_id=_APP_ID,
+        bound_results={SetupStepId.TASK_RUNNER: _missing_runner_grants()},
+    )
+    harness.jobs.run_as_result = _run_as_required()
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    report = await harness.orchestrator.set_task_runner_run_as(
+        f" {_RUNNER_ID.upper()} ", setup_user="admin@example.com"
+    )
+
+    assert f"set_run_as:27:{_RUNNER_ID}" in harness.events
+    step = report.step(SetupStepId.TASK_RUNNER)
+    assert step.code == "task_runner_permissions_missing"
+    assert step.grant_statements == _RUNNER_GRANTS
+    assert harness.runtime.report() == report
+
+
+@pytest.mark.asyncio
+async def test_choosing_a_task_runner_is_refused_for_a_bundle_managed_job() -> None:
+    harness = _harness(app_sp_id=_APP_ID)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    with pytest.raises(TaskRunnerManagedByDeploymentError):
+        await harness.orchestrator.set_task_runner_run_as(_RUNNER_ID, setup_user="admin@example.com")
+
+    assert not any(event.startswith("set_run_as") for event in harness.events)
+
+
+@pytest.mark.asyncio
+async def test_choosing_the_app_service_principal_is_refused() -> None:
+    harness = _harness(bootstrap=_APP_CREATED, app_sp_id=_APP_ID)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    with pytest.raises(AppServicePrincipalChosenError):
+        await harness.orchestrator.set_task_runner_run_as(_APP_ID.upper(), setup_user="admin@example.com")
+
+    assert not any(event.startswith("set_run_as") for event in harness.events)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", ["", "runner", "admin@example.com", "6f1c2d3e4a5b4c6d8e7f90a1b2c3d4e5"])
+async def test_choosing_a_task_runner_requires_an_application_id(value: str) -> None:
+    harness = _harness(bootstrap=_APP_CREATED, app_sp_id=_APP_ID)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    with pytest.raises(InvalidParameterError):
+        await harness.orchestrator.set_task_runner_run_as(value, setup_user="admin@example.com")
+
+    assert not any(event.startswith("set_run_as") for event in harness.events)
+
+
+@pytest.mark.asyncio
+async def test_choosing_a_task_runner_before_the_job_exists_is_refused() -> None:
+    harness = _harness(bootstrap=_APP_CREATED, app_sp_id=_APP_ID)
+
+    with pytest.raises(TaskRunnerJobUnavailableError):
+        await harness.orchestrator.set_task_runner_run_as(_RUNNER_ID, setup_user="admin@example.com")
+
+
+@pytest.mark.asyncio
+async def test_choosing_a_task_runner_lets_permission_errors_reach_the_caller() -> None:
+    harness = _harness(bootstrap=_APP_CREATED, app_sp_id=_APP_ID)
+    harness.jobs.run_as_result = _run_as_required()
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    harness.jobs.set_run_as_failure = PermissionDenied("app lacks servicePrincipal.user")
+
+    with pytest.raises(PermissionDenied):
+        await harness.orchestrator.set_task_runner_run_as(_RUNNER_ID, setup_user="admin@example.com")
+
+
+_PICKED_GRANTS = (
+    f"GRANT USE_CATALOG ON CATALOG `main` TO `{_RUNNER_ID}`;",
+    f"GRANT USE_CATALOG ON CATALOG `other` TO `{_RUNNER_ID}`;",
+)
+_AUTOMATIC_GRANTS = (f"GRANT SELECT ON SCHEMA `main`.`studio_tmp` TO `{_RUNNER_ID}`;",)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("permission", ["confirmed", "missing", "unverified"])
+async def test_confirming_access_only_inspects_and_reports_what_the_picked_principal_still_needs(
+    permission: str,
+) -> None:
+    harness = _harness(bootstrap=_APP_CREATED, app_sp_id=_APP_ID)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    harness.jobs.app_permission = permission
+    harness.bound.picked_grants[_RUNNER_ID] = _PICKED_GRANTS
+    harness.bound.picked_automatic = _AUTOMATIC_GRANTS
+    executor = create_autospec(SqlExecutor, instance=True)
+    del harness.events[:]
+
+    access = await harness.orchestrator.check_task_runner_access(
+        _RUNNER_ID.upper(), reader_sql_factory=lambda resources: executor
+    )
+
+    assert access.sp_permission == permission
+    assert access.grant_statements == _PICKED_GRANTS
+    assert access.automatic_grants == _AUTOMATIC_GRANTS
+    assert access.grants_unverified is False
+    # Confirming access only inspects: nothing is granted with the app's authority.
+    assert harness.events == [
+        f"app_permission:{_RUNNER_ID}:{_APP_ID}",
+        f"runner_grants:{_RUNNER_ID}",
+    ]
+    assert harness.bound.picked_reader_sql == [executor]
+    executor.execute_no_schema.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_confirming_access_reports_grants_it_could_not_read() -> None:
+    harness = _harness(bootstrap=_APP_CREATED, app_sp_id=_APP_ID)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    harness.bound.picked_unreadable = ("Studio couldn't read the catalog's permissions.",)
+
+    access = await harness.orchestrator.check_task_runner_access(_RUNNER_ID, reader_sql_factory=lambda resources: None)
+
+    assert access.grants_unverified is True
+
+
+@pytest.mark.asyncio
+async def test_task_runner_grants_run_as_the_administrator_and_report_the_rest() -> None:
+    harness = _harness(bootstrap=_APP_CREATED, app_sp_id=_APP_ID)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    harness.bound.picked_grants[_RUNNER_ID] = _PICKED_GRANTS
+    harness.bound.picked_automatic = _AUTOMATIC_GRANTS
+    executor = create_autospec(SqlExecutor, instance=True)
+
+    def run(statement: str) -> None:
+        if statement == _PICKED_GRANTS[0].removesuffix(";"):
+            raise PermissionDenied("internal detail")
+        harness.bound.picked_grants[_RUNNER_ID] = (_PICKED_GRANTS[0],)
+
+    executor.execute_no_schema.side_effect = run
+
+    result = await harness.orchestrator.apply_task_runner_grants(
+        _RUNNER_ID, reader_sql_factory=lambda resources: executor
+    )
+
+    # Only the statements a person must run are run; Studio's own grants wait for run_as.
+    assert [entry.args[0] for entry in executor.execute_no_schema.call_args_list] == [
+        statement.removesuffix(";") for statement in _PICKED_GRANTS
+    ]
+    assert not any("studio_tmp" in entry.args[0] for entry in executor.execute_no_schema.call_args_list)
+    assert not any(event.startswith("grant_runner") for event in harness.events)
+    assert (result.applied, result.total) == (1, 2)
+    assert [(failure.statement, failure.error_code) for failure in result.failed] == [
+        (_PICKED_GRANTS[0], "permission_denied")
+    ]
+    assert result.grant_statements == (_PICKED_GRANTS[0],)
+    assert "internal detail" not in result.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_task_runner_grants_with_nothing_missing_run_nothing() -> None:
+    harness = _harness(bootstrap=_APP_CREATED, app_sp_id=_APP_ID)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    executor = create_autospec(SqlExecutor, instance=True)
+
+    result = await harness.orchestrator.apply_task_runner_grants(
+        _RUNNER_ID, reader_sql_factory=lambda resources: executor
+    )
+
+    assert (result.applied, result.total, result.failed, result.grant_statements) == (0, 0, (), ())
+    executor.execute_no_schema.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["check_task_runner_access", "apply_task_runner_grants"])
+async def test_picked_principal_access_is_refused_for_a_bundle_managed_job(method: str) -> None:
+    harness = _harness(app_sp_id=_APP_ID)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    del harness.events[:]
+
+    with pytest.raises(TaskRunnerManagedByDeploymentError):
+        await getattr(harness.orchestrator, method)(_RUNNER_ID, reader_sql_factory=lambda resources: None)
+
+    assert harness.events == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["check_task_runner_access", "apply_task_runner_grants"])
+@pytest.mark.parametrize(
+    ("value", "error"), [(_APP_ID, AppServicePrincipalChosenError), ("runner", InvalidParameterError)]
+)
+async def test_picked_principal_access_requires_a_service_principal_other_than_the_app(
+    method: str, value: str, error: type[Exception]
+) -> None:
+    harness = _harness(bootstrap=_APP_CREATED, app_sp_id=_APP_ID)
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    del harness.events[:]
+
+    with pytest.raises(error):
+        await getattr(harness.orchestrator, method)(value, reader_sql_factory=lambda resources: None)
+
+    assert harness.events == []
+
+
+@pytest.mark.asyncio
+async def test_picked_principal_access_needs_bound_storage() -> None:
+    harness = _harness(bootstrap=_APP_CREATED, app_sp_id=_APP_ID)
+
+    with pytest.raises(TaskRunnerJobUnavailableError):
+        await harness.orchestrator.check_task_runner_access(_RUNNER_ID, reader_sql_factory=lambda resources: None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["check_task_runner_access", "apply_task_runner_grants"])
+async def test_picked_principal_access_and_grants_need_the_task_runner_job(action: str) -> None:
+    # Storage is bound, but setup stopped before it resolved the task-runner job.
+    harness = _harness(
+        bootstrap=_APP_CREATED,
+        app_sp_id=_APP_ID,
+        bound_results={SetupStepId.UNITY_CATALOG: _action_required(SetupStepId.UNITY_CATALOG, "catalog_missing")},
+    )
+    await harness.orchestrator.reconcile(setup_user="admin@example.com")
+    assert harness.orchestrator.bound is not None
+    harness.events.clear()
+    executor = create_autospec(SqlExecutor, instance=True)
+
+    with pytest.raises(TaskRunnerJobUnavailableError):
+        await getattr(harness.orchestrator, action)(_RUNNER_ID, reader_sql_factory=lambda resources: executor)
+
+    assert harness.events == []
+    executor.execute_no_schema.assert_not_called()

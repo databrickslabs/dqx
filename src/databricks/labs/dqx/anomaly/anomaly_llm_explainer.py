@@ -25,6 +25,7 @@ from pyspark.sql.types import DoubleType, LongType, StringType, StructField, Str
 from databricks.labs.dqx.anomaly.anomaly_info_schema import ai_explanation_struct_schema
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.utils import escape_sql_string_literal
 
 # Single source of truth for the per-group prompt. The instructions, input-field semantics, and
 # output-field rules below are rendered into one text prompt by *_render_ai_query_prompt_header*
@@ -233,7 +234,7 @@ def pattern_spark_expr(contributions_col: str, redact_set: frozenset[str]) -> Co
     """
     col = f"`{contributions_col}`"
     if redact_set:
-        redact_arr = "array(" + ", ".join(f"'{_sql_string_literal(r)}'" for r in sorted(redact_set)) + ")"
+        redact_arr = "array(" + ", ".join(f"'{escape_sql_string_literal(r)}'" for r in sorted(redact_set)) + ")"
         entries = (
             f"filter(map_entries({col}), e -> e.value is not null " f"and not array_contains({redact_arr}, e.key))"
         )
@@ -517,7 +518,7 @@ def _call_llm_for_groups_ai_query(
             f"ai_query('{endpoint}', __prompt, "
             f"modelParameters => named_struct('max_tokens', {int(llm_cfg.max_tokens)}, "
             f"'temperature', {float(llm_cfg.temperature)}), "
-            f"responseFormat => '{_sql_string_literal(_AI_QUERY_RESPONSE_FORMAT)}', "
+            f"responseFormat => '{escape_sql_string_literal(_AI_QUERY_RESPONSE_FORMAT)}', "
             f"failOnError => false)"
         ),
     )

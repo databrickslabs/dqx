@@ -1091,7 +1091,7 @@ requires-dist = [
     { name = "scikit-learn", marker = "extra == 'anomaly'", specifier = ">=1.0,<2.0" },
     { name = "shap", marker = "extra == 'anomaly'", specifier = ">=0.42.0,<0.50" },
     { name = "spacy", marker = "extra == 'pii'", specifier = "~=3.8" },
-    { name = "sqlalchemy", specifier = ">=2.0,<3.0" },
+    { name = "sqlalchemy", specifier = ">=2.0,<2.1" },
 ]
 provides-extras = ["anomaly", "cli", "datacontract", "llm", "pii"]
 
