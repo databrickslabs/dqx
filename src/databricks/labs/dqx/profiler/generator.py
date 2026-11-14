@@ -266,7 +266,7 @@ class DQGenerator(DQEngineBase):
                 table_full_name=location,
                 column_dicts=get_table_column_dicts(self.ws, location),
                 ws=self.ws,
-                spark=self._spark,
+                spark=self.spark,
                 config=unity_catalog_metadata_config,
             )
 
