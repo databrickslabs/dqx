@@ -2932,8 +2932,6 @@
     "suppressedFineGrainedControls": "Los registros con errores están ocultos porque esta tabla usa controles de acceso detallados (un filtro de filas o una máscara de columnas), que la muestra no puede reproducir fielmente."
   },
   "resultsUi": {
-    "columnsPicker": "Columnas ({{shown}}/{{total}})",
-    "columnsShowAll": "Mostrar todas las columnas",
     "overallScoreLabel": "Puntuación general",
     "scoreTrendUpAria": "La puntuación mejoró respecto a la ejecución anterior",
     "scoreTrendDownAria": "La puntuación bajó respecto a la ejecución anterior",

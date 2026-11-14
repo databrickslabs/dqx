@@ -141,6 +141,7 @@ export function RuleTestPanel({
   lowcodeAdvanced = false,
   nativeFunction,
   nativeArguments,
+  compact = false,
 }: {
   /** Effective SQL predicate: raw in SQL mode, compiled AST in Low-Code mode. Unused for dqx_native. */
   predicate: string;
@@ -158,6 +159,8 @@ export function RuleTestPanel({
   nativeFunction?: string;
   /** Frozen native body.arguments with {{slot}} placeholders. */
   nativeArguments?: Record<string, unknown>;
+  /** The panel sits in a dialog: keep the results grid short so the dialog fits the viewport. */
+  compact?: boolean;
 }) {
   const { t } = useTranslation();
   const ai = useAiAvailability();
@@ -407,7 +410,10 @@ export function RuleTestPanel({
     () => new Set(mode === "table" ? (tablePayload?.mappedColumns ?? []) : manual.columns),
     [mode, tablePayload, manual.columns],
   );
-  const tableColumns: ResultColumn[] = (result?.columns ?? []).map((name) => ({ name, mapped: mappedSet.has(name) }));
+  const tableColumns = useMemo<ResultColumn[]>(
+    () => (result?.columns ?? []).map((name) => ({ name, mapped: mappedSet.has(name) })),
+    [result, mappedSet],
+  );
   const tableRows = useMemo(
     () => (result?.rows ?? []).map((r) => tableColumns.map((c) => (r.cells[c.name] == null ? null : String(r.cells[c.name])))),
     [result, tableColumns],
@@ -540,7 +546,12 @@ export function RuleTestPanel({
         (result.rows.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t("ruleTest.noRows")}</p>
         ) : (
-          <ResultGrid columns={tableColumns} rows={tableRows} verdicts={result.rows.map((r) => r.passed)} />
+          <ResultGrid
+            columns={tableColumns}
+            rows={tableRows}
+            verdicts={result.rows.map((r) => r.passed)}
+            maxHeightClassName={compact ? "max-h-[40vh]" : undefined}
+          />
         ))}
 
       {result?.truncated && (
