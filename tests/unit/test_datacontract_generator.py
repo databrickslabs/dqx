@@ -3273,14 +3273,14 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             os.unlink(temp_path)
 
     def test_time_bounds_are_skipped_with_warning(self, generator, caplog):
-        """Test that time bounds are skipped and log a warning."""
+        """Test that time bounds are skipped with a warning while the time format rule is still generated."""
         contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "start_time",
                     "physicalType": "STRING",
                     "logicalType": "time",
-                    "logicalTypeOptions": {"minimum": "08:00:00", "maximum": "18:00:00"},
+                    "logicalTypeOptions": {"format": "HH:mm:ss", "minimum": "08:00:00", "maximum": "18:00:00"},
                 }
             ]
         )
@@ -3293,7 +3293,12 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                     contract_file=temp_path, generate_schema_validation=False, process_text_rules=False
                 )
 
-            assert rules == []
+            assert len(rules) == 1
+            assert rules[0]["name"] == "start_time_valid_time_format"
+            assert rules[0]["check"] == {
+                "function": "is_valid_timestamp",
+                "arguments": {"column": "start_time", "timestamp_format": "HH:mm:ss"},
+            }
             assert "Time bounds aren't supported yet for field 'start_time'; skipping them." in caplog.messages
         finally:
             os.unlink(temp_path)

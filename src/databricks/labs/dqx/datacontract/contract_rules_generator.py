@@ -63,7 +63,7 @@ _FORMAT_CHECKS_BY_LOGICAL_TYPE: dict[str, _FormatCheck] = {
     "date": _FormatCheck("is_valid_date", "date_format", "valid_date_format"),
     "timestamp": _FormatCheck("is_valid_timestamp", "timestamp_format", "valid_timestamp_format"),
     "datetime": _FormatCheck("is_valid_timestamp", "timestamp_format", "valid_timestamp_format"),
-    "time": _FormatCheck("is_valid_timestamp", "timestamp_format", "valid_timestamp_format"),
+    "time": _FormatCheck("is_valid_timestamp", "timestamp_format", "valid_time_format"),
 }
 
 _MAX_LOGGED_DESCRIPTION_LENGTH = 120
