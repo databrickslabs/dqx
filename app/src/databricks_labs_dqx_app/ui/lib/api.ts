@@ -3297,6 +3297,8 @@ export interface RecordPendingApplicationIn {
   row_filter?: RecordPendingApplicationInRowFilter;
   /** Per-rule minimum % of rows that must pass, carried to the application on approval. */
   pass_threshold?: RecordPendingApplicationInPassThreshold;
+  /** Custom tags carried to the applied rule on approval. */
+  tags?: {[key: string]: string};
 }
 
 /**

@@ -915,7 +915,8 @@
       "ruleCreateFailedNamed": "{{name}}: {{error}}",
       "ruleCreateFailedDetail": "{{error}}",
       "applyFailed": "Failed to apply a rule to {{fqn}}",
-      "executeFailed": "The import failed to complete."
+      "executeFailed": "The import failed to complete.",
+      "conflictingApplication": "Conflicting filter or tags for \"{{name}}\" on {{fqn}} — one application per table and rule."
     },
     "results": {
       "title": "Import results",
@@ -1019,7 +1020,8 @@
     "downloadExample": "Download example",
     "functionsNotLoaded": "Rule functions are still loading. Try again in a moment.",
     "unnamedRule": "Unnamed rule",
-    "missingRequiredFields": "{{name}} is missing required fields: {{fields}}"
+    "missingRequiredFields": "{{name}} is missing required fields: {{fields}}",
+    "customTagsDeferred": "Custom tags not saved: {{tags}}. Add them when you apply the rule to a table."
   },
   "similarRules": {
     "title_one": "{{count}} imported rule matches an existing rule",

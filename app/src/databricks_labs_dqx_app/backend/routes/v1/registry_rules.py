@@ -51,6 +51,7 @@ from databricks_labs_dqx_app.backend.models import (
 from databricks_labs_dqx_app.backend.registry_models import (
     RegistryRule,
     canonicalize_reserved_label_values,
+    generic_rule_metadata,
     imported_severity_error,
 )
 from databricks_labs_dqx_app.backend.routes.v1.check_functions import imported_native_params_error
@@ -320,17 +321,6 @@ def _chosen_rules_by_index(svc: RegistryService, reuse_rule_ids: dict[int, str])
     return chosen
 
 
-def _imported_row_filter(imported_definition: object, stored_definition: object) -> str | None:
-    """Population filter from the import that the reused rule does not already default to."""
-    imported = getattr(imported_definition, "filter", None)
-    stored = getattr(stored_definition, "filter", None)
-    imported_filter = imported.strip() if isinstance(imported, str) else ""
-    stored_filter = stored.strip() if isinstance(stored, str) else ""
-    if imported_filter and imported_filter != stored_filter:
-        return imported_filter
-    return None
-
-
 @router.post(
     "/batch-import/preview",
     response_model=PreviewBatchImportRegistryRulesOut,
@@ -461,7 +451,6 @@ def batch_import_registry_rules(
                         rule=match,
                         input_index=index,
                         slot_renames={k: v for k, v in renames.items() if k != v},
-                        row_filter=_imported_row_filter(rule_in.definition, match.definition),
                     )
                 )
                 if body.skip_duplicates:
@@ -480,13 +469,17 @@ def batch_import_registry_rules(
                     if name:
                         user_metadata["name"] = name
 
+            # Custom tags belong on applied rules; strip them here so the rule
+            # editor (create_rule / update_draft) can still persist Tags.
             rule, warning = svc.create_rule(
                 mode=rule_in.mode,
                 definition=definition,
                 user_email=user_email,
                 polarity=rule_in.polarity,
                 author_kind=rule_in.author_kind,
-                user_metadata=canonicalize_reserved_label_values(user_metadata, label_definitions),
+                user_metadata=generic_rule_metadata(
+                    canonicalize_reserved_label_values(user_metadata, label_definitions)
+                ),
                 owner=rule_in.owner,
                 owner_display_name=rule_in.owner_display_name,
                 source=body.source,
@@ -718,6 +711,7 @@ def _activate_pending_applications(
                 p.created_by or approver,
                 row_filter=p.row_filter,
                 pass_threshold=p.pass_threshold,
+                tags=p.tags or None,
             )
             if p.id:
                 pending.delete(p.id)

@@ -29,7 +29,8 @@ test.describe("Similar-rule import and applied overrides", () => {
       name: existingName,
       fn: "is_in_list",
       parameters: [{ name: "allowed", type: "list", value: [`${runTag()}-free`, `${runTag()}-pro`] }],
-      filter: "1 = 1",
+      // Filter is part of rule identity — keep it unset so the import (no filter)
+      // can match this rule as similar.
       dimension: "Validity",
     });
     cleanup.rule(existing.rule_id);
@@ -90,7 +91,6 @@ test.describe("Similar-rule import and applied overrides", () => {
 
       const registry = await studio.getRule(existing.rule_id);
       expect(registry.user_metadata[tagKey]).toBeUndefined();
-      expect(registry.definition.filter).toBe("1 = 1");
     });
   });
 });
