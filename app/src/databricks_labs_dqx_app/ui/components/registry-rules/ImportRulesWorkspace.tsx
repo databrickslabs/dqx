@@ -242,13 +242,10 @@ function YamlImportCard({ onDone }: { onDone: () => void }) {
       if (result.reused > 0) {
         toast.success(t("rulesImport.reusedExisting", { count: result.reused }));
       }
-      if (result.reusedWithFilter > 0) {
-        // Rules-only import has no applied rule to attach the filter to.
+      if (result.droppedTagKeys.length > 0) {
         toast.message(
-          t("rulesImport.reusedFilterDeferred", {
-            count: result.reusedWithFilter,
-            defaultValue:
-              "{{count}} reused rule(s) had a population filter — set it on Apply Rules when you apply them.",
+          t("rulesImport.customTagsDeferred", {
+            tags: result.droppedTagKeys.map((k) => `\`${k}\``).join(", "),
           }),
         );
       }

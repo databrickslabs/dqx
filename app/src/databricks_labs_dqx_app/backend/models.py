@@ -601,14 +601,6 @@ class CreateRegistryRuleOut(BaseModel):
             "(the input was matched to, or created as, a generic rule with different slot names)."
         ),
     )
-    row_filter: str | None = Field(
-        default=None,
-        description=(
-            "Batch import only: imported filter that differs from the returned rule's default. "
-            "Apply it as the applied rule's ``row_filter`` so skip_duplicates reuse does not drop "
-            "a population filter that is not part of the fingerprint."
-        ),
-    )
 
 
 # Upper bound on a single batch import. The endpoint runs a SYNCHRONOUS
@@ -750,6 +742,13 @@ class RecordPendingApplicationIn(BaseModel):
         ge=0,
         le=100,
         description="Per-rule minimum % of rows that must pass, carried to the application on approval.",
+    )
+    tags: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Custom tags from the import, carried to the applied rule on approval. "
+            "Registry rules keep only reserved metadata keys; these belong on the application."
+        ),
     )
 
 

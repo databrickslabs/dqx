@@ -92,17 +92,35 @@ def _cas_confirm_row(rule, *, approver: str) -> list[str]:
 
 
 class TestCreateRule:
-    def test_create_rule_strips_custom_tags(self, svc):
-        # Custom tags belong on applied rules; the registry keeps reserved keys only.
+    def test_create_rule_keeps_custom_tags(self, svc):
+        # Interactive create/update keep tags; batch import strips them instead.
         rule, _ = svc.create_rule(
             mode="dqx_native",
             definition=_native_definition(),
             user_email="alice@x",
             user_metadata={"name": "Amount present", "businessTerm": "GGR", "owner_team": "risk"},
         )
-        assert rule.user_metadata == {"name": "Amount present"}
-        assert "businessTerm" not in rule.user_metadata
-        assert "owner_team" not in rule.user_metadata
+        assert rule.user_metadata["businessTerm"] == "GGR"
+        assert rule.user_metadata["owner_team"] == "risk"
+
+    def test_update_draft_keeps_custom_tags(self, svc, sql):
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        draft = RegistryRule(
+            rule_id="r1",
+            mode="dqx_native",
+            status="draft",
+            version=0,
+            definition=_native_definition(),
+            user_metadata={"name": "Amount present"},
+        )
+        sql.query.return_value = [_row_for(draft)]
+        updated = svc.update_draft(
+            "r1",
+            user_email="alice@x",
+            user_metadata={"name": "Amount present", "businessTerm": "GGR"},
+        )
+        assert updated.user_metadata["businessTerm"] == "GGR"
 
     def test_creates_draft_rule_with_fingerprint(self, svc, sql):
         rule, warning = svc.create_rule(

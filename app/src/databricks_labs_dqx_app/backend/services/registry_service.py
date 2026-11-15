@@ -38,7 +38,6 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RuleMode,
     RuleStatus,
     RuleVersion,
-    generic_rule_metadata,
     get_rule_dimension,
     get_rule_severity,
 )
@@ -323,7 +322,9 @@ class RegistryService:
         by_fingerprint: dict[str, list[str]] = {}
         for rule in self.list_rules():
             fingerprint = compute_registry_rule_fingerprint(rule)
-            by_fingerprint.setdefault(fingerprint, []).append(rule.rule_id)
+            # Collision warnings cover active rules only (draft / pending / approved).
+            if rule.status in ("draft", "pending_approval", "approved"):
+                by_fingerprint.setdefault(fingerprint, []).append(rule.rule_id)
             if fingerprint == rule.fingerprint:
                 continue
             self._sql.execute(
@@ -337,7 +338,7 @@ class RegistryService:
             if len(rule_ids) < 2:
                 continue
             logger.warning(
-                "Fingerprint %s is shared by %d registry rule(s): %s",
+                "Fingerprint %s is shared by %d active registry rule(s): %s",
                 fingerprint,
                 len(rule_ids),
                 ", ".join(rule_ids),
@@ -661,8 +662,7 @@ class RegistryService:
             polarity=polarity,
             author_kind=author_kind,
             definition=definition,
-            # Custom tags belong on applied rules; keep only reserved keys here.
-            user_metadata=generic_rule_metadata(user_metadata),
+            user_metadata=dict(user_metadata or {}),
             owner=resolved_owner,
             owner_display_name=owner_display_name,
             is_builtin=False,
@@ -805,7 +805,7 @@ class RegistryService:
         elif clear_polarity:
             rule.polarity = None
         if user_metadata is not None:
-            rule.user_metadata = generic_rule_metadata(user_metadata)
+            rule.user_metadata = dict(user_metadata)
         if owner is not None:
             rule.owner = owner
             # Owner changed without an explicit display name → resolve it at

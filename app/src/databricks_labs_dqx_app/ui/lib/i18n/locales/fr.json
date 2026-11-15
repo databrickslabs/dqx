@@ -915,7 +915,8 @@
       "ruleCreateFailedNamed": "{{name}}: {{error}}",
       "ruleCreateFailedDetail": "{{error}}",
       "applyFailed": "Échec de l'application d'une règle à {{fqn}}",
-      "executeFailed": "L'import n'a pas pu aboutir."
+      "executeFailed": "L'import n'a pas pu aboutir.",
+      "conflictingApplication": "Filtre ou tags en conflit pour « {{name}} » sur {{fqn}} — une application par table et règle."
     },
     "results": {
       "title": "Résultats de l'import",
@@ -1019,7 +1020,8 @@
     "downloadExample": "Télécharger l'exemple",
     "functionsNotLoaded": "Les fonctions de règles sont encore en cours de chargement. Réessayez dans un instant.",
     "unnamedRule": "Règle sans nom",
-    "missingRequiredFields": "{{name}} : champs obligatoires manquants : {{fields}}"
+    "missingRequiredFields": "{{name}} : champs obligatoires manquants : {{fields}}",
+    "customTagsDeferred": "Tags personnalisés non enregistrés : {{tags}}. Ajoutez-les lors de l'application de la règle à une table."
   },
   "similarRules": {
     "title_one": "{{count}} règle importée correspond à une règle existante",

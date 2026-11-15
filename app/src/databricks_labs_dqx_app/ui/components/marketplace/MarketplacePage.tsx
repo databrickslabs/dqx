@@ -169,6 +169,13 @@ function MarketplaceContent() {
           t("marketplace.importDone", { saved: result.saved, reused: result.reused }),
         );
       }
+      if (result.droppedTagKeys.length > 0) {
+        toast.message(
+          t("rulesImport.customTagsDeferred", {
+            tags: result.droppedTagKeys.map((k) => `\`${k}\``).join(", "),
+          }),
+        );
+      }
       setSelected(new Set());
       // Refetch so the just-added rules flip to `imported` (disabled) without a
       // manual page reload.

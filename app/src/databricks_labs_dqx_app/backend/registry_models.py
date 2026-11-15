@@ -161,8 +161,8 @@ class RuleDefinition(BaseModel):
             "applied to. Applied rules may override it with ``row_filter``; an empty "
             "applied filter inherits this default. Supports {{slot}} placeholders "
             "substituted at materialize time. Validated for SQL safety on create/update. "
-            "Not part of the rule fingerprint — two rules that differ only by filter "
-            "are the same check."
+            "Part of the rule fingerprint — two rules that differ only by filter "
+            "are different checks."
         ),
     )
 
@@ -983,9 +983,8 @@ def generic_rule_metadata(user_metadata: dict[str, Any] | None) -> dict[str, Any
     Custom tags (business terms, ownership, contract provenance, …) describe
     how a rule is used on one table, so they belong on the applied rule
     (``dq_applied_rules.user_metadata`` / apply ``tags``), not on the reusable
-    registry rule. Callers that persist a registry rule must pass the result of
-    this helper — see :meth:`RegistryService.create_rule` /
-    :meth:`RegistryService.update_draft`.
+    registry rule. Batch import strips to this view before create; the rule
+    editor's create/update paths keep tags so the Tags field still works.
     """
     return {k: v for k, v in (user_metadata or {}).items() if k in RESERVED_RULE_METADATA_KEYS}
 
