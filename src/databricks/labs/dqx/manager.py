@@ -12,6 +12,7 @@ from databricks.labs.dqx.check_funcs import DATASET_AGGREGATE_ATTRIBUTE, Dataset
 from databricks.labs.dqx.executor import DQCheckResult, DQRuleExecutorFactory
 from databricks.labs.dqx.rule import (
     DQDatasetRule,
+    DQRowRule,
     DQRule,
 )
 from databricks.labs.dqx.schema.dq_result_schema import dq_result_item_schema
@@ -109,6 +110,15 @@ class DQRuleManager:
         """
         invalid_cols = []
 
+        array_path = self.check.array_path if isinstance(self.check, DQRowRule) else None
+        if array_path is not None:
+            # An array path is not a Spark expression, so it is followed through the schema instead. This also
+            # rejects a left-out [*], which Spark would otherwise accept on an array of structs.
+            input_df = self.df if self.input_df is None else self.input_df
+            if not array_path.matches_schema(input_df.schema, self._is_case_sensitive):
+                invalid_cols.append(array_path.path)
+            return invalid_cols
+
         if self.check.column is not None and self._is_invalid_check_column(self.check.column):
             invalid_cols.append(self._display_column_name(self.check.column))
         elif self.check.columns is not None:  # either column or columns can be provided, but not both
@@ -117,6 +127,19 @@ class DQRuleManager:
                     invalid_cols.append(self._display_column_name(column))
 
         return invalid_cols
+
+    @cached_property
+    def _is_case_sensitive(self) -> bool:
+        """Returns True if Spark resolves column and field names case-sensitively.
+
+        Some compute (e.g. serverless) does not allow reading *spark.sql.caseSensitive*. It then falls back to
+        Spark's default, case-insensitive resolution, which is the only mode such compute supports.
+        """
+        try:
+            return str(self.spark.conf.get("spark.sql.caseSensitive", "false")).lower() == "true"
+        except AnalysisException as e:
+            logger.debug("Could not read 'spark.sql.caseSensitive'; using case-insensitive resolution", exc_info=e)
+            return False
 
     @staticmethod
     def _display_column_name(column: str | Column) -> str:

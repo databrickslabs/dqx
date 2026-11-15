@@ -2560,3 +2560,28 @@ def test_benchmark_is_in_distribution(benchmark, ws, generated_distribution_df):
     checked = dq_engine.apply_checks(generated_distribution_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize("column", ["event_date", "users[*].events[*].event_date"])
+@pytest.mark.benchmark(group="test_benchmark_array_path_is_valid_date")
+def test_benchmark_array_path_is_valid_date(benchmark, ws, generated_df, column):
+    """Compares a plain-column check with the same check on 250 array elements per row (25 users x 10 events)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    event_date = F.date_format("col5", "yyyy-MM-dd")
+    events = F.array_repeat(F.struct(event_date.alias("event_date")), 10)
+    nested_df = generated_df.select(
+        event_date.alias("event_date"),
+        F.array_repeat(F.struct(events.alias("events")), 25).alias("users"),
+    )
+    checks = [
+        DQRowRule(
+            criticality="warn",
+            check_func=check_funcs.is_valid_date,
+            column=column,
+            check_func_kwargs={"date_format": "yyyy-MM-dd"},
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(nested_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
