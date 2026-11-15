@@ -67,7 +67,7 @@ import {
   type RecordPendingApplicationIn,
 } from "@/lib/api-custom";
 import { normalizeImportedCheck, parseChecksForImport } from "@/lib/import-registry-rules";
-import { applicationTagsFrom } from "@/lib/application-tags";
+import { applicationTagsFrom, tagSignature } from "@/lib/application-tags";
 import { resolveCriticality, severityValueCriticality } from "@/lib/registry-rule-conversion";
 import { orderSeverityValuesForDisplay, RESERVED_SEVERITY_KEY } from "@/components/RegistryRuleBadges";
 import { buildGenericSlotMapping } from "@/lib/slot-mapping";
@@ -421,8 +421,10 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
             rule: CreateRegistryRuleOut["rule"];
             reused: boolean;
             slotRenames: Record<string, string>;
+            /** Rule default filter (part of identity); applied row_filter inherits it. */
             rowFilter: string | null;
             tags: Record<string, string>;
+            inputName: string | null;
           }[];
           try {
             // skip_duplicates keeps re-imports idempotent: a structurally
@@ -442,20 +444,30 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
             const reused = resp.data.reused ?? [];
             const tagsFor = (inputIndex: number | null | undefined) =>
               applicationTagsFrom(ruleChunk[inputIndex ?? -1]?.user_metadata);
+            const nameFor = (inputIndex: number | null | undefined) => {
+              const raw = ruleChunk[inputIndex ?? -1]?.user_metadata?.["name"];
+              return typeof raw === "string" && raw ? raw : null;
+            };
+            const filterOf = (rule: CreateRegistryRuleOut["rule"]) => {
+              const f = rule.definition?.filter;
+              return typeof f === "string" && f.trim() ? f.trim() : null;
+            };
             processed = [
               ...created.map((cr) => ({
                 rule: cr.rule,
                 reused: false,
                 slotRenames: cr.slot_renames ?? {},
-                rowFilter: cr.row_filter ?? null,
+                rowFilter: filterOf(cr.rule),
                 tags: tagsFor(cr.input_index),
+                inputName: nameFor(cr.input_index),
               })),
               ...reused.map((cr) => ({
                 rule: cr.rule,
                 reused: true,
                 slotRenames: cr.slot_renames ?? {},
-                rowFilter: cr.row_filter ?? null,
+                rowFilter: filterOf(cr.rule),
                 tags: tagsFor(cr.input_index),
+                inputName: nameFor(cr.input_index),
               })),
             ];
             const failed = resp.data.failed ?? [];
@@ -513,10 +525,25 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
               continue;
             }
 
-            // Include the filter so two imports of the same rule with different
-            // population filters on one table stay as separate applications.
-            const targetKey = `${bindingId}\u0000${rule.rule_id}\u0000${entryRule.rowFilter ?? ""}`;
+            // One application per (table, rule) — pending storage and
+            // dq_applied_rules share that natural key. Conflicting filter or
+            // tags on a second row fail rather than silently overwriting.
+            const targetKey = `${bindingId}\u0000${rule.rule_id}`;
             let target = targets.get(targetKey);
+            if (
+              target &&
+              (target.rowFilter !== entryRule.rowFilter ||
+                tagSignature(target.tags) !== tagSignature(entryRule.tags))
+            ) {
+              outcome.failed += 1;
+              outcome.errors.push(
+                t("rulesBulkImport.errors.conflictingApplication", {
+                  name: entryRule.inputName ?? rule.rule_id,
+                  fqn: entry.tableFqn,
+                }),
+              );
+              continue;
+            }
             if (!target) {
               target = {
                 bindingId: bindingId as string,
@@ -555,7 +582,10 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
             binding_id: target.bindingId,
             rule_id: target.ruleId,
             column_mapping: target.groups,
-            row_filter: target.rowFilter,
+            // Filter lives on the registry rule (fingerprint identity); leave
+            // applied row_filter empty so materialize inherits the default.
+            row_filter: null,
+            ...(Object.keys(target.tags).length > 0 ? { tags: target.tags } : {}),
           });
           for (const o of affectedOutcomes) o.pending += 1;
           continue;
@@ -564,7 +594,7 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
           await applyRuleToTable(target.bindingId, {
             rule_id: target.ruleId,
             column_mapping: target.groups,
-            row_filter: target.rowFilter,
+            row_filter: null,
             // Custom tags stay off the registry rule; attach them here.
             ...(Object.keys(target.tags).length > 0 ? { tags: target.tags } : {}),
           });

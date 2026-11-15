@@ -6,6 +6,7 @@ import {
   type RuleDefinition,
 } from "@/lib/api";
 import { batchImportRegistryRulesWithDedup } from "@/lib/api-custom";
+import { applicationTagsFrom } from "@/lib/application-tags";
 import { RESERVED_NAME_KEY, RESERVED_SEVERITY_KEY } from "@/components/RegistryRuleBadges";
 import {
   parseDqxCheckJson,
@@ -43,11 +44,10 @@ export interface ImportRegistryRulesResult {
   /** Rules matched to an existing active rule by fingerprint — reused, not created. */
   reused: number;
   /**
-   * Reused rules whose import carried a population filter that differs from the
-   * reused rule's default. Rules-only import (YAML / Marketplace) has nowhere to
-   * store that filter — set it on the applied rule when you apply later.
+   * Custom tag keys from the import that were stripped from registry rules
+   * (they belong on the applied rule). Empty when none were present.
    */
-  reusedWithFilter: number;
+  droppedTagKeys: string[];
   submitted: number;
   submitFailed: number;
   failed: number;
@@ -349,7 +349,7 @@ export async function importChecksAsRegistryDrafts({
     return {
       saved: 0,
       reused: 0,
-      reusedWithFilter: 0,
+      droppedTagKeys: [],
       submitted: 0,
       submitFailed: 0,
       failed: parseErrors.length,
@@ -386,13 +386,13 @@ export async function importChecksAsRegistryDrafts({
       : f.error;
   });
 
-  const reused = data.reused ?? [];
+  const droppedTagKeys = [
+    ...new Set(rulesWithOwner.flatMap((r) => Object.keys(applicationTagsFrom(r.user_metadata)))),
+  ].sort();
   return {
     saved: data.saved ?? 0,
-    reused: reused.length,
-    // Backend returns the differing filter so table-import paths can apply it;
-    // rules-only callers surface this so the filter is not silently dropped.
-    reusedWithFilter: reused.filter((r) => Boolean(r.row_filter?.trim())).length,
+    reused: (data.reused ?? []).length,
+    droppedTagKeys,
     submitted: data.submitted ?? 0,
     submitFailed: data.submit_failed ?? 0,
     failed: parseErrors.length + failedList.length,

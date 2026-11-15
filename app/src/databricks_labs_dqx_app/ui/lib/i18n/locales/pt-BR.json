@@ -920,7 +920,8 @@
       "ruleCreateFailedNamed": "{{name}}: {{error}}",
       "ruleCreateFailedDetail": "{{error}}",
       "applyFailed": "Falha ao aplicar uma regra em {{fqn}}",
-      "executeFailed": "A importação não pôde ser concluída."
+      "executeFailed": "A importação não pôde ser concluída.",
+      "conflictingApplication": "Filtro ou tags em conflito para \"{{name}}\" em {{fqn}} — uma aplicação por tabela e regra."
     },
     "results": {
       "title": "Resultados da importação",
@@ -1024,7 +1025,8 @@
     "downloadExample": "Baixar exemplo",
     "functionsNotLoaded": "As funções de regra ainda estão carregando. Tente novamente em instantes.",
     "unnamedRule": "Regra sem nome",
-    "missingRequiredFields": "{{name}} está sem os campos obrigatórios: {{fields}}"
+    "missingRequiredFields": "{{name}} está sem os campos obrigatórios: {{fields}}",
+    "customTagsDeferred": "Tags personalizadas não salvas: {{tags}}. Adicione-as ao aplicar a regra a uma tabela."
   },
   "similarRules": {
     "title_one": "{{count}} regra importada corresponde a uma regra existente",

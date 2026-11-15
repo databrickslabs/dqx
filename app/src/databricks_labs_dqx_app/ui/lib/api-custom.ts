@@ -1329,6 +1329,8 @@ export interface RecordPendingApplicationIn {
   column_mapping: Array<Record<string, string>>;
   /** Imported filter applied when the pending rule is approved. */
   row_filter?: string | null;
+  /** Custom tags carried to the applied rule on approval. */
+  tags?: Record<string, string>;
 }
 
 export interface BatchRecordPendingApplicationsIn {
