@@ -172,9 +172,7 @@ class TestFilterInFingerprint:
                 filter="amount > 0",
             )
         )
-        assert compute_registry_rule_fingerprint(rule_no_filter) != compute_registry_rule_fingerprint(
-            rule_with_filter
-        )
+        assert compute_registry_rule_fingerprint(rule_no_filter) != compute_registry_rule_fingerprint(rule_with_filter)
 
     def test_different_filters_different_fingerprints(self):
         rule_a = _native_rule(
