@@ -812,8 +812,8 @@ class TestBatchImport:
 
     def test_reuse_rule_ids_skip_unknown_or_inactive(self):
         svc = MagicMock()
-        svc.get_rule.side_effect = lambda rule_id: None if rule_id == "missing" else _rule(
-            "rejected", status="rejected", version=1
+        svc.get_rule.side_effect = lambda rule_id: (
+            None if rule_id == "missing" else _rule("rejected", status="rejected", version=1)
         )
         svc.create_rule.return_value = (_rule("created"), None)
         body = BatchImportRegistryRulesIn(
