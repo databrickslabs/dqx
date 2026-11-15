@@ -2005,6 +2005,15 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
                             "logicalTypeOptions": {"pattern": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"},
                         },
                         {
+                            "name": "billing",
+                            "physicalType": "BINARY",
+                            "logicalType": "object",
+                            "required": True,
+                            "properties": [
+                                {"name": "note", "physicalType": "STRING", "logicalType": "string"},
+                            ],
+                        },
+                        {
                             "name": "address",
                             "physicalType": "BINARY",
                             "logicalType": "object",
@@ -2035,6 +2044,20 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
         """Helper to verify nested field rule generation."""
         rules = generator.generate_rules_from_contract(
             contract_file=contract_file, generate_predefined_rules=True, process_text_rules=False
+        )
+
+        null_columns = [
+            rule["check"]["arguments"]["column"] for rule in rules if rule["check"]["function"] == "is_not_null"
+        ]
+        assert sorted(null_columns) == sorted(
+            [
+                "customer",
+                "customer.billing",
+                "customer.name",
+                "customer.email",
+                "customer.address.street",
+                "customer.address.city",
+            ]
         )
 
         # Verify nested column paths are generated correctly

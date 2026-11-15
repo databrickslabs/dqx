@@ -123,6 +123,45 @@ MULTI_SCHEMA_ODCS = {
 }
 
 
+@pytest.mark.parametrize("column_name", ["customer", "customer.info"])
+def test_required_object_rule_applies_on_spark(ws, spark, column_name):
+    """A missing required struct fails even when all child fields are optional."""
+    contract = {
+        "kind": "DataContract",
+        "apiVersion": "v3.0.2",
+        "id": "test:required-object",
+        "name": "Required object",
+        "version": "1.0.0",
+        "status": "active",
+        "schema": [
+            {
+                "name": "customers",
+                "physicalType": "table",
+                "properties": [
+                    {
+                        "name": column_name,
+                        "physicalType": "STRUCT<note: STRING>",
+                        "logicalType": "object",
+                        "required": True,
+                        "properties": [{"name": "note", "physicalType": "STRING", "logicalType": "string"}],
+                    }
+                ],
+            }
+        ],
+    }
+    rules = _generate_rules_from_temp_contract(
+        ws, spark, contract, process_text_rules=False, generate_schema_validation=False
+    )
+    test_df = spark.createDataFrame(
+        [("missing", None), ("present", (None,))],
+        f"case: string, `{column_name}`: struct<note: string>",
+    )
+
+    checked_df = DQEngine(ws, spark).apply_checks_by_metadata(test_df, rules)
+    flagged = {row["case"]: _flagged_names(row) for row in checked_df.select("case", "_errors").collect()}
+    assert flagged == {"missing": {f"{column_name}_is_null"}, "present": set()}
+
+
 class TestDataContractIntegration:
     """Integration tests for data contract processing."""
 

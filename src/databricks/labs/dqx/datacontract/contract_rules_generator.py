@@ -39,7 +39,12 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidPhysicalTypeError, ODCSContractError, ParameterError
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.package_utils import missing_required_packages
-from databricks.labs.dqx.utils import normalize_column_expr, sanitize_for_logging
+from databricks.labs.dqx.utils import (
+    VALID_UNQUOTED_IDENTIFIER_PATTERN,
+    normalize_column_expr,
+    quote_column_name,
+    sanitize_for_logging,
+)
 
 # DQLLMEngine is referenced only as a type annotation. Eagerly importing it
 # requires installation of [llm] extras which may not be installed or wanted
@@ -681,7 +686,7 @@ class DataContractRulesGenerator(DQEngineBase):
         schema_name: str,
         contract_metadata: dict,
         default_criticality: str,
-        parent_path: str = "",
+        parent_path: tuple[str, ...] = (),
         recursion_depth: int = 0,
     ) -> list[dict]:
         """Generate predefined DQ rules from an ODCS v3.x property."""
@@ -700,28 +705,37 @@ class DataContractRulesGenerator(DQEngineBase):
             )
             return []
 
-        column_path = f"{parent_path}.{prop.name}" if parent_path else prop.name
+        property_path = (*parent_path, prop.name)
+        column_path = ".".join(property_path)
         field_metadata = {**contract_metadata, "field": column_path}
 
         rules = []
+        child_properties = prop.properties if prop.logicalType == "object" else None
+        if prop.required:
+            column = column_path
+            if child_properties:
+                # Keep literal dots in property names distinct from struct path separators.
+                column = ".".join(
+                    name if VALID_UNQUOTED_IDENTIFIER_PATTERN.fullmatch(name) else quote_column_name(name)
+                    for name in property_path
+                )
+            rules.extend(self._generate_not_null_rules_from_property(column, field_metadata, default_criticality))
 
-        # Handle nested properties (objects)
-        if prop.logicalType == "object" and prop.properties:
-            for nested_prop in prop.properties:
+        if child_properties:
+            for nested_prop in child_properties:
                 nested_rules = self._generate_predefined_rules_for_property(
                     nested_prop,
                     schema_name,
                     contract_metadata,
                     default_criticality,
-                    column_path,
+                    property_path,
                     recursion_depth + 1,
                 )
                 rules.extend(nested_rules)
             return rules
 
-        rules.extend(
-            self._generate_rules_from_direct_attributes(prop, column_path, field_metadata, default_criticality)
-        )
+        if prop.unique:
+            rules.extend(self._generate_unique_rules_from_property(column_path, field_metadata, default_criticality))
 
         if prop.logicalTypeOptions:
             rules.extend(
@@ -730,17 +744,6 @@ class DataContractRulesGenerator(DQEngineBase):
                 )
             )
 
-        return rules
-
-    def _generate_rules_from_direct_attributes(
-        self, prop: SchemaProperty, column_path: str, field_metadata: dict, default_criticality: str
-    ) -> list[dict]:
-        """Generate rules from direct property attributes (required, unique)."""
-        rules = []
-        if prop.required:
-            rules.extend(self._generate_not_null_rules_from_property(column_path, field_metadata, default_criticality))
-        if prop.unique:
-            rules.extend(self._generate_unique_rules_from_property(column_path, field_metadata, default_criticality))
         return rules
 
     def _generate_rules_from_logical_type_options(
@@ -780,17 +783,15 @@ class DataContractRulesGenerator(DQEngineBase):
 
         return rules
 
-    def _generate_not_null_rules_from_property(
-        self, column_path: str, contract_metadata: dict, criticality: str
-    ) -> list[dict]:
+    def _generate_not_null_rules_from_property(self, column: str, field_metadata: dict, criticality: str) -> list[dict]:
         """Generate not_null rules from required property constraint."""
         return [
             {
-                "check": {"function": "is_not_null", "arguments": {"column": column_path}},
-                "name": f"{column_path}_is_null",
+                "check": {"function": "is_not_null", "arguments": {"column": column}},
+                "name": f"{field_metadata['field']}_is_null",
                 "criticality": criticality,
                 "user_metadata": {
-                    **contract_metadata,
+                    **field_metadata,
                     "dimension": "completeness",
                     "rule_type": "predefined",
                 },
