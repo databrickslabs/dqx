@@ -166,3 +166,82 @@ describe("ScheduleGrantWarning missing grants", () => {
     },
   );
 });
+
+describe("ScheduleGrantWarning for a rule's joined tables", () => {
+  function renderReference(value: ScheduleGrantPreflight): string {
+    return renderToStaticMarkup(
+      <I18nextProvider i18n={testI18n}>
+        <ScheduleGrantWarning entity="reference" preflight={value} />
+      </I18nextProvider>,
+    );
+  }
+
+  test("a missing SELECT for the task runner is offered as a one-click grant", () => {
+    const markup = renderReference(preflight());
+
+    expect(markup).toContain(escapeHtml(en.schedule.grantWarning.referenceMissingTitle));
+    expect(markup).toContain(escapeHtml(STATEMENT));
+    expect(markup).toContain(RUN_LABEL);
+  });
+
+  test("a table the caller can't grant names who can, in the rule's terms", () => {
+    const markup = renderReference(
+      preflight({
+        blockedTables: [{ fqn: "c.s.t", can_manage: false, manage_holders: [{ principal: "data-eng", type: "group" }] }],
+        missingGrantTables: [],
+        hasGrantIssue: true,
+      }),
+    );
+
+    expect(markup).toContain(escapeHtml(en.schedule.grantWarning.referenceBlockedTitle));
+    expect(markup).toContain(escapeHtml(en.schedule.grantWarning.holdersLabelForTable.replace("{{fqn}}", "c.s.t")));
+    expect(markup).toContain("data-eng");
+    expect(markup).not.toContain(escapeHtml(en.schedule.grantWarning.title));
+  });
+
+  test.each(["warehouse", "permissions", "configuration"] as const)(
+    "unchecked access (%s) is a yellow advisory notice that never mentions schedules",
+    (reason) => {
+      const markup = renderReference(
+        preflight({
+          missingGrantTables: [],
+          unverifiedTables: [
+            { fqn: "c.s.t", can_manage: false, manage_holders: [], access_unverified: true, unverified_reason: reason },
+          ],
+          hasGrantIssue: true,
+        }),
+      );
+      const key = {
+        warehouse: "referenceUnverifiedWarehouse",
+        permissions: "referenceUnverifiedPermissions",
+        configuration: "referenceUnverifiedConfiguration",
+      }[reason] as "referenceUnverifiedWarehouse";
+
+      expect(markup).toContain(escapeHtml(en.schedule.grantWarning.referenceUnverifiedTitle));
+      expect(markup).toContain(escapeHtml(en.schedule.grantWarning[key]));
+      expect(markup).toContain("c.s.t");
+      expect(markup).toContain("bg-amber-500/10");
+      expect(markup.toLowerCase()).not.toContain("schedule");
+    },
+  );
+
+  test.each([
+    ["fr", fr],
+    ["es", es],
+    ["it", it],
+    ["pt-BR", ptBR],
+  ] as const)("the joined-table copy is translated in %s", (_code, locale) => {
+    for (const key of [
+      "referenceMissingTitle",
+      "referenceMissingDescription",
+      "referenceBlockedTitle",
+      "referenceBlockedDescription",
+      "referenceUnverifiedTitle",
+      "referenceUnverifiedWarehouse",
+      "referenceUnverifiedPermissions",
+      "referenceUnverifiedConfiguration",
+    ] as const) {
+      expect(locale.schedule.grantWarning[key]).not.toBe(en.schedule.grantWarning[key]);
+    }
+  });
+});

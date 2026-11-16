@@ -48,6 +48,7 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from typing import Literal
 
 from databricks.sdk import WorkspaceClient
@@ -56,6 +57,7 @@ from databricks.sdk.service.catalog import CatalogType
 from databricks.sdk.service.iam import ServicePrincipal
 from databricks.sdk.service.sql import StatementResponse, StatementState
 
+from databricks_labs_dqx_app.backend.rule_test_sql import find_table_refs
 from databricks_labs_dqx_app.backend.setup.grant_application import run_grant_statements
 from databricks_labs_dqx_app.backend.setup.models import GrantErrorCode
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
@@ -234,10 +236,42 @@ def _is_real_three_part_fqn(fqn: str) -> bool:
     return len(fqn.split(".")) == 3
 
 
+def reference_table_fqns(table_fqns: list[str], sql_query: str | None, source_fqn: str | None) -> list[str]:
+    """Return the tables a rule reads besides its own source table, de-duplicated.
+
+    *table_fqns* are the join targets the low-code builder named. *sql_query* is a raw SQL
+    rule's text, whose FROM / JOIN tables are extracted here, so the client never decides
+    what gets checked. Only valid three-part names are kept: the ``{{input_view}}`` marker
+    and CTE names are never dotted, and a two-part name resolves against the warehouse's
+    current catalog, which this check can't know. Matching is case-insensitive.
+    """
+    candidates = [*table_fqns, *(find_table_refs(sql_query) if sql_query else [])]
+    source = (source_fqn or "").strip().casefold()
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in candidates:
+        fqn = raw.strip()
+        key = fqn.casefold()
+        if key in seen or key == source or not _is_real_three_part_fqn(fqn):
+            continue
+        try:
+            validate_fqn(fqn)
+        except ValueError:
+            continue
+        seen.add(key)
+        out.append(fqn)
+    return out
+
+
 # The built-in sample catalog: readable by everyone, and it rejects every permission
 # statement (SAMPLE_TABLE_PERMISSIONS), so scheduling one never needs a grant. Only the
 # system catalog counts; an ordinary catalog that happens to be named "samples" doesn't.
 _SAMPLES_CATALOG = "samples"
+
+# Privileges that cover everything on a securable. OWN and OWNERSHIP are the names SHOW GRANTS
+# reports for ownership (the SDK's Privilege enum has no such member), so they stay.
+_ALL_OR_OWNERSHIP_PRIVILEGES = frozenset({"ALL_PRIVILEGES", "OWN", "OWNERSHIP"})
+_READ_PRIVILEGES = frozenset({"SELECT"}) | _ALL_OR_OWNERSHIP_PRIVILEGES
 
 
 # A service principal appears in UC grants as its application id: a bare UUID.
@@ -492,8 +526,14 @@ class ScheduleGrantService:
                 "The SQL warehouse didn't answer while inspecting schedule privileges.", reason="warehouse"
             ) from None
 
-    def _parent_privileges(self, kind: str, name: str, principal: str) -> set[str]:
-        """Inspect effective usage via app REST, falling back to caller SQL."""
+    def _effective_privileges(self, kind: str, name: str, principal: str, satisfying: frozenset[str]) -> set[str]:
+        """Inspect a principal's effective privileges on a securable (*kind* is CATALOG, SCHEMA or TABLE).
+
+        Reads via the app's REST grants API, falling back to the caller's SQL. *satisfying* names the
+        privileges the caller needs. Direct grants that include one of them are returned as they are;
+        otherwise group-granted privileges are merged in, so a SELECT granted to a group isn't lost
+        behind a direct USE SCHEMA.
+        """
         privileges: set[str] = set()
         page_token: str | None = None
         seen: set[str] = set()
@@ -518,7 +558,7 @@ class ScheduleGrantService:
                 for row in rows
                 if row["principal"].strip().casefold() == principal.casefold()
             }
-            if direct.intersection({"USE_CATALOG", "USE_SCHEMA", "ALL_PRIVILEGES", "OWN", "OWNERSHIP"}):
+            if direct & satisfying:
                 return direct
             principals = self._scheduler_principals(principal)
             # A principal-filtered SHOW may omit grants to its groups. Inspect
@@ -590,7 +630,7 @@ class ScheduleGrantService:
         return self._scheduler_principals_cache[principal]
 
     def _parent_owner(self, kind: str, name: str, principal: str) -> bool:
-        """Check ownership of the exact parent, without impersonating the runner."""
+        """Check ownership of the exact securable (TABLE, SCHEMA or CATALOG), without impersonating the runner."""
         inspected = False
         owners: set[str] = set()
         for ws in (self._sp_ws, self._obo):
@@ -612,9 +652,12 @@ class ScheduleGrantService:
         key = (ws, kind, name)
         if key not in self._parent_owner_cache:
             try:
-                self._parent_owner_cache[key] = (
-                    ws.catalogs.get(name).owner if kind == "CATALOG" else ws.schemas.get(name).owner
-                )
+                if kind == "CATALOG":
+                    self._parent_owner_cache[key] = ws.catalogs.get(name).owner
+                elif kind == "SCHEMA":
+                    self._parent_owner_cache[key] = ws.schemas.get(name).owner
+                else:
+                    self._parent_owner_cache[key] = ws.tables.get(name).owner
             except Exception:
                 # A failed metadata lookup must not look like an ownerless parent.
                 self._parent_owner_cache[key] = PrivilegeInspectionError("Could not inspect source-parent ownership.")
@@ -633,7 +676,9 @@ class ScheduleGrantService:
             return cached
         try:
             try:
-                privileges = self._parent_privileges(kind, name, principal)
+                privileges = self._effective_privileges(
+                    kind, name, principal, frozenset({required}) | _ALL_OR_OWNERSHIP_PRIVILEGES
+                )
             except PrivilegeInspectionError:
                 # Positive ownership still proves usage when grant inspection fails.
                 if not self._parent_owner(kind, name, principal):
@@ -642,7 +687,7 @@ class ScheduleGrantService:
             else:
                 allowed = (
                     required in privileges
-                    or bool(privileges.intersection({"ALL_PRIVILEGES", "OWN", "OWNERSHIP"}))
+                    or bool(privileges.intersection(_ALL_OR_OWNERSHIP_PRIVILEGES))
                     or self._parent_owner(kind, name, principal)
                 )
         except PrivilegeInspectionError as error:
@@ -651,24 +696,29 @@ class ScheduleGrantService:
         self._parent_usage_cache[key] = allowed
         return allowed
 
-    def _require_source_parents(self, fqn: str) -> bool:
-        """Require parent usage for both identities; record precise admin remediation."""
+    def _scheduler_identities(self) -> tuple[str, str]:
+        """Return the (app SP, task-runner SP) application ids, validated for use in SQL.
+
+        Raises :class:`PrivilegeInspectionError` (``configuration``) when either is unknown.
+        """
         app_id = self.app_sp_id()
-        runner_id = self.task_runner_sp_id()
-        if not app_id or not runner_id:
+        if not app_id:
             raise PrivilegeInspectionError(
-                "Could not resolve both scheduler service principal identities.", reason="configuration"
+                "Could not resolve the app service principal identity.", reason="configuration"
             )
         try:
             validate_identifier(app_id)
-            validate_identifier(runner_id)
         except ValueError:
             raise PrivilegeInspectionError(
-                "The scheduler service principal identities are invalid.", reason="configuration"
+                "The app service principal identity is invalid.", reason="configuration"
             ) from None
+        return app_id, self._task_runner_principal()
+
+    def _missing_usage_grants(self, fqn: str, principals: tuple[str, ...]) -> list[dict[str, str]]:
+        """List the USE CATALOG / USE SCHEMA grants *principals* lack on the parents of *fqn*."""
         catalog, schema, _table = fqn.split(".", 2)
         missing: list[dict[str, str]] = []
-        for principal in dict.fromkeys((app_id, runner_id)):
+        for principal in dict.fromkeys(principals):
             for kind, name, required in (
                 ("CATALOG", catalog, "USE_CATALOG"),
                 ("SCHEMA", f"{catalog}.{schema}", "USE_SCHEMA"),
@@ -682,11 +732,15 @@ class ScheduleGrantService:
                         "privilege": required,
                         "securable_type": kind,
                         "securable": name,
-                        "remediation": (
-                            f"GRANT {required} ON {kind} {quote_fqn(name)} " f"TO {quote_ident(principal)};"
-                        ),
+                        "remediation": (f"GRANT {required} ON {kind} {quote_fqn(name)} TO {quote_ident(principal)};"),
                     }
                 )
+        return missing
+
+    def _require_source_parents(self, fqn: str) -> bool:
+        """Require parent usage for both identities; record precise admin remediation."""
+        app_id, runner_id = self._scheduler_identities()
+        missing = self._missing_usage_grants(fqn, (app_id, runner_id))
         self._parent_blocks[fqn] = missing
         return not missing
 
@@ -944,6 +998,104 @@ class ScheduleGrantService:
     # Grant
     # ------------------------------------------------------------------
 
+    def _task_runner_principal(self) -> str:
+        """Return the task-runner SP application id, or raise when Studio's setup can't name it."""
+        runner_id = self.task_runner_sp_id()
+        if not runner_id:
+            raise PrivilegeInspectionError(
+                "Could not resolve the task-runner service principal identity.", reason="configuration"
+            )
+        try:
+            validate_identifier(runner_id)
+        except ValueError:
+            raise PrivilegeInspectionError(
+                "The task-runner service principal identity is invalid.", reason="configuration"
+            ) from None
+        return runner_id
+
+    def _principal_can_select(self, fqn: str, principal: str) -> bool:
+        """Return whether *principal* can read *fqn*: SELECT or a broader privilege, or owning it.
+
+        Inspected, not probed: only the signed-in caller's and the app SP's access can be
+        tested directly, so the runner's grants are read from the grants API. SELECT granted
+        on the schema or catalog is inherited by the table; the parents are also read because
+        the SQL fallback for the table lists only grants made directly on it. Ownership of the
+        table or a parent counts too, as it does for usage.
+        """
+        catalog, schema, _table = fqn.split(".", 2)
+        securables = (("TABLE", fqn), ("SCHEMA", f"{catalog}.{schema}"), ("CATALOG", catalog))
+        if any(
+            self._effective_privileges(kind, name, principal, _READ_PRIVILEGES).intersection(_READ_PRIVILEGES)
+            for kind, name in securables
+        ):
+            return True
+        return any(self._parent_owner(kind, name, principal) for kind, name in securables)
+
+    def _reference_check(self, fqn: str) -> TablePreflight:
+        """Check one joined table for the task-runner SP; raises when it can't be verified."""
+        runner_id = self._task_runner_principal()
+        missing = self._missing_usage_grants(fqn, (runner_id,))
+        select_granted = self._principal_can_select(fqn, runner_id)
+        if not missing and select_granted:
+            return TablePreflight(fqn=fqn, can_manage=True, manage_holders=[])
+        can_grant = self.user_can_manage(fqn)
+        if not select_granted and can_grant:
+            missing.append(
+                {
+                    "principal": runner_id,
+                    "type": "service_principal",
+                    "privilege": "SELECT",
+                    "securable_type": "TABLE",
+                    "securable": fqn,
+                    "remediation": f"GRANT SELECT ON TABLE {quote_fqn(fqn)} TO {quote_ident(runner_id)};",
+                }
+            )
+        # Holders are named whenever the caller can't grant a missing SELECT, even alongside
+        # missing usage grants, so the author sees both before running anything.
+        holders = [] if can_grant or select_granted else self.manage_holders(fqn)
+        missing = [{**g, "display_name": self.service_principal_name(g["principal"])} for g in missing]
+        holders = [
+            {
+                **h,
+                "display_name": (
+                    self.service_principal_name(h["principal"]) if h["type"] == "service_principal" else h["principal"]
+                ),
+            }
+            for h in holders
+        ]
+        return TablePreflight(fqn=fqn, can_manage=can_grant, manage_holders=holders, missing_grants=missing)
+
+    def reference_preflight(self, fqns: list[str]) -> list[TablePreflight]:
+        """Check that the task-runner SP can read each table a rule joins or reads.
+
+        A rule's joined tables are read by the task-runner job as its service principal,
+        not the signed-in user, so each needs SELECT for the runner plus USE CATALOG and
+        USE SCHEMA on its parents. Missing grants are returned as statements the caller
+        can run. A missing SELECT the caller can't grant blocks the rule and names who can.
+        Built-in samples need nothing. A table whose access can't be read is reported as
+        unverified rather than failing the other tables.
+        """
+        out: list[TablePreflight] = []
+        for fqn in dict.fromkeys(f for f in fqns if f):
+            if not _is_real_three_part_fqn(fqn) or self._is_builtin_sample_table(fqn):
+                out.append(TablePreflight(fqn=fqn, can_manage=True, manage_holders=[]))
+                continue
+            try:
+                out.append(self._reference_check(fqn))
+            except WarehouseUnavailableError as e:
+                out.append(self._unverified_reference(fqn, inspection_failure_reason(e)))
+            except (StatementFailedError, PermissionDenied, NotFound):
+                # The table's grants couldn't be read (for example a name that doesn't
+                # exist yet while the author is still typing): report it, don't fail the rest.
+                out.append(self._unverified_reference(fqn, "permissions"))
+        return out
+
+    @staticmethod
+    def _unverified_reference(fqn: str, reason: InspectionFailureReason) -> TablePreflight:
+        return TablePreflight(
+            fqn=fqn, can_manage=False, manage_holders=[], access_unverified=True, unverified_reason=reason
+        )
+
     def _run_sql(self, ws: WorkspaceClient, statement: str) -> StatementResponse:
         """Run *statement* on the app warehouse as *ws*; raise with UC's message on failure."""
         resp = ws.statement_execution.execute_statement(
@@ -1067,7 +1219,24 @@ class ScheduleGrantService:
             WarehouseUnavailableError: If nothing could run because the SQL warehouse didn't
                 answer the check before the grants.
         """
-        before = self.preflight(fqns)
+        return self._apply_grants(fqns, executor, self.preflight)
+
+    def apply_reference_grants(self, fqns: list[str], executor: SqlExecutor) -> ScheduleGrantApplication:
+        """Run the grants :meth:`reference_preflight` lists for *fqns*, as the signed-in user.
+
+        Same contract as :meth:`apply_missing_grants`: statements are re-derived server-side
+        and run through the caller's own *executor*, so Unity Catalog decides what is allowed.
+        """
+        return self._apply_grants(fqns, executor, self.reference_preflight)
+
+    def _apply_grants(
+        self,
+        fqns: list[str],
+        executor: SqlExecutor,
+        check: Callable[[list[str]], list[TablePreflight]],
+    ) -> ScheduleGrantApplication:
+        """Run the grants *check* lists for *fqns*, then re-check. See :meth:`apply_missing_grants`."""
+        before = check(fqns)
         table_of: dict[str, str] = {}
         for table in before:
             for grant in table.missing_grants:
@@ -1085,7 +1254,7 @@ class ScheduleGrantService:
         # This service memoized the access it saw before the grants ran.
         self.clear_caches()
         try:
-            after = self.preflight(fqns)
+            after = check(fqns)
         except Exception as e:
             # The grants already ran; report them rather than failing the request.
             logger.warning(f"Re-checking schedule grants failed ({type(e).__name__})")
@@ -1104,6 +1273,14 @@ class ScheduleGrantService:
     async def apply_missing_grants_async(self, fqns: list[str], executor: SqlExecutor) -> ScheduleGrantApplication:
         """Async wrapper for :meth:`apply_missing_grants`."""
         return await asyncio.to_thread(self.apply_missing_grants, fqns, executor)
+
+    async def reference_preflight_async(self, fqns: list[str]) -> list[TablePreflight]:
+        """Async wrapper for :meth:`reference_preflight`."""
+        return await asyncio.to_thread(self.reference_preflight, fqns)
+
+    async def apply_reference_grants_async(self, fqns: list[str], executor: SqlExecutor) -> ScheduleGrantApplication:
+        """Async wrapper for :meth:`apply_reference_grants`."""
+        return await asyncio.to_thread(self.apply_reference_grants, fqns, executor)
 
     async def can_schedule_async(self, fqn: str) -> bool:
         return await asyncio.to_thread(self.can_schedule, fqn)
