@@ -542,6 +542,7 @@ class WorkflowDeployment(InstallationMixin):
             "databricks_sdk",
             "databricks_labs_lsql",
             "sqlalchemy",
+            "certifi",
         ]
 
     @staticmethod

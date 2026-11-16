@@ -64,6 +64,7 @@ from .services.rule_test_service import RuleTestService
 from .services.table_data_service import TableDataService
 from .services.review_status_service import ReviewStatusService
 from .services.schedule_config_service import ScheduleConfigService
+from .services.scheduler_wake import SCHEDULER_WAKE_MARKER_PATH, SchedulerWakeMarker
 from .services.tag_mapping_service import ColumnInfo
 from .services.tag_reconcile_service import TagReconcileService
 from .services.tag_suggestion_service import TagSuggestionService
@@ -106,6 +107,15 @@ _OBO_TTL = 45 * 60  # 45 minutes
 _CATALOG_TTL = 30  # seconds — see get_user_catalog_names for the revocation trade-off
 _SETUP_ACCESS_TTL = 10  # seconds — matches the setup-required polling interval
 _WORKSPACE_ADMINS_GROUP = "admins"  # workspace administrators may always run setup
+
+
+def get_scheduler_wake_marker() -> SchedulerWakeMarker:
+    """The cross-process signal that wakes the scheduler from its idle sleep.
+
+    Signalling costs one file append — no SQL, no network — so run-start
+    routes and page-load list endpoints can call it on every request.
+    """
+    return SchedulerWakeMarker(SCHEDULER_WAKE_MARKER_PATH)
 
 
 # ---------------------------------------------------------------------------

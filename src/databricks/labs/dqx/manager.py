@@ -241,29 +241,34 @@ class DQRuleManager:
 
         message_col = self._build_message_col(condition, skipped=skipped)
 
-        return F.struct(
-            F.lit(self.check.name).alias("name"),
-            message_col.alias("message"),
-            self.check.columns_as_string_expr.alias("columns"),
-            F.lit(self.check.filter or None).cast("string").alias("filter"),
-            F.lit(self.check.check_func.__name__).alias("function"),
-            run_time_expr.alias("run_time"),
-            F.lit(self.run_id).alias("run_id"),
+        values = {
+            "name": F.lit(self.check.name),
+            "message": message_col,
+            "columns": self.check.columns_as_string_expr,
+            "filter": F.lit(self.check.filter or None),
+            "function": F.lit(self.check.check_func.__name__),
+            "run_time": run_time_expr,
+            "run_id": F.lit(self.run_id),
             # Cast keys and values to string so a mixed-type user_metadata (e.g. {"k": 2}) still
             # produces a MAP<STRING, STRING> matching dq_result_item_schema. Without the cast,
             # create_map infers a single value type (e.g. BIGINT) and fails to cast string values
             # (CAST_INVALID_INPUT) when the dict mixes strings and numbers.
-            F.create_map(
+            "user_metadata": F.create_map(
                 *[
                     item
                     for key, value in self.user_metadata.items()
                     for item in (F.lit(key).cast("string"), F.lit(value).cast("string"))
                 ]
-            ).alias("user_metadata"),
-            F.lit(self.rule_fingerprint).alias("rule_fingerprint"),
-            F.lit(self.rule_set_fingerprint).alias("rule_set_fingerprint"),
-            F.lit(skipped or None).alias("skipped"),
-        ).cast(dq_result_item_schema)
+            ),
+            "rule_fingerprint": F.lit(self.rule_fingerprint),
+            "rule_set_fingerprint": F.lit(self.rule_set_fingerprint),
+            "skipped": F.lit(skipped or None),
+        }
+
+        # Cast each field to its target type instead of casting the whole struct to dq_result_item_schema:
+        # Photon does not support struct-to-struct casts that change field types or nullability, so the
+        # outer cast forced the projection building the result columns to fall back to the JVM.
+        return F.struct(*[values[field.name].cast(field.dataType).alias(field.name) for field in dq_result_item_schema])
 
     def _build_message_col(self, condition: Column, skipped: bool = False) -> Column:
         """

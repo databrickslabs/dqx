@@ -85,6 +85,7 @@ def test_apply_checks_with_mixed_type_user_metadata(ws, spark):
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
+    assert checked.schema["_errors"].dataType == dq_result_schema
     # Materializing the result must not raise; the numeric value is stored as its string form.
     row = checked.collect()[0]
     metadata = row["_errors"][0]["user_metadata"]
@@ -6880,6 +6881,56 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="col3",
             check_func_kwargs={"limit": "col2 + 10"},
             user_metadata={"tag1": "value3", "tag2": "023"},
+        ),
+        # is_greater_than check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_greater_than,
+            column="col2",
+            check_func_kwargs={"limit": 0},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_greater_than,
+            column="col5",
+            check_func_kwargs={"limit": datetime(2025, 1, 1).date()},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_greater_than,
+            column="col6",
+            check_func_kwargs={"limit": datetime(2025, 1, 1, 1, 0, 0)},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_greater_than,
+            column="col3",
+            check_func_kwargs={"limit": "col2 - 10"},
+        ),
+        # is_less_than check
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_less_than,
+            column="col2",
+            check_func_kwargs={"limit": 10},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_less_than,
+            column="col5",
+            check_func_kwargs={"limit": datetime(2025, 3, 1).date()},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_less_than,
+            column="col6",
+            check_func_kwargs={"limit": datetime(2025, 3, 24, 1, 0, 0)},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_less_than,
+            column="col3",
+            check_func_kwargs={"limit": "col2 + 10"},
         ),
         # has_num_decimal_places check
         DQRowRule(

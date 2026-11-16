@@ -33,7 +33,9 @@ class SubprocessCommandRunner:
         """Run one command and optionally fail on a non-zero exit status."""
         completed = subprocess.run(command, cwd=cwd, check=False, capture_output=True, text=True)
         if check and completed.returncode != 0:
-            raise RuntimeError(f"command failed: {command[0]} {command[1]}")
+            output = "\n".join(text.strip() for text in (completed.stderr, completed.stdout) if text.strip())
+            message = f"command failed: {command[0]} {command[1]}"
+            raise RuntimeError(f"{message}\n{output}" if output else message)
         return CommandResult(returncode=completed.returncode, stdout=completed.stdout)
 
 

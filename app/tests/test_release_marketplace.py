@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 
@@ -203,6 +204,30 @@ def test_release_does_not_delete_concurrently_created_tag(tmp_path: Path) -> Non
 
     assert commands.existing_branch is False
     assert commands.existing_tag is True
+
+
+def test_subprocess_runner_failure_includes_command_output(tmp_path: Path) -> None:
+    command = (
+        sys.executable,
+        "-c",
+        "import sys; print('resolving'); sys.stderr.write('lock file does not match pyproject'); sys.exit(1)",
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        release_marketplace_module.SubprocessCommandRunner().run(command, cwd=tmp_path)
+
+    message = str(error.value)
+    assert message.startswith(f"command failed: {sys.executable} -c")
+    assert "lock file does not match pyproject" in message
+    assert "resolving" in message
+
+
+def test_subprocess_runner_returns_stdout_on_success(tmp_path: Path) -> None:
+    result = release_marketplace_module.SubprocessCommandRunner().run(
+        (sys.executable, "-c", "print('ok')"), cwd=tmp_path
+    )
+
+    assert result == CommandResult(returncode=0, stdout="ok\n")
 
 
 def test_release_refuses_existing_local_branch(tmp_path: Path) -> None:

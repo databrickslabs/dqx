@@ -815,10 +815,13 @@ class LibraryMetricRulesBuilder:
             metric metadata. The contract generator supplies its own rule assembly here, so library
             rules get the same provenance, owner, row filter and *customProperties* handling as
             explicit rules.
+        is_handled: Whether a quality entry is a library entry to build rules from. The contract
+            generator supplies its own decision here, so one place decides how every entry is handled.
     """
 
-    def __init__(self, rule_factory: LibraryRuleFactory):
+    def __init__(self, rule_factory: LibraryRuleFactory, is_handled: Callable[[DataQuality], bool]):
         self._rule_factory = rule_factory
+        self._is_handled = is_handled
 
     def build_for_schema(
         self, schema_obj: SchemaObject, schema_name: str, taken_names: set[str] | None = None
@@ -841,7 +844,7 @@ class LibraryMetricRulesBuilder:
         return _with_unique_names(rules, set() if taken_names is None else taken_names)
 
     def _build_safely(self, entry: DataQuality, target: MetricTarget) -> list[dict]:
-        if not is_library_entry(entry):
+        if not self._is_handled(entry):
             return []
         try:
             return self._build(entry, target)

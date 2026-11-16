@@ -12,6 +12,7 @@ dependencies = [
     "starlette",
     "uvicorn>=0.34.2",
     "databricks-sdk>=0.60.0",
+    "certifi>=2026.10.19",
 ]
 
 [project.scripts]

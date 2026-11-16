@@ -35,6 +35,8 @@ EXPECTED_PARAMETER_ORDER = {
     "is_not_equal_to": ("column", "value", "abs_tolerance", "rel_tolerance", "allow_nulls"),
     "is_not_less_than": ("column", "limit", "allow_nulls"),
     "is_not_greater_than": ("column", "limit", "allow_nulls"),
+    "is_greater_than": ("column", "limit", "allow_nulls"),
+    "is_less_than": ("column", "limit", "allow_nulls"),
     "is_in_range": ("column", "min_limit", "max_limit", "allow_nulls"),
     "is_not_in_range": ("column", "min_limit", "max_limit", "allow_nulls"),
     "has_num_decimal_places": ("column", "limit", "allow_nulls"),

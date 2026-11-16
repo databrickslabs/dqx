@@ -275,15 +275,16 @@ class DQGenerator(DQEngineBase):
             contract: Pre-loaded DataContract object from datacontract-cli. Can be created with:
                 - DataContract(data_contract_file=path) - from a file path
                 - DataContract(data_contract_str=yaml_string) - from a YAML/JSON string
+                - DataContract(data_contract=odcs_model) - from a parsed ODCS model
                 Either `contract` or `contract_file` must be provided.
             contract_file: Path to contract YAML file (local, volume, or workspace).
             contract_format: Contract format specification (default is "odcs").
             generate_predefined_rules: Whether to generate rules from schema properties.
-            process_text_rules: Whether to process text-based expectations using LLM.
+            process_text_rules: Whether to process text-based expectations using LLM. When False, text entries are skipped and one info line is logged.
             generate_schema_validation: Whether to generate dataset-level has_valid_schema rules (default True).
             strict_schema_validation: Passed as strict to has_valid_schema (default True = exact match; False = permissive).
             default_criticality: Default criticality for generated rules as "warn" or "error" (default is "error").
-            process_library_rules: Whether to generate rules from ODCS library quality metric entries (default True).
+            process_library_rules: Whether to generate rules from ODCS library quality metric entries (default True). When False, library entries are skipped and one info line is logged.
 
         Returns:
             A list of dictionaries representing the generated DQX quality rules.
