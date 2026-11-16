@@ -172,6 +172,16 @@ _DROP_CONSTRAINT_RE = re.compile(
 _ADD_CONSTRAINT_RE = re.compile(
     r"ALTER TABLE \{schema\}\.([a-z_][a-z0-9_]*) ADD CONSTRAINT ([a-z_][a-z0-9_]*) CHECK \(.+\)"
 )
+# Brand-new feature tables (with their indexes and idempotent seed rows) arrive
+# in a later migration; they are not part of the v1 baseline.
+_CREATE_TABLE_STMT_RE = re.compile(r"CREATE TABLE IF NOT EXISTS \{schema\}\.[a-z_][a-z0-9_]* \(.+\)")
+_CREATE_INDEX_STMT_RE = re.compile(r"CREATE (UNIQUE )?INDEX IF NOT EXISTS [a-z_][a-z0-9_]* ON \{schema\}\..+")
+_INDEX_ON_TABLE_RE = re.compile(
+    r"CREATE (?:UNIQUE )?INDEX IF NOT EXISTS [a-z_][a-z0-9_]* ON \{schema\}\.([a-z_][a-z0-9_]*)\b.*"
+)
+_SEED_INSERT_STMT_RE = re.compile(
+    r"INSERT INTO \{schema\}\.[a-z_][a-z0-9_]* \(.+\) VALUES .+ ON CONFLICT .+ DO NOTHING"
+)
 
 
 def _dropped_tables(sql: str) -> set[str]:
@@ -203,15 +213,19 @@ class TestBaselineCatalogue:
     upgrade deployments that already applied v1. Each column they add must
     already be in the baseline, and each table they drop must not be, so a
     fresh install and an upgraded one end up with the same shape. Constraint
-    replacements are allowed when the CHECK they add is already in v1. A table
-    can be retired into a baseline table by copying its rows across and
-    dropping it (see :func:`_is_retiring_copy`).
+    replacements are allowed when the CHECK they add is already in v1. A later
+    migration may also introduce a brand-new feature table (CREATE TABLE /
+    CREATE INDEX IF NOT EXISTS plus idempotent seed INSERTs); such tables are
+    not in the baseline and are described only by the migration that adds them.
+    A table the baseline does create is only ever re-created exactly as the
+    baseline creates it. A table can be retired into a baseline table by copying
+    its rows across and dropping it (see :func:`_is_retiring_copy`).
     """
 
     def test_baseline_is_version_one(self):
         assert PG_MIGRATIONS[0].version == 1
 
-    def test_later_migrations_only_add_columns_drop_tables_or_replace_checks(self):
+    def test_later_migrations_only_make_additive_changes(self):
         baseline = _statements(_baseline())
         for m in PG_MIGRATIONS[1:]:
             for stmt in _statements(" ".join(m.sql.split())):
@@ -222,17 +236,24 @@ class TestBaselineCatalogue:
                     or _ADD_CONSTRAINT_RE.fullmatch(stmt)
                     or stmt in baseline
                     or _is_retiring_copy(stmt, " ".join(m.sql.split()), baseline)
-                ), f"v{m.version}: not an ADD COLUMN, DROP TABLE, CHECK constraint rewrite or baseline statement: {stmt[:120]}"
+                    or _CREATE_TABLE_STMT_RE.fullmatch(stmt)
+                    or _CREATE_INDEX_STMT_RE.fullmatch(stmt)
+                    or _SEED_INSERT_STMT_RE.fullmatch(stmt)
+                ), f"v{m.version}: not a recognised additive migration statement: {stmt[:120]}"
 
-    def test_a_table_added_later_is_created_exactly_as_the_baseline_creates_it(self):
-        # A later migration may create a table only by repeating the
-        # baseline's own CREATE TABLE / CREATE INDEX statements, so the
-        # baseline stays the single description of the schema.
+    def test_a_baseline_table_created_later_is_created_exactly_as_the_baseline_creates_it(self):
+        # A later migration that (re-)creates a table the baseline also
+        # creates must repeat the baseline's own CREATE TABLE statement, so the
+        # baseline stays the single description of that table. Brand-new
+        # feature tables (and their indexes) and retired tables aren't in the baseline.
         baseline = _statements(_baseline())
+        baseline_tables = set(_created_tables(_baseline()))
         for m in PG_MIGRATIONS[1:]:
             sql = " ".join(m.sql.split())
             for stmt in _statements(sql):
-                if stmt.startswith(("CREATE TABLE", "CREATE INDEX")) and not _is_retiring_copy(stmt, sql, baseline):
+                index = _INDEX_ON_TABLE_RE.fullmatch(stmt)
+                touched = set(_created_tables(stmt)) | ({index.group(1)} if index else set())
+                if touched & baseline_tables:
                     assert stmt in baseline, f"v{m.version}: {stmt[:120]} is not in the baseline"
 
     def test_a_retired_table_is_copied_into_a_baseline_table_before_it_is_dropped(self):
@@ -286,7 +307,13 @@ class TestBaselineCatalogue:
     def test_oltp_table_set_is_derived_from_postgres_baseline(self):
         # The view is not a table and must stay out of OLTP_TABLE_NAMES
         # (it is never cleared by the reset sweep nor version-tracked).
-        assert set(_created_tables(_baseline())) == set(OLTP_TABLE_NAMES)
+        # A table a later migration creates only to retire it (copy, then
+        # drop) isn't part of the schema either.
+        later_sql = [" ".join(m.sql.split()) for m in PG_MIGRATIONS[1:]]
+        later = {name for sql in later_sql for name in _created_tables(sql)}
+        dropped = {name for sql in later_sql for name in _dropped_tables(sql)}
+        assert set(_created_tables(_baseline())) | (later - dropped) == set(OLTP_TABLE_NAMES)
+        assert {"dq_saved_views", "dq_saved_view_user_state", "dq_saved_view_defaults"} <= set(later)
         assert "dq_rules_core" not in OLTP_TABLE_NAMES
 
 

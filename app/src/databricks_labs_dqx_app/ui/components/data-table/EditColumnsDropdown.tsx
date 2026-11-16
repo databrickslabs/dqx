@@ -13,6 +13,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Columns3, GripVertical } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SavedViewsDialogs, SavedViewsEntry, SavedViewsPanel, type SavedViewsDialogRequest } from "./SavedViewsPanel";
+import type { SavedViewsMenuConfig } from "./useSavedViews";
 
 interface SortableItemProps<K extends string> {
   id: K;
@@ -74,8 +76,8 @@ function SortableItem<K extends string>({ id, label, checked, onCheckedChange, d
 
 /**
  * A drag-reorderable, toggleable list of keys — one view of the Edit View
- * menu. The column view is fed by `useColumnLayout`; the filter view by
- * `useFilterLayout` (adapt it with `filterLayoutMenuConfig`).
+ * menu. The column view is fed by `useColumnLayout` or `useSavedViews`; the filter
+ * view by `useSavedViews().filterLayout` (adapt it with `filterLayoutMenuConfig`).
  */
 export interface SortableToggleListConfig<K extends string> {
   /** Current order, drag-reorderable — the same array driving the table / filter bar. */
@@ -128,80 +130,136 @@ function SortableToggleList<K extends string>({
   );
 }
 
-type EditMenuView = "columns" | "filters";
+type EditMenuView = "columns" | "filters" | "saved";
 
-/**
- * Props: the column list config (flat, as before), plus an optional
- * `filters` config. When `filters` is set the menu opens with a
- * Columns | Filters switch; the Filters view toggles and reorders the page's
- * filter pills (search, facets, group by). Pages own the filter layout with
- * `useFilterLayout` (persisted per page, `onHide` resets a hidden filter's
- * value) and render `layout.visibleKeys` in order:
- *
- * ```tsx
- * const filterLayout = useFilterLayout({ storageKey, defaultOrder, filters: FILTERS, onHide: resetFilter });
- * <EditColumnsDropdown {...columnConfig} filters={filterLayoutMenuConfig(filterLayout, (k) => t(FILTERS[k].labelKey))} />
- * ```
- */
-export interface EditColumnsDropdownProps<K extends string, F extends string = string>
-  extends SortableToggleListConfig<K> {
-  filters?: SortableToggleListConfig<F>;
+/** No column list: the menu shows only the Filters list, with no tab bar (Global Results). */
+type NoColumns = { [P in keyof SortableToggleListConfig<string>]?: never };
+
+function hasColumns<K extends string>(
+  config: SortableToggleListConfig<K> | NoColumns,
+): config is SortableToggleListConfig<K> {
+  return config.order !== undefined;
 }
 
 /**
- * The "Edit View" trigger + dropdown shared by every overview table: toggle
- * and drag-reorder columns and, when `filters` is given, the filter pills.
+ * Props: the column list config (flat, as before) — optional when `filters`
+ * is given — plus an optional `filters` config and an optional `savedViews`
+ * config. With both lists the menu opens with a Columns | Filters switch; the
+ * Filters view toggles and reorders the page's filter pills (search, facets,
+ * group by). With `savedViews` (from `useSavedViews(...).menuConfig`) the menu
+ * starts with a "Saved Views ›" row that drills into the saved views page:
+ *
+ * ```tsx
+ * const views = useSavedViews(SavedViewPage.registry_rules, DEFS);
+ * const cols = views.columnLayout!;
+ * <EditColumnsDropdown
+ *   order={cols.colOrder} labelOf={...} toggleableOf={...} isChecked={(k) => cols.visibleKeys.includes(k)}
+ *   onToggle={cols.toggleColumn} onDragEnd={cols.handleDragEnd} sensors={cols.sensors}
+ *   filters={filterLayoutMenuConfig(views.filterLayout, (k) => t(FILTERS[k].labelKey))}
+ *   savedViews={views.menuConfig}
+ * />
+ * ```
+ */
+export type EditColumnsDropdownProps<K extends string, F extends string = string> = (
+  | SortableToggleListConfig<K>
+  | NoColumns
+) & {
+  filters?: SortableToggleListConfig<F>;
+  savedViews?: SavedViewsMenuConfig;
+};
+
+/**
+ * The "Edit View" trigger + dropdown shared by every overview table: saved
+ * views, plus toggling and drag-reordering columns and filter pills.
  * Ported from dqlake's `BindingsTable` dropdown so the lists behave identically.
  */
 export function EditColumnsDropdown<K extends string, F extends string = string>({
   filters,
-  ...columns
+  savedViews,
+  ...columnProps
 }: EditColumnsDropdownProps<K, F>) {
   const { t } = useTranslation();
-  const [view, setView] = useState<EditMenuView>("columns");
+  const columns = hasColumns<K>(columnProps) ? columnProps : null;
+  const homeView: EditMenuView = columns ? "columns" : "filters";
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState<EditMenuView>(homeView);
+  const [dialog, setDialog] = useState<SavedViewsDialogRequest | null>(null);
+
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next);
+    // Reset on open, not close: the closing menu keeps animating out and must
+    // not re-render the main page while it fades.
+    if (next) setView(homeView);
+  };
+
+  const openDialog = (request: SavedViewsDialogRequest) => {
+    handleOpenChange(false);
+    setDialog(request);
+  };
+
+  const listView = view === "saved" ? homeView : view;
+
   return (
-    <DropdownMenu onOpenChange={(open) => !open && setView("columns")}>
-      <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" className="h-8 shrink-0 text-xs ml-auto gap-1.5">
-          <Columns3 className="h-3.5 w-3.5" />
-          {t("common.editColumns")}
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-52" onCloseAutoFocus={(e) => e.preventDefault()}>
-        {filters && (
-          <div
-            role="radiogroup"
-            aria-label={t("common.editColumnsView")}
-            className="relative mb-1 grid grid-cols-2 rounded-md bg-muted p-0.5"
-          >
-            {/* Sliding thumb: one segment wide, moved a full width to the right for Filters. */}
-            <span
-              aria-hidden
-              className={cn(
-                "absolute inset-y-0.5 left-0.5 w-[calc(50%-2px)] rounded-[5px] bg-background shadow-sm",
-                "transition-transform duration-200 ease-out motion-reduce:transition-none",
-                view === "filters" && "translate-x-full",
+    <>
+      <DropdownMenu open={open} onOpenChange={handleOpenChange}>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" size="sm" className="h-8 shrink-0 text-xs ml-auto gap-1.5">
+            <Columns3 className="h-3.5 w-3.5" />
+            {t("common.editColumns")}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          className={cn("min-w-52", savedViews && "w-64")}
+          onCloseAutoFocus={(e) => e.preventDefault()}
+        >
+          {savedViews && view === "saved" ? (
+            <SavedViewsPanel config={savedViews} onBack={() => setView(homeView)} onRequest={openDialog} />
+          ) : (
+            <>
+              {savedViews && <SavedViewsEntry config={savedViews} onOpen={() => setView("saved")} />}
+              {columns && filters && (
+                <div
+                  role="radiogroup"
+                  aria-label={t("common.editColumnsView")}
+                  className="relative mb-1 grid grid-cols-2 rounded-md bg-muted p-0.5"
+                >
+                  {/* Sliding thumb: one segment wide, moved a full width to the right for Filters. */}
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "absolute inset-y-0.5 left-0.5 w-[calc(50%-2px)] rounded-[5px] bg-background shadow-sm",
+                      "transition-transform duration-200 ease-out motion-reduce:transition-none",
+                      listView === "filters" && "translate-x-full",
+                    )}
+                  />
+                  {(["columns", "filters"] as const).map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      role="radio"
+                      aria-checked={listView === option}
+                      onClick={() => setView(option)}
+                      className={cn(
+                        "relative h-7 rounded-[5px] px-2 text-xs font-medium transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-ring/50 motion-reduce:transition-none",
+                        listView === option ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {option === "columns" ? t("common.editColumnsColumns") : t("common.editColumnsFilters")}
+                    </button>
+                  ))}
+                </div>
               )}
-            />
-            {(["columns", "filters"] as const).map((option) => (
-              <button
-                key={option}
-                type="button"
-                role="radio"
-                aria-checked={view === option}
-                onClick={() => setView(option)}
-                className={cn(
-                  "relative h-7 rounded-[5px] px-2 text-xs font-medium transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-ring/50 motion-reduce:transition-none",
-                  view === option ? "text-foreground" : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {option === "columns" ? t("common.editColumnsColumns") : t("common.editColumnsFilters")}
-              </button>
-            ))}
-          </div>
-        )}
-        {filters && view === "filters" ? <SortableToggleList {...filters} /> : <SortableToggleList {...columns} />}
-      </DropdownMenuContent>
-    </DropdownMenu>
+              {filters && (listView === "filters" || !columns) ? (
+                <SortableToggleList {...filters} />
+              ) : (
+                columns && <SortableToggleList {...columns} />
+              )}
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {savedViews && <SavedViewsDialogs config={savedViews} request={dialog} onClose={() => setDialog(null)} />}
+    </>
   );
 }

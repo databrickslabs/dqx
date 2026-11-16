@@ -37,8 +37,12 @@ The ALTER is what upgrades an existing deployment: its ``dq_migrations``
 table already records v1 as applied, so an edited baseline alone is
 skipped and the new column never appears.  On a fresh install the ALTER
 is a no-op because v1 already created the column.  Keep later
-migrations additive (``ADD COLUMN IF NOT EXISTS`` only) so the baseline
-stays the single description of the schema.
+migrations additive so the baseline stays the single description of the
+schema that existed at v1: ``ADD COLUMN IF NOT EXISTS`` for baseline
+tables, plus brand-new feature tables (``CREATE TABLE IF NOT EXISTS``,
+their ``CREATE INDEX IF NOT EXISTS`` indexes and idempotent
+``INSERT ... ON CONFLICT DO NOTHING`` seed rows) that live only in the
+migration which introduces them.
 """
 
 import logging
@@ -105,7 +109,7 @@ _S = "{schema}"
 
 # dq_data_product_versions — a collection as approved at each version (name,
 # description, owner, members and their pins), so View changes can compare
-# versions. Shared by the baseline and v5, so an upgraded install gets exactly
+# versions. Shared by the baseline and v6, so an upgraded install gets exactly
 # the table a fresh install creates.
 _DATA_PRODUCT_VERSIONS_DDL = (
     f"CREATE TABLE IF NOT EXISTS {_S}.dq_data_product_versions ("
@@ -133,7 +137,7 @@ _DATA_PRODUCT_VERSIONS_DDL = (
 # so any step can be compared with the one before it. Frozen approved versions
 # stay in the per-kind ``*_versions`` tables.
 # ``is_automatic`` marks a step the app took on the actor's behalf (an
-# auto-approval). Shared by the baseline and v5.
+# auto-approval). Shared by the baseline and v6.
 _LIFECYCLE_HISTORY_DDL = (
     f"CREATE TABLE IF NOT EXISTS {_S}.dq_lifecycle_history ("
     "  history_id   BIGSERIAL PRIMARY KEY,"
@@ -156,7 +160,7 @@ _LIFECYCLE_HISTORY_DDL = (
     f"  ON {_S}.dq_lifecycle_history (object_type, object_id, changed_at DESC);"
 )
 
-# v5 moves the registry-rule trail from ``dq_rules_history`` into
+# v6 moves the registry-rule trail from ``dq_rules_history`` into
 # ``dq_lifecycle_history`` and drops it. Its action names are translated once
 # here: ``status:<new>`` becomes the step it was, and a ``status:approved`` that
 # left review is a rejection when it carries a note (a withdrawal never did).
@@ -894,6 +898,52 @@ PG_MIGRATIONS: list[PgMigration] = [
     ),
     PgMigration(
         version=5,
+        description="Saved views: named column/filter presets, stars and personal defaults",
+        sql=(
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_saved_views ("
+            "  id              TEXT PRIMARY KEY,"
+            "  page_key        TEXT NOT NULL,"
+            "  name            TEXT NOT NULL,"
+            "  scope           TEXT NOT NULL CHECK (scope IN ('org','user')),"
+            "  owner           TEXT,"
+            "  payload         JSONB,"
+            "  is_builtin      BOOLEAN NOT NULL DEFAULT FALSE,"
+            "  is_org_default  BOOLEAN NOT NULL DEFAULT FALSE,"
+            "  created_by      TEXT,"
+            "  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),"
+            "  updated_by      TEXT,"
+            "  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),"
+            "  CHECK ((scope = 'user') = (owner IS NOT NULL)),"
+            "  CHECK (NOT is_org_default OR scope = 'org')"
+            ");"
+            f"CREATE UNIQUE INDEX IF NOT EXISTS uq_dq_saved_views_name "
+            f"  ON {_S}.dq_saved_views (page_key, scope, COALESCE(owner, ''), lower(name));"
+            f"CREATE INDEX IF NOT EXISTS idx_dq_saved_views_page "
+            f"  ON {_S}.dq_saved_views (page_key);"
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_saved_view_user_state ("
+            "  user_email TEXT NOT NULL,"
+            f"  view_id    TEXT NOT NULL REFERENCES {_S}.dq_saved_views(id) ON DELETE CASCADE,"
+            "  starred    BOOLEAN NOT NULL,"
+            "  PRIMARY KEY (user_email, view_id)"
+            ");"
+            f"CREATE TABLE IF NOT EXISTS {_S}.dq_saved_view_defaults ("
+            "  user_email TEXT NOT NULL,"
+            "  page_key   TEXT NOT NULL,"
+            f"  view_id    TEXT NOT NULL REFERENCES {_S}.dq_saved_views(id) ON DELETE CASCADE,"
+            "  PRIMARY KEY (user_email, page_key)"
+            ");"
+            f"INSERT INTO {_S}.dq_saved_views "
+            "(id, page_key, name, scope, owner, payload, is_builtin, is_org_default, created_by, updated_by) VALUES "
+            "('builtin:monitored_tables','monitored_tables','Default','org',NULL,NULL,TRUE,FALSE,'system','system'),"
+            "('builtin:registry_rules','registry_rules','Default','org',NULL,NULL,TRUE,FALSE,'system','system'),"
+            "('builtin:collections','collections','Default','org',NULL,NULL,TRUE,FALSE,'system','system'),"
+            "('builtin:schedules','schedules','Default','org',NULL,NULL,TRUE,FALSE,'system','system'),"
+            "('builtin:global_results','global_results','Default','org',NULL,NULL,TRUE,FALSE,'system','system') "
+            "ON CONFLICT (id) DO NOTHING;"
+        ),
+    ),
+    PgMigration(
+        version=6,
         description="Collection versions and one lifecycle history for rules, tables and collections",
         sql=_DATA_PRODUCT_VERSIONS_DDL + _LIFECYCLE_HISTORY_DDL + _RULES_HISTORY_TO_LIFECYCLE_HISTORY,
     ),

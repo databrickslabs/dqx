@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type * as React from "react";
 import { keepPreviousData } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -33,6 +33,7 @@ import {
   EXPORT_ROW_LIMIT,
   toFailingRecords,
 } from "@/components/results/failedRecordsExport";
+import { perTableBreachMarkers } from "@/components/results/breachMarkers";
 import { toCountSeries } from "@/components/results/countSeries";
 import { RunModeSelect, includeDraftsParam } from "@/components/results/RunModeSelect";
 import { RunReviewStatusPanel } from "@/components/RunReviewStatusPanel";
@@ -49,6 +50,18 @@ import {
   type MultiFilters,
 } from "@/components/monitored-tables/BindingResultsTab";
 import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { FilterToolbar } from "@/components/data-table/FilterToolbar";
+import { DQ_SCORE_BUCKETS, FILTER_TRIGGER_CLASS } from "@/components/data-table/filter-bar";
+import type { ViewValue, ViewValues } from "@/components/data-table/saved-views";
+import {
+  collectionTableFqns,
+  filtersFromViewValues,
+  topFilterParams,
+  viewValueChanges,
+  type GlobalResultsFilterKey,
+  type GlobalResultsFilterOptionValues,
+} from "@/components/results/global-results-view";
 
 // The multi-table results composition, extracted from the reviewed
 // `components/data-products/ProductResultsTab.tsx` (itself a 1:1 port of
@@ -120,6 +133,9 @@ export function breakdownParams(
 ): EntityResultsParams {
   return {
     ...facetQueryParams(filters),
+    // Global Results' table-universe filters (Collection / Owner / DQ score);
+    // always empty — so omitted — on the other surfaces.
+    ...topFilterParams(filters),
     axes: "breakdown",
     include_drafts: includeDraftsParam(includeDrafts),
     // The chosen run-batch (a run_id from the batch-keyed picker) caps
@@ -263,6 +279,175 @@ export function nextTableSelection(
   };
 }
 
+/** Distinct non-empty options, sorted by display label (first label wins). */
+export function dedupeSortOptions(opts: FacetFilterOption[]): FacetFilterOption[] {
+  const byValue = new Map<string, FacetFilterOption>();
+  for (const o of opts) {
+    if (o.value && !byValue.has(o.value)) byValue.set(o.value, o);
+  }
+  return [...byValue.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
+export interface TopFilterOptionLists {
+  catalog: FacetFilterOption[];
+  schema: FacetFilterOption[];
+  table: FacetFilterOption[];
+  rule: FacetFilterOption[];
+  dimension: FacetFilterOption[];
+  severity: FacetFilterOption[];
+}
+
+/**
+ * Option lists of the top-level Global Results filter bubbles (item 35),
+ * derived from the BASE (unfiltered) breakdown rows so the choice universe is
+ * the full facet set regardless of the active filter. Tables carry the FQN as
+ * value but display the friendly (last-segment) name; rules key on their
+ * registry rule identity (rule_id when present) and display the label.
+ *
+ * The catalog → schema → table cascade: schema options narrow to the selected
+ * catalog(s); table options narrow to the selected catalog(s) AND schema(s)
+ * AND — when *collectionFqns* is non-null — to the selected collections'
+ * member tables.
+ */
+export function topFilterOptionLists(
+  base: EntityResultsOut | undefined,
+  filters: Pick<MultiFilters, "catalog" | "schema">,
+  collectionFqns: ReadonlySet<string> | null = null,
+): TopFilterOptionLists {
+  const allTableFqns = (base?.by_table ?? [])
+    .map((g) => g.label)
+    .filter((l): l is string => l != null);
+  const selectedCatalogs = new Set(filters.catalog);
+  const selectedSchemas = new Set(filters.schema);
+  const inCatalogs = (fqn: string) => selectedCatalogs.size === 0 || selectedCatalogs.has(catalogOfFqn(fqn));
+  const labelOptions = (groups: EntityResultsOut["by_dimension"]) =>
+    dedupeSortOptions(
+      (groups ?? [])
+        .map((g) => g.label)
+        .filter((l): l is string => l != null)
+        .map((l) => ({ value: l, label: l })),
+    );
+  return {
+    catalog: dedupeSortOptions(allTableFqns.map((fqn) => ({ value: catalogOfFqn(fqn), label: catalogOfFqn(fqn) }))),
+    schema: dedupeSortOptions(
+      allTableFqns
+        .filter(inCatalogs)
+        .map((fqn) => ({ value: schemaOfFqn(fqn), label: friendlySchemaName(schemaOfFqn(fqn)) })),
+    ),
+    table: dedupeSortOptions(
+      allTableFqns
+        .filter(inCatalogs)
+        .filter((fqn) => selectedSchemas.size === 0 || selectedSchemas.has(schemaOfFqn(fqn)))
+        .filter((fqn) => collectionFqns === null || collectionFqns.has(fqn))
+        .map((fqn) => ({ value: fqn, label: friendlyTableName(fqn) })),
+    ),
+    rule: dedupeSortOptions(
+      (base?.by_rule ?? [])
+        .map((g) => {
+          const value = ruleFacetValue(g);
+          if (value == null) return null;
+          return { value, label: g.label ?? value };
+        })
+        .filter((o): o is FacetFilterOption => o != null),
+    ),
+    dimension: labelOptions(base?.by_dimension),
+    severity: labelOptions(base?.by_severity),
+  };
+}
+
+/**
+ * The catalog → schema → collection → table cascade over *filters*: drops schema
+ * picks outside the picked catalogs, and table picks outside the picked catalogs,
+ * schemas or — when *collectionMembers* is known — collections. An empty level
+ * doesn't narrow. Returns *filters* itself when nothing is dropped.
+ */
+export function pruneDependentFilters(
+  filters: MultiFilters,
+  collectionMembers: ReadonlyMap<string, readonly string[]> | null,
+): MultiFilters {
+  const catalogs = new Set(filters.catalog);
+  const inCatalogs = (id: string) => catalogs.size === 0 || catalogs.has(catalogOfFqn(id));
+  const schema = filters.schema.filter(inCatalogs);
+  const schemas = new Set(schema);
+  const members = collectionMembers ? collectionTableFqns(collectionMembers, filters.collection) : null;
+  const table = filters.table.filter(
+    (fqn) =>
+      inCatalogs(fqn) &&
+      (schemas.size === 0 || schemas.has(schemaOfFqn(fqn))) &&
+      (members === null || members.has(fqn)),
+  );
+  if (schema.length === filters.schema.length && table.length === filters.table.length) return filters;
+  return { ...filters, schema, table };
+}
+
+/**
+ * A saved view's *reconcileValues* for Global Results: applies
+ * {@link pruneDependentFilters} so a loaded view never keeps a table (or schema)
+ * its own catalog / schema / collection picks exclude. Pass null for
+ * *collectionMembers* while collections are loading.
+ */
+export function globalResultsValuesReconciler(
+  collectionMembers: ReadonlyMap<string, readonly string[]> | null,
+): (values: ViewValues) => ViewValues {
+  return (values) => {
+    const filters = filtersFromViewValues(values);
+    const changes = viewValueChanges(filters, pruneDependentFilters(filters, collectionMembers));
+    return changes.length === 0 ? values : { ...values, ...Object.fromEntries(changes) };
+  };
+}
+
+/**
+ * Option values the Global Results saved view sanitises against (every filter
+ * whose options come from the base breakdown rows), or null per list while the
+ * base rows are still loading.
+ */
+export function baseFilterOptionValues(
+  base: EntityResultsOut | undefined,
+): Pick<GlobalResultsFilterOptionValues, keyof TopFilterOptionLists> {
+  if (!base) return { catalog: null, schema: null, table: null, rule: null, dimension: null, severity: null };
+  const lists = topFilterOptionLists(base, { catalog: [], schema: [] });
+  const values = (opts: FacetFilterOption[]) => opts.map((o) => o.value);
+  return {
+    catalog: values(lists.catalog),
+    schema: values(lists.schema),
+    table: values(lists.table),
+    rule: values(lists.rule),
+    dimension: values(lists.dimension),
+    severity: values(lists.severity),
+  };
+}
+
+/** Bubbles shown when the caller passes no layout (the shipped defaults). */
+const DEFAULT_TOP_FILTERS: readonly GlobalResultsFilterKey[] = ["catalog", "schema", "dqScore", "table", "rule", "outcome"];
+
+/** Static i18n keys per multi-select bubble (so the extractor sees them). */
+const TOP_FILTER_COPY: Record<
+  Exclude<GlobalResultsFilterKey, "dqScore">,
+  { all: string; search: string; none: string }
+> = {
+  catalog: { all: "resultsUi.filterAllCatalogs", search: "resultsUi.filterSearchCatalogs", none: "resultsUi.filterNoCatalogs" },
+  schema: { all: "resultsUi.filterAllSchemas", search: "resultsUi.filterSearchSchemas", none: "resultsUi.filterNoSchemas" },
+  owner: { all: "resultsUi.filterAllOwners", search: "resultsUi.filterSearchOwners", none: "resultsUi.filterNoOwners" },
+  collection: {
+    all: "resultsUi.filterAllCollections",
+    search: "resultsUi.filterSearchCollections",
+    none: "resultsUi.filterNoCollections",
+  },
+  table: { all: "resultsUi.filterAllTables", search: "resultsUi.filterSearchTables", none: "resultsUi.filterNoTables" },
+  rule: { all: "resultsUi.filterAllRules", search: "resultsUi.filterSearchRules", none: "resultsUi.filterNoRules" },
+  outcome: { all: "resultsUi.filterAllOutcomes", search: "resultsUi.filterSearchOutcomes", none: "resultsUi.filterNoOutcomes" },
+  dimension: {
+    all: "resultsUi.filterAllDimensions",
+    search: "resultsUi.filterSearchDimensions",
+    none: "resultsUi.filterNoDimensions",
+  },
+  severity: {
+    all: "resultsUi.filterAllSeverities",
+    search: "resultsUi.filterSearchSeverities",
+    none: "resultsUi.filterNoSeverities",
+  },
+};
+
 /** Facet → chip-label i18n key (static keys so the extractor sees them). */
 const CHIP_LABEL_KEYS: Record<Facet, string> = {
   dimension: "resultsUi.chipDimension",
@@ -332,6 +517,21 @@ export interface MultiTableResultsSectionProps {
    *  derived from the BASE (unfiltered) breakdown rows so the choice list is
    *  the full facet universe regardless of the active filter. */
   showTopLevelFilters?: boolean;
+  /** Global Results saved views: the filter bubbles to render, in order
+   *  (Edit View > Filters). With *topFilterValues* + *onTopFilterChange* the
+   *  facet filters (all but column) become CONTROLLED by the caller's view.
+   *  Omitted elsewhere — the other surfaces keep their local filter state. */
+  topFilterLayout?: readonly GlobalResultsFilterKey[];
+  topFilterValues?: ViewValues;
+  onTopFilterChange?: (key: GlobalResultsFilterKey, value: ViewValue) => void;
+  /** Owner / Collection bubble options and collection membership (id → FQNs). */
+  topFilterOptions?: {
+    owners: FacetFilterOption[];
+    collections: FacetFilterOption[];
+    collectionMembers: ReadonlyMap<string, readonly string[]>;
+  };
+  /** Node right-aligned on the filter-bubble row (the Edit View menu). */
+  editViewSlot?: React.ReactNode;
 }
 
 /**
@@ -353,6 +553,11 @@ export function MultiTableResultsSection({
   reviewStatusRunId,
   asOfBatch,
   showTopLevelFilters,
+  topFilterLayout,
+  topFilterValues,
+  onTopFilterChange,
+  topFilterOptions,
+  editViewSlot,
 }: MultiTableResultsSectionProps) {
   const { t } = useTranslation();
   // Belt-and-suspenders: the backend returns no breaches when the feature is
@@ -374,7 +579,29 @@ export function MultiTableResultsSection({
   // facet, which re-scopes every breakdown and trend (mirrors the
   // monitored-table tab). The By table box itself is exempt from the table
   // facet — the server self-excludes it so the rows never vanish.
-  const [filters, setFilters] = useState<MultiFilters>(EMPTY_FILTERS);
+  //
+  // On Global Results the facet filters are CONTROLLED by the saved view
+  // (topFilterValues); only the table-specific column facet stays local.
+  const [localFilters, setLocalFilters] = useState<MultiFilters>(EMPTY_FILTERS);
+  const controlledValues = onTopFilterChange ? topFilterValues : undefined;
+  const filters = useMemo(
+    () => (controlledValues ? filtersFromViewValues(controlledValues, localFilters.column) : localFilters),
+    [controlledValues, localFilters],
+  );
+  const setFilters = (update: (f: MultiFilters) => MultiFilters) => {
+    if (!controlledValues || !onTopFilterChange) {
+      setLocalFilters(update);
+      return;
+    }
+    const next = update(filters);
+    for (const [key, value] of viewValueChanges(filters, next)) onTopFilterChange(key, value);
+    if (next.column !== filters.column) setLocalFilters((f) => ({ ...f, column: next.column }));
+  };
+  // A view switch can empty the table facet under an active By-table
+  // selection — drop the selection with it.
+  if (controlledValues && selectedTable !== null && filters.table.length === 0) {
+    setSelectedTable(null);
+  }
   // No selected-run state: per-table run_ids cannot scope a multi-table view
   // (see breakdownParams), so no run_id ever reaches the queries below.
   // Drilldown scope: "Applicable" (default) cross-filters the breakdowns by the
@@ -396,6 +623,7 @@ export function MultiTableResultsSection({
   const trendQuery = useEntityResults(
     {
       ...facetQueryParams(filters),
+      ...topFilterParams(filters),
       axes: "trend",
       include_drafts: draftsParam,
       ...(asOfBatch ? { as_of_batch: asOfBatch } : {}),
@@ -446,7 +674,10 @@ export function MultiTableResultsSection({
     filters.table.length > 0 ||
     filters.catalog.length > 0 ||
     filters.schema.length > 0 ||
-    filters.outcome.length > 0;
+    filters.outcome.length > 0 ||
+    filters.owner.length > 0 ||
+    filters.collection.length > 0 ||
+    filters.scoreBucket !== EMPTY_FILTERS.scoreBucket;
 
   // The score label's "against N tables" count reflects the CURRENT scope:
   // when any facet is active it counts the tables actually in the filtered
@@ -460,9 +691,11 @@ export function MultiTableResultsSection({
     ? filteredTableRows.length
     : (baseResults?.by_table ?? []).length;
   // By table shows the FRIENDLY table name (last FQN segment), so the selection
-  // is keyed on that. Map it back to the full FQN to resolve the table.
+  // is keyed on that. Map it back to the full FQN to resolve the table. Base rows
+  // are included too: in "All" scope the box also shows greyed base rows that the
+  // other filters exclude, and clicking one must still resolve its FQN.
   const fqnByFriendly = new Map(
-    (results?.by_table ?? [])
+    [...(baseResults?.by_table ?? []), ...(results?.by_table ?? [])]
       .map((g) => g.label)
       .filter((l): l is string => l != null)
       .map((fqn) => [friendlyTableName(fqn), fqn] as const),
@@ -654,54 +887,13 @@ export function MultiTableResultsSection({
     })),
   );
 
-  // Item 35: option lists for the top-level Global Results filter dropdowns.
-  // Derived from the BASE (unfiltered) breakdown rows so the choice universe
-  // is the full facet set regardless of the active filter. Tables carry the
-  // FQN as value but display the friendly (last-segment) name; rules key on
-  // their registry rule identity (rule_id when present) and display the label.
-  // Deduped + sorted by display label for a stable, scannable list.
-  const dedupeSortOptions = (opts: FacetFilterOption[]): FacetFilterOption[] => {
-    const byValue = new Map<string, FacetFilterOption>();
-    for (const o of opts) {
-      if (o.value && !byValue.has(o.value)) byValue.set(o.value, o);
-    }
-    return [...byValue.values()].sort((a, b) => a.label.localeCompare(b.label));
-  };
-  // Every accessible table FQN (base by_table row set) — the universe the
-  // catalog → schema → table dropdowns are derived and cascaded from.
-  const allTableFqns = (baseResults?.by_table ?? [])
-    .map((g) => g.label)
-    .filter((l): l is string => l != null);
-  const selectedCatalogs = new Set(filters.catalog);
-  const selectedSchemas = new Set(filters.schema);
-  // Catalog options: every distinct catalog. Schema options: narrowed to the
-  // selected catalog(s) (all catalogs when none picked). Table options:
-  // narrowed to the selected catalog(s) AND schema(s). This is the hierarchical
-  // cascade — a narrower level's option list only offers what the wider levels
-  // allow, matching the discovery browser's catalog → schema → table flow.
-  const catalogFilterOptions = dedupeSortOptions(
-    allTableFqns.map((fqn) => ({ value: catalogOfFqn(fqn), label: catalogOfFqn(fqn) })),
+  // Item 35: option lists for the top-level Global Results filter bubbles —
+  // see topFilterOptionLists. Collection narrows the Table options to members.
+  const collectionFqns = collectionTableFqns(
+    topFilterOptions?.collectionMembers ?? new Map<string, readonly string[]>(),
+    filters.collection,
   );
-  const schemaFilterOptions = dedupeSortOptions(
-    allTableFqns
-      .filter((fqn) => selectedCatalogs.size === 0 || selectedCatalogs.has(catalogOfFqn(fqn)))
-      .map((fqn) => ({ value: schemaOfFqn(fqn), label: friendlySchemaName(schemaOfFqn(fqn)) })),
-  );
-  const tableFilterOptions = dedupeSortOptions(
-    allTableFqns
-      .filter((fqn) => selectedCatalogs.size === 0 || selectedCatalogs.has(catalogOfFqn(fqn)))
-      .filter((fqn) => selectedSchemas.size === 0 || selectedSchemas.has(schemaOfFqn(fqn)))
-      .map((fqn) => ({ value: fqn, label: friendlyTableName(fqn) })),
-  );
-  const ruleFilterOptions = dedupeSortOptions(
-    (baseResults?.by_rule ?? [])
-      .map((g) => {
-        const value = ruleFacetValue(g);
-        if (value == null) return null;
-        return { value, label: g.label ?? value };
-      })
-      .filter((o): o is FacetFilterOption => o != null),
-  );
+  const topOptions = topFilterOptionLists(baseResults, filters, collectionFqns);
 
   // Setting the Tables dropdown drives the `table` facet directly (multi-select
   // filter). It intentionally does NOT touch `selectedTable` — that single
@@ -716,27 +908,21 @@ export function MultiTableResultsSection({
   const onFacetFilterChange = (facet: Facet, values: string[]) =>
     setFilters((f) => ({ ...f, [facet]: values }));
 
-  // Catalog/schema cascade: narrowing a WIDER level prunes any downstream
-  // selection it no longer permits, so the active filters can never disagree
-  // with the (now-narrowed) option lists. Widening (adding a catalog) leaves
-  // downstream picks untouched.
-  const onCatalogFilterChange = (values: string[]) => {
-    const allow = new Set(values);
+  // Catalog → schema → collection cascade: narrowing a WIDER level prunes any
+  // downstream selection it no longer permits (pruneDependentFilters — the same
+  // helper a loaded saved view goes through), so the active filters can never
+  // disagree with the (now-narrowed) option lists. Widening leaves downstream
+  // picks untouched.
+  const setCascadingFilters = (update: (f: MultiFilters) => MultiFilters) =>
     setFilters((f) => {
-      const keepSchema = allow.size === 0 ? f.schema : f.schema.filter((s) => allow.has(catalogOfFqn(s)));
-      const keepTable = allow.size === 0 ? f.table : f.table.filter((t) => allow.has(catalogOfFqn(t)));
-      if (keepTable.length === 0) setSelectedTable(null);
-      return { ...f, catalog: values, schema: keepSchema, table: keepTable };
+      const next = pruneDependentFilters(update(f), topFilterOptions?.collectionMembers ?? null);
+      if (next.table.length === 0) setSelectedTable(null);
+      return next;
     });
-  };
-  const onSchemaFilterChange = (values: string[]) => {
-    const allow = new Set(values);
-    setFilters((f) => {
-      const keepTable = allow.size === 0 ? f.table : f.table.filter((t) => allow.has(schemaOfFqn(t)));
-      if (keepTable.length === 0) setSelectedTable(null);
-      return { ...f, schema: values, table: keepTable };
-    });
-  };
+  const onCatalogFilterChange = (values: string[]) => setCascadingFilters((f) => ({ ...f, catalog: values }));
+  const onSchemaFilterChange = (values: string[]) => setCascadingFilters((f) => ({ ...f, schema: values }));
+  const onCollectionFilterChange = (values: string[]) =>
+    setCascadingFilters((f) => ({ ...f, collection: values }));
 
   const onRemoveChip = (key: string) => {
     const [facet, value] = key.split(/:(.+)/) as [Facet, string];
@@ -800,27 +986,10 @@ export function MultiTableResultsSection({
   const tableColorMap = buildTableColorMap(trends?.trend_by_table);
   const overallPoints = computeOverallPoints(trends?.trend);
 
-  // Breach markers for the overall trend chart: one entry per breaching point
-  // on the entity-level `trend` (the overall average). Null/non-"error"/"warn"
-  // criticalities are filtered out so only real breaches render a marker.
-  // Suppressed entirely when the pass-threshold feature is disabled.
-  const overallBreachMarkers = thresholdEnabled
-    ? (trends?.trend ?? []).flatMap((p) => {
-        if (!p.breached) return [];
-        const crit = p.breach_criticality;
-        if (crit !== "error" && crit !== "warn") return [];
-        // score = the point's 0–100 y-value (pass_rate * 100) so the ⚠ icon
-        // anchors to the trend line at that run, matching how the series plots.
-        const rate = toNum(p.pass_rate);
-        return [
-          {
-            run_date: String(p.run_date ?? ""),
-            criticality: crit as "error" | "warn",
-            score: rate == null ? null : rate * 100,
-          },
-        ];
-      })
-    : [];
+  // Breach markers sit on each breaching TABLE's own line (the Average's
+  // `breached` flag is carried forward, so it would repeat one table's breach
+  // on every later point). Suppressed when the pass-threshold feature is off.
+  const overallBreachMarkers = thresholdEnabled ? perTableBreachMarkers(trends?.trend_by_table) : [];
 
   // Series keys are the ENGLISH canonical names — the chart's ordering/legend
   // logic pins on ["Rules","Checks","Tests","Rows"]; do not translate them here.
@@ -853,6 +1022,85 @@ export function MultiTableResultsSection({
     ) : (
       <>{children}</>
     );
+
+  // One top-level filter bubble (Global Results). Multi-selects share
+  // ResultsFacetFilter; DQ score is single-select like the Tables page pill.
+  const facetBubble = (
+    key: GlobalResultsFilterKey,
+    copy: { all: string; search: string; none: string },
+    options: FacetFilterOption[],
+    selected: string[],
+    onChange: (values: string[]) => void,
+  ) => (
+    <ResultsFacetFilter
+      key={key}
+      allLabel={t(copy.all)}
+      options={options}
+      selected={selected}
+      onChange={onChange}
+      searchPlaceholder={t(copy.search)}
+      emptyText={t(copy.none)}
+      ariaLabel={t(copy.all)}
+    />
+  );
+  const renderTopFilter = (key: GlobalResultsFilterKey): React.ReactNode => {
+    switch (key) {
+      case "catalog":
+        return facetBubble(key, TOP_FILTER_COPY.catalog, topOptions.catalog, filters.catalog, onCatalogFilterChange);
+      case "schema":
+        return facetBubble(key, TOP_FILTER_COPY.schema, topOptions.schema, filters.schema, onSchemaFilterChange);
+      case "owner":
+        return facetBubble(key, TOP_FILTER_COPY.owner, topFilterOptions?.owners ?? [], filters.owner, (v) =>
+          setFilters((f) => ({ ...f, owner: v })),
+        );
+      case "collection":
+        return facetBubble(
+          key,
+          TOP_FILTER_COPY.collection,
+          topFilterOptions?.collections ?? [],
+          filters.collection,
+          onCollectionFilterChange,
+        );
+      case "table":
+        return facetBubble(key, TOP_FILTER_COPY.table, topOptions.table, filters.table, onTableFilterChange);
+      case "rule":
+      case "dimension":
+      case "severity":
+        return facetBubble(key, TOP_FILTER_COPY[key], topOptions[key], filters[key], (v) =>
+          onFacetFilterChange(key, v),
+        );
+      case "outcome":
+        return facetBubble(
+          key,
+          TOP_FILTER_COPY.outcome,
+          [
+            { value: "failed", label: t("resultsUi.outcomeFailed") },
+            { value: "passed", label: t("resultsUi.outcomePassed") },
+          ],
+          filters.outcome,
+          (v) => onFacetFilterChange("outcome", v),
+        );
+      case "dqScore":
+        return (
+          <Select
+            key={key}
+            value={filters.scoreBucket}
+            onValueChange={(v) => setFilters((f) => ({ ...f, scoreBucket: v }))}
+          >
+            <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("resultsUi.filterLabelDqScore")}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {DQ_SCORE_BUCKETS.map((b) => (
+                <SelectItem key={b.value} value={b.value} className="text-xs">
+                  {t(b.labelKey)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        );
+    }
+  };
 
   const scoreBox = (
     <ScoreBox
@@ -893,64 +1141,18 @@ export function MultiTableResultsSection({
           active-chip row below the drilldown still mirrors the selection, so a
           filter set here is also removable there.
 
-          Order is the discovery hierarchy — catalog → schema → table → rule.
-          Catalog/schema cascade: each narrows the next level's option list.
-          Dimension/severity dropdowns were removed here (still reachable by
-          clicking a By-dimension / By-severity breakdown row). Column is
-          absent — columns are table-specific (only populated once a single
-          table is selected), so there is no cross-table column universe. */}
+          Which bubbles show, and in what order, comes from the caller's
+          saved view (topFilterLayout; spec §6.2). Catalog/schema cascade:
+          each narrows the next level's option list; Collection narrows the
+          Table options. Dimension/severity are also set by clicking a
+          breakdown row, visible bubble or not. Column is absent — columns
+          are table-specific, so there is no cross-table column universe. */}
       {showTopLevelFilters && (
         <FadeIn delay={0.04}>
-          <div className="flex flex-wrap items-center gap-2">
-            <ResultsFacetFilter
-              allLabel={t("resultsUi.filterAllCatalogs")}
-              options={catalogFilterOptions}
-              selected={filters.catalog}
-              onChange={onCatalogFilterChange}
-              searchPlaceholder={t("resultsUi.filterSearchCatalogs")}
-              emptyText={t("resultsUi.filterNoCatalogs")}
-              ariaLabel={t("resultsUi.filterAllCatalogs")}
-            />
-            <ResultsFacetFilter
-              allLabel={t("resultsUi.filterAllSchemas")}
-              options={schemaFilterOptions}
-              selected={filters.schema}
-              onChange={onSchemaFilterChange}
-              searchPlaceholder={t("resultsUi.filterSearchSchemas")}
-              emptyText={t("resultsUi.filterNoSchemas")}
-              ariaLabel={t("resultsUi.filterAllSchemas")}
-            />
-            <ResultsFacetFilter
-              allLabel={t("resultsUi.filterAllTables")}
-              options={tableFilterOptions}
-              selected={filters.table}
-              onChange={onTableFilterChange}
-              searchPlaceholder={t("resultsUi.filterSearchTables")}
-              emptyText={t("resultsUi.filterNoTables")}
-              ariaLabel={t("resultsUi.filterAllTables")}
-            />
-            <ResultsFacetFilter
-              allLabel={t("resultsUi.filterAllRules")}
-              options={ruleFilterOptions}
-              selected={filters.rule}
-              onChange={(v) => onFacetFilterChange("rule", v)}
-              searchPlaceholder={t("resultsUi.filterSearchRules")}
-              emptyText={t("resultsUi.filterNoRules")}
-              ariaLabel={t("resultsUi.filterAllRules")}
-            />
-            <ResultsFacetFilter
-              allLabel={t("resultsUi.filterAllOutcomes")}
-              options={[
-                { value: "failed", label: t("resultsUi.outcomeFailed") },
-                { value: "passed", label: t("resultsUi.outcomePassed") },
-              ]}
-              selected={filters.outcome}
-              onChange={(v) => onFacetFilterChange("outcome", v)}
-              searchPlaceholder={t("resultsUi.filterSearchOutcomes")}
-              emptyText={t("resultsUi.filterNoOutcomes")}
-              ariaLabel={t("resultsUi.filterAllOutcomes")}
-            />
-          </div>
+          <FilterToolbar
+            filters={(topFilterLayout ?? DEFAULT_TOP_FILTERS).map(renderTopFilter)}
+            editColumns={editViewSlot}
+          />
         </FadeIn>
       )}
 

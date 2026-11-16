@@ -59,6 +59,7 @@ from .services.rule_retriever import CosineRuleRetriever, RuleRetriever
 from .services.rule_suggester import RuleSuggester
 from .services.rules_catalog_service import RulesCatalogService
 from .services.comments_service import CommentsService
+from .services.saved_views_service import SavedViewsService
 from .services.compute_service import ComputeService, resolve_warehouse_id
 from .services.schedule_grant_service import ScheduleGrantService
 from .services.rule_test_service import RuleTestService
@@ -735,6 +736,13 @@ async def get_comments_service(
     return CommentsService(sql=sql)
 
 
+async def get_saved_views_service(
+    sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
+) -> SavedViewsService:
+    """Create a SavedViewsService routed at the OLTP executor."""
+    return SavedViewsService(sql=sql)
+
+
 async def get_compute_service(
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
@@ -1138,6 +1146,7 @@ async def get_demo_seed_service(
     reset_service: Annotated[DatabaseResetService, Depends(get_database_reset_service)],
     embeddings: Annotated[RuleEmbeddingsService, Depends(get_rule_embeddings_service)],
     schedule_config: Annotated[ScheduleConfigService, Depends(get_schedule_config_service)],
+    saved_views: Annotated[SavedViewsService, Depends(get_saved_views_service)],
 ) -> "DemoSeedService":
     """Assemble the demo-seed orchestrator with an SP-only service graph.
 
@@ -1227,6 +1236,7 @@ async def get_demo_seed_service(
         schedule_grants=ScheduleGrantService(
             obo_ws=sp_ws, sp_ws=sp_ws, job_id=str(_require_resolved_job_id()), warehouse_id=warehouse_id or ""
         ),
+        saved_views=saved_views,
         catalog=resources.volume.catalog,
         schema=resources.demo_schema,
     )
@@ -1553,6 +1563,7 @@ __all__ = [
     "get_sql_connector",
     "get_user_role",
     "get_comments_service",
+    "get_saved_views_service",
     "get_compute_service",
     "get_schedule_grant_service",
     "get_preview_sql_executor",
