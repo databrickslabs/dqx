@@ -52,6 +52,7 @@ from databricks_labs_dqx_app.backend.services.ai_gateway import (
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.compute_service import resolve_warehouse_id
 from databricks_labs_dqx_app.backend.services.rule_test_service import RuleTestService
+from databricks_labs_dqx_app.backend.sql_check_function import SqlCheckFunction
 
 _AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
 
@@ -109,6 +110,11 @@ class RuleTestRunIn(BaseModel):
     # yield a MISLEADING verdict — the UI hides the test surface and the route
     # rejects it (belt-and-braces) rather than silently testing the wrong thing.
     lowcode_advanced: bool = False
+    # The check the saved body materializes to (``sql_query`` for a dataset-level
+    # query body, ``sql_expression`` for a row predicate). Sent by the editor so the
+    # Test run picks the same builder the job does. Omitted by older clients, which
+    # falls back to inferring the shape from the predicate text.
+    check_function: SqlCheckFunction | None = None
 
 
 def _resolve_predicate(body: RuleTestRunIn) -> str:
@@ -171,7 +177,12 @@ async def run_rule_test(
                     for name, g in body.adhoc.ref_grids.items()
                 },
             )
-            result = await svc.run_adhoc(predicate=predicate, polarity=body.polarity, source=source)
+            result = await svc.run_adhoc(
+                predicate=predicate,
+                polarity=body.polarity,
+                source=source,
+                check_function=body.check_function,
+            )
         else:
             if body.table is None:
                 raise ValueError("A table and column mapping are required.")
@@ -191,7 +202,12 @@ async def run_rule_test(
                 sample_value=body.table.sample_value,
                 display_cap=body.display_cap,
             )
-            result = await svc.run_table(predicate=predicate, polarity=body.polarity, source=table_source)
+            result = await svc.run_table(
+                predicate=predicate,
+                polarity=body.polarity,
+                source=table_source,
+                check_function=body.check_function,
+            )
     except (NativeTestNotSupportedError, NativeTestCompileError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     except UnsafeSqlQueryError as e:
