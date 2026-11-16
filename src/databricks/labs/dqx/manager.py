@@ -93,7 +93,9 @@ def build_known_input_schema(df: DataFrame, checks: list[DQRule]) -> KnownInputS
     if not expressions:
         return KnownInputSchema(columns=columns)
     try:
-        _ = df.select(*[F.expr(expression).alias(f"expr_{i}") for i, expression in enumerate(expressions)]).schema
+        # The expressions are wrapped in one struct, rather than selected as aliased siblings, so that an expression
+        # cannot resolve a missing column against the alias of another one (lateral column alias resolution).
+        _ = df.select(F.struct(*[F.expr(expression) for expression in expressions])).schema
     except AnalysisException as e:
         logger.debug("Check expressions do not resolve together, validating them one by one", exc_info=e)
         return KnownInputSchema(columns=columns)
