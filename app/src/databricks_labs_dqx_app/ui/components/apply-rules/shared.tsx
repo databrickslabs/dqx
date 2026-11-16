@@ -100,6 +100,59 @@ export function getUsedColumnsForRule(rule: AppliedRuleOut): string[] {
   return [...used];
 }
 
+/** Columns already placed in one mapping group under every slot other than
+ *  *slotName*. A column can't fill two slots of the same set, so these stay
+ *  hidden from that slot's picker. Multi-value (comma-joined) values are
+ *  split into their individual columns. */
+export function siblingColumnsForSlot(
+  group: AppliedRuleOutColumnMappingItem,
+  slotName: string,
+  slotNames: string[],
+): string[] {
+  return slotNames
+    .filter((s) => s !== slotName)
+    .flatMap((s) => (group[s] ?? "").split(","))
+    .filter((col) => col !== "");
+}
+
+/** True when choosing *candidateValue* for *slotName* would make a mapping set
+ *  identical to one already in *existingGroups* — i.e. a duplicate application
+ *  of the rule to the same columns. Only exact duplicates count: a column that
+ *  is merely used by another set is still a valid choice.
+ *
+ *  Identity follows `compute_mapping_hash` in `backend/registry_models.py`: two
+ *  sets match when every slot holds the same value, regardless of slot or group
+ *  order. Values are compared as whole strings, because the hash treats a
+ *  multi-value slot's comma-joined string as one opaque value (so `"a,b"` and
+ *  `"b,a"` are distinct sets to the backend).
+ *
+ *  A set can only be a duplicate once all of its other slots are filled, so this
+ *  returns false while any sibling slot in *partial* is still empty.
+ *
+ *  @param partial The set being built, as slot name → value: the in-progress
+ *    selection, or the existing group being edited. Its value for *slotName* is
+ *    ignored.
+ *  @param currentValue The value *slotName* already holds, if any. Keeping the
+ *    current value is never a new duplicate, so it is always allowed. */
+export function completesExistingSet(params: {
+  slotNames: string[];
+  slotName: string;
+  candidateValue: string;
+  partial: AppliedRuleOutColumnMappingItem;
+  existingGroups: AppliedRuleOutColumnMappingItem[];
+  currentValue?: string;
+}): boolean {
+  const { slotNames, slotName, candidateValue, partial, existingGroups, currentValue } = params;
+  if (candidateValue === currentValue) return false;
+  const siblingsFilled = slotNames.every((s) => s === slotName || Boolean(partial[s]));
+  if (!siblingsFilled) return false;
+  return existingGroups.some((group) =>
+    slotNames.every(
+      (s) => (group[s] ?? "") === (s === slotName ? candidateValue : (partial[s] ?? "")),
+    ),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Staged editor helpers (P16-F) — the Apply Rules tab stages every add /
 // mapping-edit / severity-override / pin / removal in a local `stagedRows`
