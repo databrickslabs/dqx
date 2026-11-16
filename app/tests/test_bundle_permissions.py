@@ -69,6 +69,10 @@ def test_audience_never_gets_genie_select_or_main_access(bundle: dict) -> None:
     assert _UC_AUDIENCE not in _grants(bundle, "schemas", "main_schema")
 
 
+def test_deployer_has_no_main_schema_grant(bundle: dict) -> None:
+    assert "${workspace.current_user.userName}" not in _grants(bundle, "schemas", "main_schema")
+
+
 def test_uc_grants_never_name_workspace_groups(bundle: dict) -> None:
     for schema in bundle["resources"]["schemas"].values():
         principals = {grant["principal"] for grant in schema["grants"]}
@@ -93,15 +97,8 @@ def test_app_is_shared_with_audience_and_admins(bundle: dict) -> None:
     assert "genie" in bundle["resources"]["apps"]["dqx-studio"]["user_api_scopes"]
 
 
-def test_dashboard_is_readable_by_audience_and_admins(bundle: dict) -> None:
-    permissions = next(iter(bundle["resources"]["dashboards"].values()))["permissions"]
-    assert {"level": "CAN_READ", "group_name": "${var.studio_user_group}"} in permissions
-    assert {"level": "CAN_READ", "group_name": "${var.admin_group}"} in permissions
-
-
-def test_app_sp_can_manage_bundle_dashboard(bundle: dict) -> None:
-    permissions = next(iter(bundle["resources"]["dashboards"].values()))["permissions"]
-    assert {"level": "CAN_MANAGE", "service_principal_name": _APP_SP} in permissions
+def test_bundle_ships_no_dashboard(bundle: dict) -> None:
+    assert "dashboards" not in bundle["resources"]
 
 
 def test_app_warehouse_binding_grants_can_manage(bundle: dict) -> None:
