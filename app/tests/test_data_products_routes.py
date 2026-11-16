@@ -9,11 +9,12 @@ middleware.
 """
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
 from fastapi import HTTPException
 
+from databricks_labs_dqx_app.backend.services.scheduler_wake import SchedulerWakeMarker
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.models import (
     AddDataProductMemberIn,
@@ -151,7 +152,9 @@ class TestListAndGet:
     def test_list_maps_domain_to_dto(self):
         svc = MagicMock()
         svc.list_products.return_value = [_detail(product_id="p1")]
-        result = list_data_products(svc=svc)
+        wake = create_autospec(SchedulerWakeMarker, instance=True)
+        result = list_data_products(svc=svc, wake=wake)
+        wake.signal.assert_called_once_with()  # the Collections page load wakes the scheduler
         assert len(result) == 1
         assert result[0].product_id == "p1"
         assert result[0].display_status == "draft"
@@ -549,11 +552,28 @@ class TestRun:
             role=UserRole.ADMIN,
             principal_ids=frozenset(),
             perms=MagicMock(),
+            wake=create_autospec(SchedulerWakeMarker, instance=True),
         )
         assert result.run_set_id == "rs-1"
         svc.run.assert_called_once_with(
             "p1", source="approved", user_email="alice@x", trigger="manual", sample_size=None
         )
+
+    def test_started_run_wakes_the_scheduler(self):
+        svc = MagicMock()
+        svc.run.return_value = DataProductRunResult(run_set_id="rs-1")
+        wake = create_autospec(SchedulerWakeMarker, instance=True)
+        run_data_product(
+            "p1",
+            body=RunDataProductIn(source="approved"),
+            svc=svc,
+            obo_ws=_mock_obo_ws(),
+            role=UserRole.ADMIN,
+            principal_ids=frozenset(),
+            perms=MagicMock(),
+            wake=wake,
+        )
+        wake.signal.assert_called_once_with()
 
     def test_execute_check_called_before_run(self):
         """require_object(EXECUTE) is invoked on the data product before delegating to svc.run."""
@@ -572,6 +592,7 @@ class TestRun:
             role=UserRole.RULE_AUTHOR,
             principal_ids=frozenset({"u1"}),
             perms=perms,
+            wake=create_autospec(SchedulerWakeMarker, instance=True),
         )
         perms.require_object.assert_called_once()
         call_kwargs = perms.require_object.call_args
@@ -597,6 +618,7 @@ class TestRun:
                 role=UserRole.RULE_AUTHOR,
                 principal_ids=frozenset(),
                 perms=perms,
+                wake=create_autospec(SchedulerWakeMarker, instance=True),
             )
         assert excinfo.value.status_code == 403
         svc.run.assert_not_called()
@@ -613,6 +635,7 @@ class TestRun:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                wake=create_autospec(SchedulerWakeMarker, instance=True),
             )
         assert excinfo.value.status_code == 404
 
@@ -628,6 +651,7 @@ class TestRun:
                 role=UserRole.ADMIN,
                 principal_ids=frozenset(),
                 perms=MagicMock(),
+                wake=create_autospec(SchedulerWakeMarker, instance=True),
             )
         assert excinfo.value.status_code == 409
 

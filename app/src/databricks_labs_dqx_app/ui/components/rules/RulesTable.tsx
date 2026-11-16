@@ -13,7 +13,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Badge } from "@/components/ui/badge";
 import { AlertTriangle, ChevronDown, ChevronRight, ChevronUp, ListTree, Lock, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
+import type { ColumnLayoutDef } from "@/components/data-table/column-layout";
+import type { SavedViewsColumnLayout, SavedViewsMenuConfig } from "@/components/data-table/useSavedViews";
 import { EditColumnsDropdown, type SortableToggleListConfig } from "@/components/data-table/EditColumnsDropdown";
 import { FilterToolbar } from "@/components/data-table/FilterToolbar";
 import { GroupHeaderRow, countByGroup, toggleGroupKey } from "@/components/data-table/GroupHeaderRow";
@@ -51,6 +52,7 @@ import {
 import type { SortColumnConfig, SortDirection, SortValue } from "@/components/data-table/sort";
 import { formatDateTime, getRelativeTimeParts } from "@/lib/format-utils";
 import type { RegistryRuleOut } from "@/lib/api";
+import type { RuleLevel } from "@/lib/rule-taxonomy";
 
 /** Column keys that carry a comparable value and can drive client sort. */
 export type RulesTableSortKey =
@@ -67,7 +69,8 @@ export type RulesTableSortKey =
   | "modified"
   | "mode";
 
-type ColumnKey = RulesTableSortKey | "appliedTables" | "actions";
+export type RulesTableColumnKey = RulesTableSortKey | "appliedTables" | "level" | "actions";
+type ColumnKey = RulesTableColumnKey;
 
 interface ColumnDef {
   labelKey: string;
@@ -91,6 +94,8 @@ interface ColumnDef {
 
 interface RulesTableRenderContext {
   labelDefinitions: LabelColorDefinition[];
+  /** Row / table scoring level; null while the check-function list is still loading. */
+  levelForRule: (rule: RegistryRuleOut) => RuleLevel | null;
   isExpanded: (ruleId: string) => boolean;
   onToggleExpanded: (ruleId: string) => void;
 }
@@ -213,6 +218,16 @@ function ModifiedTimestampCell({
         ) : null}
       </TooltipContent>
     </Tooltip>
+  );
+}
+
+function LevelCell({ level }: { level: RuleLevel | null }) {
+  const { t } = useTranslation();
+  if (!level) return <span className="text-muted-foreground">—</span>;
+  return (
+    <span className="text-muted-foreground">
+      {level === "table" ? t("rulesRegistry.levelTable") : t("rulesRegistry.levelRow")}
+    </span>
   );
 }
 
@@ -393,6 +408,15 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
     renderHeader: (label) => label,
     renderCell: (r) => <ModeBadge mode={r.mode} />,
   },
+  level: {
+    labelKey: "rulesRegistry.colLevel",
+    toggleable: true,
+    defaultVisible: false,
+    defaultWidth: 90,
+    sortable: false,
+    renderHeader: (label) => label,
+    renderCell: (r, ctx) => <LevelCell level={ctx.levelForRule(r)} />,
+  },
   dimension: {
     labelKey: "rulesRegistry.colDimension",
     toggleable: true,
@@ -447,6 +471,7 @@ const DEFAULT_ORDER: ColumnKey[] = [
   "modified",
   "createdBy",
   "mode",
+  "level",
   "dimension",
   "severity",
   "actions",
@@ -521,10 +546,12 @@ export function getRulesTableSortConfig(key: RulesTableSortKey): SortColumnConfi
   return { dir: def.defaultSortDir ?? "asc", nullsFirst: def.nullsFirst ?? false };
 }
 
-// Column visibility/order/width bookkeeping (persisted to localStorage,
-// reconciled against the current ColumnKey set) lives in the shared
-// `useColumnLayout` hook — see components/data-table/column-layout.ts.
-const LS_KEY_LAYOUT = "dqx.rulesRegistry.layout";
+/** Column defaults of the Rules Registry, for its saved-view definitions. Column
+ *  visibility/order is owned by the caller's saved view (see `useSavedViews`). */
+export const RULES_TABLE_COLUMN_LAYOUT: {
+  defaultOrder: readonly ColumnKey[];
+  columns: Record<ColumnKey, ColumnLayoutDef>;
+} = { defaultOrder: DEFAULT_ORDER, columns: COLUMNS };
 
 export interface RulesTableSelection {
   selectedIds: Set<string>;
@@ -547,6 +574,8 @@ export interface RulesTableProps<F extends string = string> {
   groupForRule?: (rule: RegistryRuleOut) => RulesTableGroup;
   /** Expands every group (e.g. while searching, so matches are never hidden). */
   forceGroupsExpanded?: boolean;
+  /** Resolves a rule's row / table level for the Level column; omit (or return null) while unknown. */
+  levelForRule?: (rule: RegistryRuleOut) => RuleLevel | null;
   sortKey: RulesTableSortKey | null;
   sortDir: "asc" | "desc";
   onHeaderClick: (key: RulesTableSortKey) => void;
@@ -564,13 +593,17 @@ export interface RulesTableProps<F extends string = string> {
   emptyMessage?: ReactNode;
   /** When set, renders a leading checkbox column for bulk lifecycle actions. */
   selection?: RulesTableSelection;
-  /** Filters view of the Edit Columns menu (see `useFilterLayout`). */
+  /** Column order/visibility/widths — the saved view's column layout (see `useSavedViews`). */
+  columnLayout: SavedViewsColumnLayout<RulesTableColumnKey>;
+  /** Filters view of the Edit View menu. */
   filterLayout?: SortableToggleListConfig<F>;
+  /** Saved Views page of the Edit View menu. */
+  savedViews?: SavedViewsMenuConfig;
 }
 
 /**
  * The Rules Registry list table: selectable + drag-reorderable columns
- * (persisted to localStorage), stable widths across sort clicks, and
+ * (the caller's saved view), stable widths across sort clicks, and
  * optional per-column resize. Ported from dqlake's RulesTable and adapted
  * to DQX's registry-rule fields (dimension/severity/tags live in
  * `user_metadata` rather than as top-level columns).
@@ -580,6 +613,7 @@ export function RulesTable<F extends string = string>({
   labelDefinitions,
   groupForRule,
   forceGroupsExpanded = false,
+  levelForRule,
   sortKey,
   sortDir,
   onHeaderClick,
@@ -588,13 +622,16 @@ export function RulesTable<F extends string = string>({
   toolbarExtra,
   emptyMessage,
   selection,
+  columnLayout,
   filterLayout,
+  savedViews,
 }: RulesTableProps<F>) {
   const { t } = useTranslation();
   const [expandedRuleIds, setExpandedRuleIds] = useState<Set<string>>(new Set());
   const ctx = useMemo<RulesTableRenderContext>(
     () => ({
       labelDefinitions,
+      levelForRule: levelForRule ?? (() => null),
       isExpanded: (ruleId) => expandedRuleIds.has(ruleId),
       onToggleExpanded: (ruleId) =>
         setExpandedRuleIds((prev) => {
@@ -604,7 +641,7 @@ export function RulesTable<F extends string = string>({
           return next;
         }),
     }),
-    [labelDefinitions, expandedRuleIds],
+    [labelDefinitions, levelForRule, expandedRuleIds],
   );
   const showSelection = !!selection;
   const selectableCount = selection?.selectableRuleIds.size ?? 0;
@@ -613,22 +650,10 @@ export function RulesTable<F extends string = string>({
   const someSelected = showSelection && selection!.selectedIds.size > 0 && !allSelected;
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
-  const {
-    colOrder,
-    colWidths,
-    visibleKeys,
-    toggleColumn,
-    handleDragEnd,
-    sensors,
-    onResizeStart,
-  } = useColumnLayout<ColumnKey>({
-    storageKey: LS_KEY_LAYOUT,
-    defaultOrder: DEFAULT_ORDER,
-    columns: COLUMNS as Record<ColumnKey, ColumnLayoutDef>,
-  });
+  const { colOrder, colWidths, visibleKeys, toggleColumn, handleDragEnd, sensors, onResizeStart } = columnLayout;
 
   function handleHeaderClick(key: ColumnKey) {
-    if (key === "actions" || key === "appliedTables" || !COLUMNS[key].sortable) return;
+    if (key === "actions" || key === "appliedTables" || key === "level" || !COLUMNS[key].sortable) return;
     onHeaderClick(key);
   }
 
@@ -667,6 +692,7 @@ export function RulesTable<F extends string = string>({
             onDragEnd={handleDragEnd}
             sensors={sensors}
             filters={filterLayout}
+            savedViews={savedViews}
           />
         }
       />

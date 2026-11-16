@@ -27,6 +27,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_obo_ws,
     get_permissions_service,
     get_schedule_grant_service,
+    get_scheduler_wake_marker,
     require_role,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
@@ -36,6 +37,7 @@ from databricks_labs_dqx_app.backend.services.draft_run_gate_service import (
 )
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.logger import logger
+from databricks_labs_dqx_app.backend.services.scheduler_wake import SchedulerWakeMarker
 from databricks_labs_dqx_app.backend.models import (
     AddDataProductMemberIn,
     CreateDataProductIn,
@@ -88,8 +90,14 @@ def _current_user_email(obo_ws: WorkspaceClient) -> str:
 )
 def list_data_products(
     svc: Annotated[DataProductService, Depends(get_data_product_service)],
+    wake: Annotated[SchedulerWakeMarker, Depends(get_scheduler_wake_marker)],
 ) -> list[DataProductOut]:
-    """List every data product with resolved members and list-view counters."""
+    """List every data product with resolved members and list-view counters.
+
+    Signals the scheduler on the way in (the Collections page load), so a
+    run started with no page watching gets its score refreshed promptly.
+    """
+    wake.signal()
     try:
         return [DataProductOut.from_domain(d) for d in svc.list_products()]
     except Exception as e:
@@ -638,6 +646,7 @@ def run_data_product(
     role: CurrentUserRole,
     principal_ids: CurrentPrincipalIds,
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
+    wake: Annotated[SchedulerWakeMarker, Depends(get_scheduler_wake_marker)],
 ) -> RunDataProductOut:
     """Run every runnable member of a data product through a shared run set.
 
@@ -661,6 +670,7 @@ def run_data_product(
             trigger="manual",
             sample_size=body.sample_size,
         )
+        wake.signal()
         return RunDataProductOut.from_domain(result)
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))

@@ -3679,6 +3679,308 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             os.unlink(temp_path)
 
 
+class TestDataContractGeneratorSkippedQuality(DataContractGeneratorTestBase):
+    """Test that quality entries which do not become rules are logged."""
+
+    _QTY = "property 'qty' in schema 'test_table'"
+    _SODA = {"type": "custom", "engine": "soda", "description": "soda check"}
+
+    def _qty_contract(self, quality_checks):
+        return self.create_contract_with_quality(
+            property_name="qty", logical_type="integer", quality_checks=quality_checks
+        )
+
+    def _generate(self, generator, caplog, contract_dict, **kwargs):
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with caplog.at_level(logging.INFO):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path, generate_predefined_rules=False, generate_schema_validation=False, **kwargs
+                )
+        finally:
+            os.unlink(temp_path)
+        return rules
+
+    def _generate_with_warnings(self, generator, caplog, contract_dict, **kwargs):
+        rules = self._generate(generator, caplog, contract_dict, **kwargs)
+        return rules, [rec.message for rec in caplog.records if rec.levelno == logging.WARNING]
+
+    @staticmethod
+    def _info_messages(caplog):
+        return [
+            rec.message for rec in caplog.records if rec.levelno == logging.INFO and "is False; skipped" in rec.message
+        ]
+
+    @pytest.mark.parametrize(
+        "quality, expected",
+        [
+            (
+                {"type": "sql", "description": "no negatives", "query": "SELECT COUNT(*) FROM {object}", "mustBe": 0},
+                f"Skipping type 'sql' quality entry on {_QTY} (description: 'no negatives'): "
+                "type: sql rules are not supported yet.",
+            ),
+            (
+                {"type": "custom", "engine": "soda", "description": "soda check"},
+                f"Skipping type 'custom' quality entry on {_QTY} (description: 'soda check'): "
+                "engine 'soda' is not supported; only engine: dqx is supported.",
+            ),
+            (
+                {"type": "custom", "description": "no engine"},
+                f"Skipping type 'custom' quality entry on {_QTY} (description: 'no engine'): "
+                "type: custom needs engine: dqx.",
+            ),
+            (
+                {"type": "custom", "engine": "dqx", "description": "no check"},
+                f"Skipping type 'custom' quality entry on {_QTY} (description: 'no check'): "
+                "engine: dqx rules need an implementation with a 'check'.",
+            ),
+            (
+                {"type": "great_expectations", "description": "unknown type"},
+                f"Skipping type 'great_expectations' quality entry on {_QTY} (description: 'unknown type'): "
+                "this quality type is not supported; use library, custom (engine: dqx) or text.",
+            ),
+            (
+                {"description": "no type or metric"},
+                f"Skipping quality entry with no type on {_QTY} (description: 'no type or metric'): "
+                "quality entries need a type (library, custom or text) or a metric.",
+            ),
+        ],
+        ids=[
+            "sql",
+            "custom_other_engine",
+            "custom_no_engine",
+            "custom_dqx_without_check",
+            "unknown_type",
+            "no_type_no_metric",
+        ],
+    )
+    def test_quality_entry_is_skipped_with_warning(self, generator, caplog, quality, expected):
+        rules, warnings = self._generate_with_warnings(generator, caplog, self._qty_contract([quality]))
+
+        assert rules == []
+        assert warnings == [expected]
+
+    def test_text_quality_entry_is_skipped_with_warning_without_llm_extras(
+        self, mock_workspace_client, mock_spark, caplog, monkeypatch
+    ):
+        monkeypatch.setattr(generator_module, "LLM_ENABLED", False)
+        generator = DQGenerator(workspace_client=mock_workspace_client, spark=mock_spark)
+
+        rules, warnings = self._generate_with_warnings(
+            generator, caplog, self._qty_contract([{"type": "text", "description": "Quantity should be positive"}])
+        )
+
+        assert rules == []
+        assert warnings == [
+            f"Skipping type 'text' quality entry on {self._QTY} (description: 'Quantity should be positive'): "
+            "text rules need an LLM engine; install the LLM extras with pip install 'databricks-labs-dqx[llm]'."
+        ]
+
+    def test_text_quality_entry_without_description_is_skipped_with_warning(self, generator, caplog):
+        generator.llm_engine = Mock()
+
+        rules, warnings = self._generate_with_warnings(generator, caplog, self._qty_contract([{"type": "text"}]))
+
+        assert rules == []
+        assert warnings == [
+            f"Skipping type 'text' quality entry on {self._QTY} (description: ''): text rules need a description."
+        ]
+
+    def test_library_opt_out_logs_one_info_line_and_no_warning(self, generator, caplog):
+        contract_dict = self._qty_contract(
+            [{"type": "library", "metric": "nullValues", "mustBe": 0}, {"metric": "nullValues", "mustBe": 0}]
+        )
+
+        rules, warnings = self._generate_with_warnings(generator, caplog, contract_dict, process_library_rules=False)
+
+        assert rules == []
+        assert warnings == []
+        assert self._info_messages(caplog) == ["process_library_rules is False; skipped library quality entries: 2."]
+
+    def test_text_opt_out_logs_one_info_line_and_no_warning(self, generator, caplog):
+        quality = [{"type": "text", "description": "positive"}, {"type": "text"}]
+
+        rules, warnings = self._generate_with_warnings(
+            generator, caplog, self._qty_contract(quality), process_text_rules=False
+        )
+
+        assert rules == []
+        assert warnings == []
+        assert self._info_messages(caplog) == ["process_text_rules is False; skipped text quality entries: 2."]
+
+    def test_both_opt_outs_log_one_info_line_each(self, generator, caplog):
+        contract_dict = self._qty_contract(
+            [
+                {"type": "text", "description": "positive"},
+                {"type": "library", "metric": "nullValues", "mustBe": 0},
+                {"type": "sql", "description": "no negatives", "query": "SELECT COUNT(*) FROM {object}", "mustBe": 0},
+            ]
+        )
+        contract_dict["schema"][0]["quality"] = [{"type": "text", "description": "has rows"}]
+
+        _, warnings = self._generate_with_warnings(
+            generator, caplog, contract_dict, process_text_rules=False, process_library_rules=False
+        )
+
+        assert warnings == [
+            f"Skipping type 'sql' quality entry on {self._QTY} (description: 'no negatives'): "
+            "type: sql rules are not supported yet."
+        ]
+        assert sorted(self._info_messages(caplog)) == [
+            "process_library_rules is False; skipped library quality entries: 1.",
+            "process_text_rules is False; skipped text quality entries: 2.",
+        ]
+
+    def test_malformed_library_entry_is_warned_once(self, generator, caplog):
+        rules, warnings = self._generate_with_warnings(generator, caplog, self._qty_contract([{"type": "library"}]))
+
+        assert rules == []
+        assert len(warnings) == 1
+        assert "Missing 'metric' on type: library quality entry" in warnings[0]
+
+    @pytest.mark.parametrize(
+        "quality",
+        [
+            {"type": "library", "metric": "nullValues", "mustBe": 0},
+            {
+                "type": "custom",
+                "engine": "dqx",
+                "implementation": {"check": {"function": "is_not_null", "arguments": {"column": "qty"}}},
+            },
+        ],
+        ids=["library", "custom_dqx_with_check"],
+    )
+    def test_quality_entry_that_becomes_a_rule_is_not_warned(self, generator, caplog, quality):
+        rules, warnings = self._generate_with_warnings(generator, caplog, self._qty_contract([quality]))
+
+        assert len(rules) == 1
+        assert warnings == []
+
+    def test_text_quality_entry_with_llm_engine_and_description_is_not_warned(self, generator, caplog):
+        prediction = Mock()
+        prediction.quality_rules = json.dumps([{"check": {"function": "is_not_null", "arguments": {"column": "qty"}}}])
+        generator.llm_engine = Mock()
+        generator.llm_engine.detect_business_rules_with_llm.return_value = prediction
+
+        rules, warnings = self._generate_with_warnings(
+            generator, caplog, self._qty_contract([{"type": "text", "description": "Quantity should be positive"}])
+        )
+
+        assert len(rules) == 1
+        assert warnings == []
+
+    def test_schema_level_quality_entry_warning_omits_property(self, generator, caplog):
+        contract_dict = self.create_basic_contract(
+            schema_name="orders", properties=[{"name": "order_id", "physicalType": "STRING"}]
+        )
+        contract_dict["schema"][0]["quality"] = [self._SODA]
+
+        rules, warnings = self._generate_with_warnings(generator, caplog, contract_dict)
+
+        assert rules == []
+        assert warnings == [
+            "Skipping type 'custom' quality entry on schema 'orders' (description: 'soda check'): "
+            "engine 'soda' is not supported; only engine: dqx is supported."
+        ]
+
+    def test_unnamed_property_quality_entry_warning_names_unnamed_property(self, generator, caplog):
+        contract_dict = self.create_basic_contract(
+            schema_name="orders", properties=[{"physicalType": "STRING", "quality": [self._SODA]}]
+        )
+
+        _, warnings = self._generate_with_warnings(generator, caplog, contract_dict)
+
+        assert warnings == [
+            "Skipping type 'custom' quality entry on an unnamed property in schema 'orders' "
+            "(description: 'soda check'): engine 'soda' is not supported; only engine: dqx is supported."
+        ]
+
+    @pytest.mark.parametrize(
+        "quality",
+        [
+            {
+                "type": "custom",
+                "engine": "dqx",
+                "implementation": {"check": {"function": "is_not_null", "arguments": {"column": "addr.zip"}}},
+            },
+            {"type": "sql", "query": "SELECT COUNT(*) FROM {object}", "mustBe": 0},
+        ],
+        ids=["custom_dqx_with_check", "sql"],
+    )
+    def test_nested_property_quality_entry_is_skipped_with_warning(self, generator, caplog, quality):
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {
+                    "name": "addr",
+                    "logicalType": "object",
+                    "physicalType": "STRUCT<zip: STRING>",
+                    "properties": [
+                        {"name": "zip", "logicalType": "string", "physicalType": "STRING", "quality": [quality]}
+                    ],
+                }
+            ]
+        )
+
+        rules, warnings = self._generate_with_warnings(generator, caplog, contract_dict)
+
+        assert rules == []
+        assert warnings == [
+            f"Skipping type '{quality['type']}' quality entry on property 'addr.zip' in schema 'test_table' "
+            "(description: ''): quality entries on nested properties are not supported yet."
+        ]
+
+    def test_each_warning_names_its_schema(self, generator, caplog):
+        contract_dict = self.create_basic_contract(
+            schema_name="orders", properties=[{"name": "order_id", "physicalType": "STRING", "quality": [self._SODA]}]
+        )
+        contract_dict["schema"].append(
+            {
+                "name": "customers",
+                "physicalType": "table",
+                "properties": [{"name": "customer_id", "physicalType": "STRING", "quality": [self._SODA]}],
+            }
+        )
+
+        _, warnings = self._generate_with_warnings(generator, caplog, contract_dict)
+
+        assert [message.split(" (description")[0] for message in warnings] == [
+            "Skipping type 'custom' quality entry on property 'order_id' in schema 'orders'",
+            "Skipping type 'custom' quality entry on property 'customer_id' in schema 'customers'",
+        ]
+
+    def test_each_skipped_entry_is_warned_once(self, generator, caplog):
+        contract_dict = self._qty_contract(
+            [
+                {"type": "custom", "engine": "soda", "description": "first"},
+                {"type": "great_expectations", "description": "second"},
+            ]
+        )
+        contract_dict["schema"][0]["quality"] = [{"type": "custom", "engine": "soda", "description": "third"}]
+
+        _, warnings = self._generate_with_warnings(generator, caplog, contract_dict)
+
+        assert len(warnings) == 3
+        assert all(f"'{desc}'" in message for desc, message in zip(["first", "second", "third"], warnings))
+        assert "schema 'test_table' (description" in warnings[2]
+
+    def test_description_control_characters_are_escaped_in_warning(self, generator, caplog):
+        quality = {"type": "custom", "engine": "soda", "description": "line one\nline two\r"}
+
+        _, warnings = self._generate_with_warnings(generator, caplog, self._qty_contract([quality]))
+
+        assert len(warnings) == 1
+        assert "(description: 'line one\\nline two\\r')" in warnings[0]
+        assert "\n" not in warnings[0] and "\r" not in warnings[0]
+
+    def test_long_description_is_trimmed_in_warning(self, generator, caplog):
+        quality = {"type": "custom", "engine": "soda", "description": "x" * 200}
+
+        _, warnings = self._generate_with_warnings(generator, caplog, self._qty_contract([quality]))
+
+        assert len(warnings) == 1
+        assert f"(description: '{'x' * 117}...')" in warnings[0]
+
+
 class TestDataContractGeneratorLibraryRules(DataContractGeneratorTestBase):
     """Tests for type: library quality metric dispatch and warn-and-skip handling."""
 

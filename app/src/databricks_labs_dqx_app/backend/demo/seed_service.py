@@ -41,6 +41,9 @@ skipped (logged) when no Job/warehouse is available and never fails the seed.
   :data:`~.manifest.SCHEDULES`, written through the same services the schedule
   routes use and seeded **paused**: the pause flag is written *before* the cron,
   so the scheduler never sees an unpaused demo schedule and none ever fires.
+* **Saved views** — a few personal saved views (Tables, Results, Rules,
+  Collections) owned by the seeding admin, from the bundled
+  :mod:`.saved_views` template, scoped to the demo catalog/schema. Best-effort: a failed view never fails the seed.
 
 **Testability.** ``run(weeks=0)`` builds rules + bindings + products (all
 approved) and writes a terminal status, but SKIPS the validation-gate real-run
@@ -60,6 +63,7 @@ from uuid import uuid4
 from databricks.sdk import WorkspaceClient
 
 from databricks_labs_dqx_app.backend.demo import datagen, manifest, redate
+from databricks_labs_dqx_app.backend.demo.saved_views import demo_saved_views
 from databricks_labs_dqx_app.backend.demo.manifest import (
     BindingSpec,
     RuleSpec,
@@ -70,6 +74,7 @@ from databricks_labs_dqx_app.backend.demo.manifest import (
 )
 from databricks_labs_dqx_app.backend.lowcode_compile import compile_lowcode_body
 from databricks_labs_dqx_app.backend.demo.status import DemoStatus, DemoStatusStore
+from databricks_labs_dqx_app.backend.saved_views_models import SavedViewCreateIn, SavedViewScope
 from databricks_labs_dqx_app.backend.registry_models import (
     RESERVED_DESCRIPTION_KEY,
     RESERVED_DIMENSION_KEY,
@@ -116,6 +121,7 @@ from databricks_labs_dqx_app.backend.services.schedule_config_service import (
     TABLE_SCHEDULE_PREFIX,
     ScheduleConfigService,
 )
+from databricks_labs_dqx_app.backend.services.saved_views_service import SavedViewsService
 from databricks_labs_dqx_app.backend.services.schedule_grant_service import ScheduleGrantService
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.services.view_service import ViewService
@@ -175,6 +181,7 @@ class DemoSeedResult:
         weeks: Number of weeks of quality trend generated (0 for a build-only run).
         trend_points: Number of re-dated score-history points written.
         schedules: Number of paused demo schedules written.
+        saved_views: Number of demo personal saved views created or updated.
     """
 
     rules: int
@@ -183,6 +190,7 @@ class DemoSeedResult:
     weeks: int
     trend_points: int
     schedules: int = 0
+    saved_views: int = 0
 
 
 class DemoSeedService:
@@ -213,6 +221,7 @@ class DemoSeedService:
         profiler_view: ViewService | None = None,
         schedule_config: ScheduleConfigService | None = None,
         schedule_grants: ScheduleGrantService | None = None,
+        saved_views: SavedViewsService | None = None,
         catalog: str = "dqx",
         schema: str,
     ) -> None:
@@ -255,6 +264,10 @@ class DemoSeedService:
         # grant is attempted. It never fails the seed.
         self._schedule_config = schedule_config
         self._schedule_grants = schedule_grants
+        # Optional saved-views collaborator. With it the seed adds the demo personal
+        # views (Tables, Results, Rules, Collections); without it (minimal test
+        # graph) that phase is a logged no-op. Best-effort: never fails the seed.
+        self._saved_views = saved_views
         self._catalog = catalog
         self._schema = schema
         self._started_at = ""
@@ -335,6 +348,9 @@ class DemoSeedService:
                 # (current) score for the freshly governed tables.
                 self._score_cache.refresh_all_for_tables(sorted(self._table_fqns()))
 
+            self._set_status("running", "views", "Adding saved views", user_email)
+            saved_views = self._build_saved_views(user_email)
+
             self._set_status("running", "schedules", "Adding paused schedules", user_email)
             product_map = {spec.name: pid for spec, pid in zip(manifest.DATA_PRODUCTS, product_ids, strict=True)}
             schedules = self._build_schedules(binding_map, product_map, user_email)
@@ -346,6 +362,7 @@ class DemoSeedService:
                 weeks=weeks,
                 trend_points=trend_points,
                 schedules=schedules,
+                saved_views=saved_views,
             )
             self._set_status(
                 "succeeded",
@@ -881,6 +898,64 @@ class DemoSeedService:
             self._data_products.approve(product.product_id, user_email)
             product_ids.append(product.product_id)
         return product_ids
+
+    # ------------------------------------------------------------------
+    # Phase: saved views
+    # ------------------------------------------------------------------
+
+    def _build_saved_views(self, user_email: str) -> int:
+        """Add the demo saved views as *user_email*'s personal views; return how many were created or updated.
+
+        The views come from the bundled template (see :mod:`.saved_views`) with
+        the demo catalog and schema substituted. They are personal (scope
+        user) views owned by the seeding admin, and none is made the user's or
+        the org default, so each page still opens on its built-in Default view.
+        A re-seed updates the payload of that user's existing view with the
+        same name on the page instead of adding a duplicate; other users'
+        views are never touched. Best-effort: a view that fails is
+        logged and skipped, and the seed carries on.
+        """
+        if self._saved_views is None:
+            logger.info("Demo saved views skipped: no saved views service")
+            return 0
+        try:
+            specs = demo_saved_views(self._catalog, self._schema)
+        except Exception as exc:  # the views are a best-effort showcase
+            logger.warning("Demo saved views skipped: %s", self._sanitize(str(exc)))
+            return 0
+        written = 0
+        for spec in specs:
+            try:
+                listing = self._saved_views.list_views(spec.page, user=user_email, is_admin=True)
+                existing = next(
+                    (
+                        view
+                        for view in listing.views
+                        if view.scope == SavedViewScope.USER
+                        and not view.is_builtin
+                        and view.name.casefold() == spec.name.casefold()
+                    ),
+                    None,
+                )
+                if existing is None:
+                    self._saved_views.create_view(
+                        SavedViewCreateIn(
+                            page=spec.page, name=spec.name, scope=SavedViewScope.USER, payload=spec.payload
+                        ),
+                        user=user_email,
+                        is_admin=True,
+                    )
+                else:
+                    self._saved_views.update_view(existing.id, spec.payload, user=user_email, is_admin=True)
+                written += 1
+            except Exception as exc:  # one failed view must not stop the others or the seed
+                logger.warning(
+                    "Demo saved view %s on %s skipped: %s",
+                    self._sanitize(spec.name),
+                    spec.page.value,
+                    self._sanitize(str(exc)),
+                )
+        return written
 
     # ------------------------------------------------------------------
     # Phase: schedules (paused)

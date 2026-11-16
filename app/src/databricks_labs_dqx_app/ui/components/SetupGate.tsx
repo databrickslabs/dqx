@@ -6,7 +6,7 @@ import {
   type UseMutationOptions,
 } from "@tanstack/react-query";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { AxiosError, AxiosResponse } from "axios";
 import {
   configureSetup,
@@ -24,6 +24,7 @@ import {
 } from "@/lib/api";
 import {
   configurationListsWanted,
+  offersSetupCompletion,
   setupErrorCode,
   setupView,
   unacknowledgedWarnings,
@@ -45,6 +46,7 @@ import {
   SetupWizard,
 } from "@/components/setup/SetupWizard";
 import type { SetupConfigurationValues } from "@/components/setup/SetupConfigurationForm";
+import { SetupComplete } from "@/components/setup/SetupComplete";
 import { StudioLoadingScreen } from "@/components/StudioLoadingScreen";
 
 type SetupGateProps = {
@@ -147,6 +149,9 @@ export function SetupGate({ children }: SetupGateProps) {
     refetchIntervalInBackground: setupPollingInBackground(),
   });
   const [acknowledged, setAcknowledged] = useState(readAcknowledgedWarnings);
+  // Set once this administrator sees setup steps to work through this session.
+  const [workedThroughSetup, setWorkedThroughSetup] = useState(false);
+  const [completionDismissed, setCompletionDismissed] = useState(false);
   const workspaceHost = useWorkspaceHost({
     query: {
       enabled:
@@ -174,17 +179,22 @@ export function SetupGate({ children }: SetupGateProps) {
       staleTime: 5 * 60_000,
     },
   });
+  const view = setupStatus.data
+    ? setupView(setupStatus.data.data, acknowledged, editingConfiguration)
+    : undefined;
+  useEffect(() => {
+    if (view?.kind === "wizard") setWorkedThroughSetup(true);
+  }, [view?.kind]);
+
   // While readiness is being checked, show the same "Loading DQX Studio" spinner
   // AuthGuard uses, so the check reads as one continuous load — no flash of the
   // "Checking Studio readiness" card, and no blank/black screen.
   if (setupStatus.isPending) return <StudioLoadingScreen />;
-  if (!setupStatus.data) return <SetupStatusUnavailable />;
+  if (!view) return <SetupStatusUnavailable />;
 
-  const view = setupView(
-    setupStatus.data.data,
-    acknowledged,
-    editingConfiguration,
-  );
+  if (offersSetupCompletion(view, workedThroughSetup, completionDismissed)) {
+    return <SetupComplete onContinue={() => setCompletionDismissed(true)} />;
+  }
   if (view.kind === "ready") return <>{children}</>;
 
   const grantStepId = applyGrants.variables?.stepId;

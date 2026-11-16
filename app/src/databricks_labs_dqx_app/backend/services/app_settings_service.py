@@ -25,14 +25,15 @@ from databricks_labs_dqx_app.backend.common.branding import (
 )
 from databricks_labs_dqx_app.backend.sanitization import replace_control_characters
 from databricks_labs_dqx_app.backend.services.model_services import model_service_name
+from databricks_labs_dqx_app.backend.setup.configuration import SETUP_SETTING_KEY_PREFIX
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, RawSql
 
 logger = logging.getLogger(__name__)
 
 _CONFIG_KEY = "workspace_config"
-_SETUP_JOB_ID_KEY = "setup_task_runner_job_id"
-_SETUP_COMPLETED_AT_KEY = "setup_completed_at"
-_SETUP_COMPLETED_BY_KEY = "setup_completed_by"
+_SETUP_JOB_ID_KEY = f"{SETUP_SETTING_KEY_PREFIX}task_runner_job_id"
+_SETUP_COMPLETED_AT_KEY = f"{SETUP_SETTING_KEY_PREFIX}completed_at"
+_SETUP_COMPLETED_BY_KEY = f"{SETUP_SETTING_KEY_PREFIX}completed_by"
 _BRANDING_KEY = "branding_v1"
 _BRANDING_LOGO_KEY_PREFIX = "branding_logo_"
 

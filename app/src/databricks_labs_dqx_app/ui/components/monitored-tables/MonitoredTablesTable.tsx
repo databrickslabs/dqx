@@ -22,9 +22,10 @@ import {
   type LabelColorDefinition,
 } from "@/components/RegistryRuleBadges";
 import { cn } from "@/lib/utils";
-import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
+import type { ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { EditColumnsDropdown, type SortableToggleListConfig } from "@/components/data-table/EditColumnsDropdown";
 import { FilterToolbar } from "@/components/data-table/FilterToolbar";
+import type { SavedViewsColumnLayout, SavedViewsMenuConfig } from "@/components/data-table/useSavedViews";
 import { GroupHeaderRow, countByGroup, toggleGroupKey } from "@/components/data-table/GroupHeaderRow";
 import {
   CollapsibleCellContent,
@@ -67,7 +68,8 @@ export type MonitoredTablesSortKey =
   | "status";
 
 /** Every column key: the sortable ones plus the "All rules" row expander. */
-type ColumnKey = MonitoredTablesSortKey | "appliedRules";
+export type MonitoredTablesColumnKey = MonitoredTablesSortKey | "appliedRules";
+type ColumnKey = MonitoredTablesColumnKey;
 
 interface ColumnDef {
   labelKey: string;
@@ -495,11 +497,11 @@ export function getMonitoredTablesSortConfig(key: MonitoredTablesSortKey): SortC
   return { dir: def.defaultSortDir ?? "asc", nullsFirst: def.nullsFirst ?? false };
 }
 
-// v2: DQ Score went live (visible + sortable by default) — bumping the key
-// makes the new default visibility take effect for users whose stored
-// layout still carries the old hidden-placeholder preference (the dqlake
-// `dqlake.products.layout.vN` convention).
-const LS_KEY_LAYOUT = "dqx.monitoredTables.layout.v4";
+/** Column defaults of the Tables overview, for its saved-view definitions. */
+export const MONITORED_TABLES_COLUMN_LAYOUT: {
+  defaultOrder: readonly ColumnKey[];
+  columns: Record<ColumnKey, ColumnLayoutDef>;
+} = { defaultOrder: DEFAULT_ORDER, columns: COLUMNS };
 
 /** Selection state for bulk operations — mirrors `RulesTableSelection` from
  *  `RulesTable.tsx`. The id field is `binding_id`. */
@@ -526,8 +528,12 @@ export interface MonitoredTablesTableProps<F extends string = string> {
   selection?: MonitoredTablesTableSelection;
   /** Label-definition colors for dimension / severity badge cells. */
   labelDefinitions?: LabelColorDefinition[];
-  /** Filters view of the Edit Columns menu (see `useFilterLayout`). */
+  /** Column order/visibility/widths — the saved view's column layout (see `useSavedViews`). */
+  columnLayout: SavedViewsColumnLayout<MonitoredTablesColumnKey>;
+  /** Filters view of the Edit View menu. */
   filterLayout?: SortableToggleListConfig<F>;
+  /** Saved Views page of the Edit View menu. */
+  savedViews?: SavedViewsMenuConfig;
   /** Inserts collapsible group headers; rows must arrive sorted by group. Omit for the flat table. */
   groupForRow?: (row: MonitoredTableSummaryOut) => { key: string; label: string };
   /** Expands every group (e.g. while searching, so matches are never hidden). */
@@ -536,7 +542,7 @@ export interface MonitoredTablesTableProps<F extends string = string> {
 
 /**
  * The Monitored Tables list table: selectable + drag-reorderable columns
- * (persisted to localStorage), stable widths across sort clicks. Ported
+ * (the caller's saved view), stable widths across sort clicks. Ported
  * from dqlake's `BindingsTable` and adapted to DQX's monitored-table
  * fields — see the `checksCount`/`dqScore`/`description` column comments
  * above for fields dqlake has that DQX's API doesn't expose yet.
@@ -553,7 +559,9 @@ export function MonitoredTablesTable<F extends string = string>({
   emptyState,
   selection,
   labelDefinitions = [],
+  columnLayout,
   filterLayout,
+  savedViews,
   groupForRow,
   forceGroupsExpanded = false,
 }: MonitoredTablesTableProps<F>) {
@@ -583,19 +591,7 @@ export function MonitoredTablesTable<F extends string = string>({
   const someSelected = showSelection && selection!.selectedIds.size > 0 && !allSelected;
   const anySelected = showSelection && selection!.selectedIds.size > 0;
 
-  const {
-    colOrder,
-    colWidths,
-    visibleKeys,
-    toggleColumn,
-    handleDragEnd,
-    sensors,
-    onResizeStart,
-  } = useColumnLayout<ColumnKey>({
-    storageKey: LS_KEY_LAYOUT,
-    defaultOrder: DEFAULT_ORDER,
-    columns: COLUMNS as Record<ColumnKey, ColumnLayoutDef>,
-  });
+  const { colOrder, colWidths, visibleKeys, toggleColumn, handleDragEnd, sensors, onResizeStart } = columnLayout;
 
   const hasActions = !!renderActions;
   const showAppliedRules = visibleKeys.includes("appliedRules");
@@ -624,6 +620,7 @@ export function MonitoredTablesTable<F extends string = string>({
             onDragEnd={handleDragEnd}
             sensors={sensors}
             filters={filterLayout}
+            savedViews={savedViews}
           />
         }
       />
