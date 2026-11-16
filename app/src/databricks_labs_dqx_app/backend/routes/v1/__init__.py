@@ -18,6 +18,7 @@ from .profiler import router as profiler_router
 from .settings import router as settings_router
 from .roles import router as roles_router
 from .comments import router as comments_router
+from .saved_views import router as saved_views_router
 from .quarantine import router as quarantine_router
 from .metrics import router as metrics_router
 from .dq_score import router as dq_score_router
@@ -59,6 +60,7 @@ v1_router.include_router(dryrun_router, prefix="/dryrun", tags=["dryrun"])
 v1_router.include_router(profiler_router, prefix="/profiler", tags=["profiler"])
 v1_router.include_router(settings_router, prefix="/settings", tags=["settings"])
 v1_router.include_router(comments_router, prefix="/comments", tags=["comments"])
+v1_router.include_router(saved_views_router, prefix="/saved-views", tags=["saved-views"])
 v1_router.include_router(quarantine_router, prefix="/quarantine", tags=["quarantine"])
 v1_router.include_router(metrics_router, prefix="/metrics", tags=["metrics"])
 v1_router.include_router(dq_score_router, prefix="/dq-score", tags=["dq-score"])
