@@ -452,7 +452,7 @@ def _spark_type(name: str) -> DataType:
     """
 
     class _NamedType(DataType):
-        def typeName(self) -> str:  # type: ignore[override]  # noqa: N802 - mirrors the PySpark API
+        def typeName(self) -> str:
             return name
 
     return _NamedType()
