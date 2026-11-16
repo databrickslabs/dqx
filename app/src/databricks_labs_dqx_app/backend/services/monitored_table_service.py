@@ -547,7 +547,7 @@ class MonitoredTableService:
             f"FROM {self._table} mt "
             f"LEFT JOIN {self._score_cache_table} sc "
             "ON sc.scope_type = 'table' AND sc.scope_key = mt.table_fqn "
-            f"ORDER BY mt.updated_at DESC LIMIT {TABLE_UNIVERSE_LIMIT}"
+            f"ORDER BY mt.updated_at DESC LIMIT {TABLE_UNIVERSE_LIMIT + 1}"
         )
         tables = [
             TableUniverseRow(
@@ -560,7 +560,10 @@ class MonitoredTableService:
             )
             for row in self._sql.query(sql)
         ]
-        if len(tables) >= TABLE_UNIVERSE_LIMIT:
+        # One extra row is read so an exactly-full universe isn't reported as truncated.
+        truncated = len(tables) > TABLE_UNIVERSE_LIMIT
+        del tables[TABLE_UNIVERSE_LIMIT:]
+        if truncated:
             logger.warning(
                 f"Table universe read hit its {TABLE_UNIVERSE_LIMIT}-row cap: the Owner, Collection and "
                 "DQ score filters ignore the least recently updated monitored tables"

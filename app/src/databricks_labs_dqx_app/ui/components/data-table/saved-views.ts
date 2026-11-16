@@ -317,6 +317,18 @@ export interface RowActions {
   share: ActionState | null;
 }
 
+/**
+ * The onSelect handler for a menu action that stays focusable when disabled (aria-disabled, so
+ * keyboard users can still reach its reason tooltip): a disabled pick keeps the menu open and
+ * does nothing.
+ */
+export function guardedMenuSelect(state: ActionState, onSelect: () => void): (event: Event) => void {
+  return (event) => {
+    if (state.enabled) onSelect();
+    else event.preventDefault();
+  };
+}
+
 const ENABLED: ActionState = { enabled: true, reasonKey: null };
 const disabledBecause = (reasonKey: string): ActionState => ({ enabled: false, reasonKey });
 

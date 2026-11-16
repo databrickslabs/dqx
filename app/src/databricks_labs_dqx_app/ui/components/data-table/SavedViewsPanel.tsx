@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils";
 import { RenameViewDialog } from "./RenameViewDialog";
 import { DisabledReason, SaveViewDialog } from "./SaveViewDialog";
 import { TruncatedLabel } from "./TruncatedLabel";
-import { myDefaultTarget, rowActions, saveDisabledReason, type ActionState } from "./saved-views";
+import { guardedMenuSelect, myDefaultTarget, rowActions, saveDisabledReason, type ActionState } from "./saved-views";
 import type { SavedViewsMenuConfig } from "./useSavedViews";
 
 /** A dialog the Saved Views page asks its host to open (dialogs live outside the menu). */
@@ -91,7 +91,7 @@ function ActionItem({
         aria-disabled={!state.enabled || undefined}
         variant={destructive ? "destructive" : "default"}
         className="text-xs"
-        onSelect={(e) => (state.enabled ? onSelect() : e.preventDefault())}
+        onSelect={guardedMenuSelect(state, onSelect)}
       >
         {label}
       </DropdownMenuItem>

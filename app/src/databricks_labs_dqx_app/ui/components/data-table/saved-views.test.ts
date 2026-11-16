@@ -5,6 +5,7 @@ import {
   applyStarOptimistic,
   builtinViewState,
   canSubmitViewName,
+  guardedMenuSelect,
   cleanViewName,
   isDirty,
   isWithinPayloadLimit,
@@ -500,5 +501,29 @@ describe("canSubmitViewName", () => {
   it("accepts a name with content", () => {
     expect(canSubmitViewName("a")).toBe(true);
     expect(canSubmitViewName("  Sales  ")).toBe(true);
+  });
+});
+
+describe("guardedMenuSelect", () => {
+  const pick = () => {
+    let prevented = false;
+    const event = { preventDefault: () => (prevented = true) } as unknown as Event;
+    return { event, prevented: () => prevented };
+  };
+
+  it("runs the action and lets the menu close when enabled", () => {
+    let calls = 0;
+    const { event, prevented } = pick();
+    guardedMenuSelect({ enabled: true, reasonKey: null }, () => calls++)(event);
+    expect(calls).toBe(1);
+    expect(prevented()).toBe(false);
+  });
+
+  it("ignores the pick and keeps the menu open when disabled", () => {
+    let calls = 0;
+    const { event, prevented } = pick();
+    guardedMenuSelect({ enabled: false, reasonKey: "savedViews.reasons.orgViewAdminsOnly" }, () => calls++)(event);
+    expect(calls).toBe(0);
+    expect(prevented()).toBe(true);
   });
 });

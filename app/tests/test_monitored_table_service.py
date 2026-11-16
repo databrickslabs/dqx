@@ -398,16 +398,25 @@ class TestListTableUniverse:
         [stmt] = [c.args[0] for c in sql.query.call_args_list]
         assert "LEFT JOIN dqx_test.dqx_app_test.dq_score_cache sc" in stmt
         assert "sc.scope_key = mt.table_fqn" in stmt
-        assert f"LIMIT {TABLE_UNIVERSE_LIMIT}" in stmt
+        assert f"LIMIT {TABLE_UNIVERSE_LIMIT + 1}" in stmt
         assert "dq_applied_rules" not in stmt
         assert "dq_monitored_table_versions" not in stmt
 
-    def test_warns_when_the_cap_is_hit(self, svc, sql, caplog):
+    def test_warns_and_trims_when_the_cap_is_exceeded(self, svc, sql, caplog):
+        row = ["b", "cat.schema.t", None, None, "bob@x", None]
+        sql.query.return_value = [row] * (TABLE_UNIVERSE_LIMIT + 1)
+        with caplog.at_level(logging.WARNING):
+            tables = svc.list_table_universe()
+        assert "row cap" in caplog.text
+        assert len(tables) == TABLE_UNIVERSE_LIMIT
+
+    def test_no_warning_when_exactly_at_the_cap(self, svc, sql, caplog):
         row = ["b", "cat.schema.t", None, None, "bob@x", None]
         sql.query.return_value = [row] * TABLE_UNIVERSE_LIMIT
         with caplog.at_level(logging.WARNING):
-            svc.list_table_universe()
-        assert "row cap" in caplog.text
+            tables = svc.list_table_universe()
+        assert "row cap" not in caplog.text
+        assert len(tables) == TABLE_UNIVERSE_LIMIT
 
     def test_no_warning_below_the_cap(self, svc, sql, caplog):
         sql.query.return_value = [["b", "cat.schema.t", None, None, "bob@x", None]]
