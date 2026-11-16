@@ -32,6 +32,8 @@ from pydantic import ValidationError
 
 from databricks_labs_dqx_app.backend.common.authorization import UserRole
 from databricks_labs_dqx_app.backend.models import (
+    MAX_REFERENCE_TABLES,
+    ReferenceGrantApplyIn,
     ReferenceGrantPreflightIn,
     ScheduleConfigIn,
     ScheduleGrantApplyIn,
@@ -700,8 +702,26 @@ class TestReferenceGrantRoutes:
             failed=(),
         )
 
-        out = await apply_reference_grants(ScheduleGrantApplyIn(table_fqns=[FQN]), grant_svc, executor)
+        out = await apply_reference_grants(ReferenceGrantApplyIn(table_fqns=[FQN]), grant_svc, executor)
 
         grant_svc.apply_reference_grants_async.assert_awaited_once_with([FQN], executor)
         assert (out.applied, out.total) == (1, 1)
         assert out.preflight.tables[0].can_manage is True
+
+    def test_apply_takes_as_many_tables_as_the_reference_preflight(self):
+        fqns = [f"cat.sch.t{i}" for i in range(MAX_REFERENCE_TABLES)]
+
+        assert ReferenceGrantApplyIn(table_fqns=fqns).table_fqns == fqns
+        assert ReferenceGrantPreflightIn(table_fqns=fqns).table_fqns == fqns
+
+    def test_apply_rejects_more_tables_than_the_reference_preflight_takes(self):
+        fqns = [f"cat.sch.t{i}" for i in range(MAX_REFERENCE_TABLES + 1)]
+
+        with pytest.raises(ValidationError):
+            ReferenceGrantApplyIn(table_fqns=fqns)
+        with pytest.raises(ValidationError):
+            ReferenceGrantPreflightIn(table_fqns=fqns)
+
+    def test_apply_still_accepts_only_real_table_names(self):
+        with pytest.raises(ValidationError):
+            ReferenceGrantApplyIn(table_fqns=["__sql_check__/orders_vs_payments"])

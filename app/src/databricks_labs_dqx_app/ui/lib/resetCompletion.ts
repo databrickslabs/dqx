@@ -24,3 +24,21 @@ export function resetJustFinished({
   if (previousState === "running") return true;
   return awaitingReset && startedAt !== launchStartedAt;
 }
+
+/** Milliseconds between reset-status polls. */
+export const RESET_POLL_MS = 2000;
+
+/** How often to poll the reset status: while a reset is running, and the whole
+ *  time the user is waiting on one they launched. Polling on `awaitingReset`
+ *  alone (not just on a polled `running`) keeps the poll going when the first
+ *  status check after launch fails or hasn't caught up yet, which would
+ *  otherwise leave the dialog locked with nothing left to unlock it. */
+export function resetPollInterval({
+  state,
+  awaitingReset,
+}: {
+  state: string | undefined;
+  awaitingReset: boolean;
+}): number | false {
+  return state === "running" || awaitingReset ? RESET_POLL_MS : false;
+}

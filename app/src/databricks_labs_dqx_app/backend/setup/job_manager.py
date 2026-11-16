@@ -96,14 +96,16 @@ class TaskRunnerJobManager:
         """Return the configured task-runner job, or create one when there is none.
 
         Existing jobs are never looked up by name or tag: every workspace principal can view
-        every Studio runner job, so a lookup could pick up another installation's job.
+        every Studio runner job, so a lookup could pick up another installation's job. An
+        installation from a release that found its job by tag, and never finished setup, so
+        never saved the job's ID, therefore gets a new job and the old one is left unused.
+
+        The job is created with only the setup administrator's access. Workspace users' view
+        access is added afterwards by *grant_workspace_view*, which may fail without blocking.
         """
         if configured_job_id:
             return ResolvedJob(job_id=_parse_job_id(configured_job_id), created=False)
 
-        access_control_list = [_workspace_users_view_access()]
-        if self._setup_user:
-            access_control_list.insert(0, _setup_admin_access(self._setup_user))
         created = self.workspace.jobs.create(
             name=_JOB_NAME,
             max_concurrent_runs=10,
@@ -112,7 +114,7 @@ class TaskRunnerJobManager:
             tasks=[_task_runner_task()],
             parameters=_task_runner_parameters(),
             environments=[_task_runner_environment([])],
-            access_control_list=access_control_list,
+            access_control_list=[_setup_admin_access(self._setup_user)] if self._setup_user else None,
         )
         job_id = getattr(created, "job_id", None)
         if not isinstance(job_id, int):

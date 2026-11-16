@@ -28,7 +28,7 @@ import {
   type UpdateDataProductIn,
 } from "@/lib/api";
 import { useSubmitDataProductWithRationale } from "@/lib/api-custom";
-import { createSaveGate } from "./saveGate";
+import { createSaveGate, runWhilePersisting, saveThenRefetch } from "./saveGate";
 import type { OwnerGrantIntent } from "@/components/permissions/PermissionsTab";
 
 function extractApiError(err: unknown, fallback: string): string {
@@ -370,41 +370,27 @@ export function useEditProductState(product: DataProductOut) {
   ]);
 
   /** Run a save-like action through the gate, keeping `persisting` set until
-   *  the product has been refetched. A failed save still refetches (without
-   *  adopting it into the buffer) so a retry diffs against what the server
-   *  actually holds after any partial writes. Returns false if another save
-   *  is already running. */
+   *  the product has been refetched (see `saveThenRefetch`). Returns false if
+   *  another save is already running. */
   const runPersisting = useCallback(
-    async (work: () => Promise<boolean>): Promise<boolean> => {
-      const result = await saveGateRef.current.run(async () => {
-        setPersisting(true);
-        try {
-          return await work();
-        } finally {
-          setPersisting(false);
-        }
-      });
-      return result ?? false;
-    },
+    (work: () => Promise<boolean>): Promise<boolean> => runWhilePersisting(saveGateRef.current, setPersisting, work),
     [],
   );
 
   const handleSaveDraft = useCallback(
     (): Promise<boolean> =>
-      runPersisting(async () => {
-        try {
-          await persist();
-        } catch (e) {
-          toast.error(extractApiError(e, t("dataProducts.toastSaveFailed")), { duration: 6000 });
-          await invalidate();
-          return false;
-        }
-        bypassGuardRef.current = true;
-        resyncRef.current = true;
-        toast.success(t("dataProducts.toastSavedDraft"));
-        await invalidate();
-        return true;
-      }),
+      runPersisting(() =>
+        saveThenRefetch({
+          save: persist,
+          refetch: invalidate,
+          onFailed: (e) => toast.error(extractApiError(e, t("dataProducts.toastSaveFailed")), { duration: 6000 }),
+          onSaved: () => {
+            bypassGuardRef.current = true;
+            resyncRef.current = true;
+            toast.success(t("dataProducts.toastSavedDraft"));
+          },
+        }),
+      ),
     [runPersisting, persist, invalidate, t],
   );
 
@@ -414,21 +400,21 @@ export function useEditProductState(product: DataProductOut) {
    *  lifecycle event (pending_rationale), not in the comment thread. */
   const handleSubmit = useCallback(
     (rationale?: string | null): Promise<boolean> =>
-      runPersisting(async () => {
-        try {
-          await persist();
-          await submitMut.mutateAsync({ productId: product.product_id, rationale: rationale ?? null });
-        } catch (e) {
-          toast.error(extractApiError(e, t("dataProducts.toastSubmitFailed")), { duration: 6000 });
-          await invalidate();
-          return false;
-        }
-        bypassGuardRef.current = true;
-        resyncRef.current = true;
-        toast.success(t("dataProducts.toastSubmitted"));
-        await invalidate();
-        return true;
-      }),
+      runPersisting(() =>
+        saveThenRefetch({
+          save: async () => {
+            await persist();
+            await submitMut.mutateAsync({ productId: product.product_id, rationale: rationale ?? null });
+          },
+          refetch: invalidate,
+          onFailed: (e) => toast.error(extractApiError(e, t("dataProducts.toastSubmitFailed")), { duration: 6000 }),
+          onSaved: () => {
+            bypassGuardRef.current = true;
+            resyncRef.current = true;
+            toast.success(t("dataProducts.toastSubmitted"));
+          },
+        }),
+      ),
     [runPersisting, persist, submitMut, product.product_id, invalidate, t],
   );
 

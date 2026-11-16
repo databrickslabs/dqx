@@ -84,7 +84,12 @@ def test_resolve_uses_configured_job(manager: TaskRunnerJobManager) -> None:
 def test_resolve_without_a_job_id_creates_one_and_never_looks_for_an_existing_job(
     manager: TaskRunnerJobManager,
 ) -> None:
-    """Every principal can see every Studio runner job, so an existing tagged job is never adopted."""
+    """Every principal can see every Studio runner job, so an existing tagged job is never adopted.
+
+    This includes an upgrade from a release that found its job by tag: if that installation
+    never finished setup (so never saved the job's ID), it gets a new job and the old one is
+    left unused.
+    """
     manager.workspace.jobs.list.return_value = [managed_job(job_id=43)]
     manager.workspace.jobs.create.return_value.job_id = 44
 
@@ -108,15 +113,15 @@ def test_resolve_creates_tagged_job_with_setup_admin_access(manager: TaskRunnerJ
     assert created["access_control_list"][0].user_name == "admin@example.com"
 
 
-def test_resolve_creates_job_viewable_by_all_users(manager: TaskRunnerJobManager) -> None:
-    """A created runner gives every workspace user view access, never run or manage access."""
+def test_resolve_creates_the_job_with_only_the_setup_admin_access(manager: TaskRunnerJobManager) -> None:
+    """Workspace users' view access is granted separately, so a failed view grant can't stop the job being created."""
     manager.workspace.jobs.create.return_value.job_id = 44
 
     manager.resolve(None)
 
     acl = manager.workspace.jobs.create.call_args.kwargs["access_control_list"]
-    view = [entry for entry in acl if entry.group_name == "users"]
-    assert [entry.permission_level for entry in view] == [JobPermissionLevel.CAN_VIEW]
+    assert [entry.user_name for entry in acl] == ["admin@example.com"]
+    assert all(entry.group_name is None for entry in acl)
 
 
 def test_grant_workspace_view_adds_view_for_all_users_additively(manager: TaskRunnerJobManager) -> None:

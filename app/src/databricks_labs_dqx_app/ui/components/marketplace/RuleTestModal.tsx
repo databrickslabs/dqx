@@ -81,6 +81,11 @@ export function RuleTestModal({
             slots={slots}
             ruleMode={mode}
             checkFunction={checkFunction}
+            // DQX runs a sql_query check table-level unless merge_columns join it back to rows.
+            datasetLevel={
+              checkFunction === "sql_query" &&
+              !(Array.isArray(nativeArguments.merge_columns) && nativeArguments.merge_columns.length > 0)
+            }
             nativeFunction={mode === "dqx_native" ? nativeFunction : undefined}
             nativeArguments={mode === "dqx_native" ? nativeArguments : undefined}
             canTest={canTest}

@@ -23,6 +23,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
     ManageHolderOut,
+    ReferenceGrantApplyIn,
     ReferenceGrantPreflightIn,
     ScheduleGrantApplyIn,
     ScheduleGrantApplyOut,
@@ -129,7 +130,7 @@ async def preflight_reference_grants(
     dependencies=[require_role(*_AUTHORS_AND_ABOVE)],
 )
 async def apply_reference_grants(
-    body: ScheduleGrantApplyIn,
+    body: ReferenceGrantApplyIn,
     grant_svc: Annotated[ScheduleGrantService, Depends(get_schedule_grant_service)],
     obo_sql: Annotated[SqlExecutor, Depends(get_obo_sql_executor)],
 ) -> ScheduleGrantApplyOut:

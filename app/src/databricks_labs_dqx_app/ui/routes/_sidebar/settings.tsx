@@ -100,7 +100,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useResetDatabase, useResetStatus, getResetStatusQueryKey } from "@/lib/api";
-import { resetJustFinished } from "@/lib/resetCompletion";
+import { resetJustFinished, resetPollInterval } from "@/lib/resetCompletion";
 import type { AxiosError } from "axios";
 import { toast } from "sonner";
 import { useCurrentUserRoleSuspense } from "@/hooks/use-suspense-queries";
@@ -2665,19 +2665,19 @@ function DangerZoneCard() {
   // DeployDemoRow polls demo/status) and drive the spinner + terminal toast off
   // the polled state, so a request that outlives the gateway idle timeout can no
   // longer strand the spinner forever.
+  // Set from the moment the reset is accepted until the polled status reports a
+  // terminal state. The POST only launches the background reset, so without this
+  // the dialog would close (and unlock) while the database is still being cleared.
+  const [awaitingReset, setAwaitingReset] = useState(false);
   const { data: statusResp } = useResetStatus({
     query: {
       // reset-status is an ADMIN-only endpoint — don't poll it for non-admins
       // (that would fire a 403 on every mount).
       enabled: isAdmin,
-      refetchInterval: (query) => (query.state.data?.data?.state === "running" ? 2000 : false),
+      refetchInterval: (query) => resetPollInterval({ state: query.state.data?.data?.state, awaitingReset }),
     },
   });
   const status = statusResp?.data;
-  // Set from the moment the reset is accepted until the polled status reports a
-  // terminal state. The POST only launches the background reset, so without this
-  // the dialog would close (and unlock) while the database is still being cleared.
-  const [awaitingReset, setAwaitingReset] = useState(false);
   const isRunning = awaitingReset || status?.state === "running" || resetMutation.isPending;
 
   // Fire the success/failure toast when the polled status transitions OUT of
