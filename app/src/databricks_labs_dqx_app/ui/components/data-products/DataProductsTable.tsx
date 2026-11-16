@@ -13,7 +13,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Check, ChevronDown, ChevronUp, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useColumnLayout, type ColumnLayoutDef } from "@/components/data-table/column-layout";
+import type { ColumnLayoutDef } from "@/components/data-table/column-layout";
+import type { SavedViewsColumnLayout, SavedViewsMenuConfig } from "@/components/data-table/useSavedViews";
 import { EditColumnsDropdown, type SortableToggleListConfig } from "@/components/data-table/EditColumnsDropdown";
 import { FilterToolbar } from "@/components/data-table/FilterToolbar";
 import { RelativeTimeCell } from "@/components/data-table/RelativeTimeCell";
@@ -351,9 +352,11 @@ const DEFAULT_ORDER: DataProductsSortKey[] = [
   "schedule",
 ];
 
-// v3: column order aligned with MonitoredTablesTable (item 51) — bumping
-// the key resets the stored layout so users see the updated defaults.
-const LS_KEY_LAYOUT = "dqx.products.layout.v3";
+/** Column defaults of the Collections overview, for its saved-view definitions. */
+export const DATA_PRODUCTS_COLUMN_LAYOUT: {
+  defaultOrder: readonly DataProductsSortKey[];
+  columns: Record<DataProductsSortKey, ColumnLayoutDef>;
+} = { defaultOrder: DEFAULT_ORDER, columns: COLUMNS };
 
 /** Selection state for bulk operations — mirrors `RulesTableSelection` from
  *  `RulesTable.tsx`. The id field is `product_id`. */
@@ -378,13 +381,17 @@ export interface DataProductsTableProps<F extends string = string> {
   emptyState?: ReactNode;
   /** When set, renders a leading checkbox column for bulk actions. */
   selection?: DataProductsTableSelection;
-  /** Filters view of the Edit Columns menu (see `useFilterLayout`). */
+  /** Column order/visibility/widths — the saved view's column layout (see `useSavedViews`). */
+  columnLayout: SavedViewsColumnLayout<DataProductsSortKey>;
+  /** Filters view of the Edit View menu. */
   filterLayout?: SortableToggleListConfig<F>;
+  /** Saved Views page of the Edit View menu. */
+  savedViews?: SavedViewsMenuConfig;
 }
 
 /**
  * The Data Products list table: selectable + drag-reorderable columns
- * (persisted to localStorage), stable widths across sort clicks. Ported
+ * (the caller's saved view), stable widths across sort clicks. Ported
  * from dqlake's `DataProductsTable` and adapted to DQX's `DataProductOut`
  * shape — #Rules/#Checks are summed client-side from `members` (DQX's
  * list endpoint doesn't surface aggregate rule/check counts on the
@@ -403,7 +410,9 @@ export function DataProductsTable<F extends string = string>({
   toolbarExtra,
   emptyState,
   selection,
+  columnLayout,
   filterLayout,
+  savedViews,
 }: DataProductsTableProps<F>) {
   const { t } = useTranslation();
   const showSelection = !!selection;
@@ -413,19 +422,7 @@ export function DataProductsTable<F extends string = string>({
   const someSelected = showSelection && selection!.selectedIds.size > 0 && !allSelected;
   const anySelected = showSelection && selection!.selectedIds.size > 0;
 
-  const {
-    colOrder,
-    colWidths,
-    visibleKeys,
-    toggleColumn,
-    handleDragEnd,
-    sensors,
-    onResizeStart,
-  } = useColumnLayout<DataProductsSortKey>({
-    storageKey: LS_KEY_LAYOUT,
-    defaultOrder: DEFAULT_ORDER,
-    columns: COLUMNS as Record<DataProductsSortKey, ColumnLayoutDef>,
-  });
+  const { colOrder, colWidths, visibleKeys, toggleColumn, handleDragEnd, sensors, onResizeStart } = columnLayout;
 
   const hasActions = !!renderActions;
 
@@ -453,6 +450,7 @@ export function DataProductsTable<F extends string = string>({
             onDragEnd={handleDragEnd}
             sensors={sensors}
             filters={filterLayout}
+            savedViews={savedViews}
           />
         }
       />
