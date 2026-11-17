@@ -326,33 +326,6 @@ class RuleCatalogEntryOut(BaseModel):
     updated_at: str | None = None
 
 
-class RuleHistoryEntryOut(BaseModel):
-    """One recorded change from the ``dq_resolved_rules_history`` audit log.
-
-    Backs ``getRuleHistory`` — the per-rule change trail that lets Drafts &
-    Review show a previous-vs-proposed diff for a per-table rule draft. Each
-    row carries the post-state ``check`` payload plus the status transition,
-    so the UI can reconstruct what changed without walking the whole log.
-    """
-
-    rule_id: str | None = None
-    table_fqn: str
-    check: dict[str, Any] | None = Field(
-        default=None, description="Post-state DQX check payload recorded at this change (None if not captured)"
-    )
-    version: int | None = None
-    source: str | None = None
-    action: str
-    prev_status: str | None = None
-    new_status: str | None = None
-    changed_by: str | None = None
-    changed_at: str | None = None
-    rationale: str | None = Field(
-        default=None,
-        description="Optional change rationale recorded with this history entry (when captured).",
-    )
-
-
 class SaveRulesIn(BaseModel):
     table_fqn: str = Field(description="Fully qualified table name (catalog.schema.table)")
     checks: list[dict[str, Any]] = Field(description="List of check metadata dictionaries")
@@ -1185,20 +1158,6 @@ class MonitoredTableChangesOut(BaseModel):
     )
     counts: dict[str, int] = Field(default_factory=dict, description="Rules per status")
     changes: list[RuleChangeOut] = Field(default_factory=list)
-
-
-class MonitoredTableVersionChecksOut(BaseModel):
-    """Frozen ``checks_json`` for one monitored-table version snapshot.
-
-    Backs ``getMonitoredTableVersionChecks`` — the heavy per-version payload
-    that ``listMonitoredTableVersions`` deliberately omits. Lets Drafts &
-    Review diff a binding's previously frozen checks (vN-1) against the
-    proposed (current / vN) rule set.
-    """
-
-    binding_id: str
-    version: int
-    checks: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class TagPairOut(BaseModel):

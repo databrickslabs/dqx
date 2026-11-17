@@ -18,6 +18,7 @@ import {
   type ChangesViewProps,
 } from "@/components/changes/ChangesDialog";
 import type { SideRef } from "@/lib/history-points";
+import { rulePendingStatus } from "@/lib/changes-view";
 import { itemStatus } from "@/lib/yaml-diff";
 
 /**
@@ -84,7 +85,8 @@ function useRuleChanges(target: RuleChangesTarget | null, historyTab = false): C
     const check = version > 0 ? checks.get(version) : undefined;
     return check ? [check] : [];
   };
-  const hasPending = approved === 0 || itemStatus(versionSide(approved), versionSide(null)) !== "unchanged";
+  const pendingStatus = rulePendingStatus(approved, isLoading, versionSide(approved), versionSide(null));
+  const hasPending = pendingStatus ?? false;
   const sides = useChangesSides(ruleId, hasPending && !historyTab, approved);
   // A step side is the rule as that step left it, rendered the same way as a version.
   const snapshotQuery = (ref: SideRef) =>
@@ -130,6 +132,7 @@ function useRuleChanges(target: RuleChangesTarget | null, historyTab = false): C
   return {
     sides,
     hasPending,
+    modeLoading: pendingStatus === undefined,
     approvedVersion: approved,
     versions,
     events: (reviewEvents.data?.data ?? []).map((e) => ({

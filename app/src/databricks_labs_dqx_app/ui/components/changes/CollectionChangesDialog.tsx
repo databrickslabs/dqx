@@ -1,3 +1,4 @@
+import { comparisonToShow, shouldQueryExplicitChanges, unrecordedCollectionNoteKind } from "@/lib/changes-view";
 import { useTranslation } from "react-i18next";
 import { useGetDataProductChanges, useListDataProductHistory } from "@/lib/api";
 import {
@@ -40,23 +41,21 @@ function useCollectionChanges(
   const params = sideParams(sides.base, sides.target);
   const query = useGetDataProductChanges(productId, params, {
     query: {
-      // A version-0 target is nothing approved yet: there's nothing to compare until a draft is picked.
-      enabled: enabled && !!info && !(sides.target.kind === "version" && sides.target.version === 0),
+      enabled: shouldQueryExplicitChanges(enabled, !!info, sides.isDefault, sides.target),
       staleTime: LIVE_STALE_TIME,
     },
   });
 
-  // Nothing on the target side (nothing approved yet, no draft picked) is nothing to compare.
-  const shown = sides.target.kind === "version" && sides.target.version === 0 ? undefined : query.data?.data;
+  // Defaults already contain the same comparison; only picked sides need the second request.
+  const shown = comparisonToShow(info, query.data?.data, sides.isDefault, sides.target);
   const reviewEvents = useListDataProductHistory(productId, {
     query: { enabled, staleTime: LIVE_STALE_TIME },
   });
   useRefetchOnRevision(revision, () => {
     void defaults.refetch();
-    if (info) void query.refetch();
+    if (info && !sides.isDefault) void query.refetch();
     void reviewEvents.refetch();
   });
-  const data = query.data?.data;
   const changes = shown?.changes ?? [];
   const items: ChangeItem[] = changes.map((c) => ({
     key: c.key,
@@ -65,10 +64,11 @@ function useCollectionChanges(
     before: c.before ?? [],
     after: c.after ?? [],
   }));
+  const noteKind = unrecordedCollectionNoteKind(shown);
   const note =
-    data && !data.base_recorded
-      ? t(data.target_version == null ? "tableChanges.notRecordedPending" : "tableChanges.notRecordedHistory", {
-          version: data.base_version,
+    shown && noteKind
+      ? t(noteKind === "pending" ? "tableChanges.notRecordedPending" : "tableChanges.notRecordedHistory", {
+          version: shown.base_version,
         })
       : null;
   return {

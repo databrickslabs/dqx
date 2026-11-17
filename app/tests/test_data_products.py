@@ -11,6 +11,7 @@ zero-runnable, per-member submission failures collected into ``skipped``).
 """
 
 import json
+from contextlib import contextmanager
 from datetime import datetime
 from unittest.mock import create_autospec
 
@@ -183,7 +184,9 @@ def sql():
 
 @pytest.fixture
 def monitored_tables():
-    return create_autospec(MonitoredTableService, instance=True)
+    mock = create_autospec(MonitoredTableService, instance=True)
+    mock.get_table_fqns.return_value = {}
+    return mock
 
 
 @pytest.fixture
@@ -1115,6 +1118,29 @@ class TestApprove:
         assert "`version` = 2" in update_sql
         assert "`status` = 'approved'" in update_sql
 
+    def test_status_update_and_version_snapshot_share_a_transaction(self, service, sql):
+        active = False
+
+        @contextmanager
+        def transaction():
+            nonlocal active
+            active = True
+            try:
+                yield
+            finally:
+                active = False
+
+        def write_inside_transaction(*_args, **_kwargs):
+            assert active
+
+        sql.transaction.side_effect = transaction
+        sql.execute.side_effect = write_inside_transaction
+        sql.query.return_value = [_product_row(product_id="p1", status="pending_approval", version="1")]
+
+        service.approve("p1", "bob@x")
+
+        assert len(sql.execute.call_args_list) == 2
+
     def test_approve_non_pending_raises_409(self, service, sql):
         sql.query.return_value = [_product_row(product_id="p1", status="draft", version="0")]
         with pytest.raises(InvalidStatusTransitionError):
@@ -1408,7 +1434,7 @@ class TestCompareCollectionStates:
 
 class TestVersionRecording:
     def test_approve_records_the_approved_members(self, service, sql, monitored_tables):
-        monitored_tables.list_monitored_tables.return_value = [_table_summary(binding_id="b1", table_fqn="c.s.orders")]
+        monitored_tables.get_table_fqns.return_value = {"b1": "c.s.orders"}
         _route_queries(
             sql,
             _product_row(product_id="p1", status="pending_approval", version="1"),
@@ -1423,7 +1449,7 @@ class TestVersionRecording:
     def test_the_first_edit_of_an_unrecorded_approved_collection_records_it_before_the_edit(
         self, service, sql, monitored_tables
     ):
-        monitored_tables.list_monitored_tables.return_value = [_table_summary(binding_id="b1", table_fqn="c.s.orders")]
+        monitored_tables.get_table_fqns.return_value = {"b1": "c.s.orders"}
         _route_queries(
             sql,
             _product_row(product_id="p1", status="approved", version="3"),
@@ -1435,6 +1461,46 @@ class TestVersionRecording:
         delete = next(i for i, c in enumerate(executed) if c.startswith(f"DELETE FROM {_MEMBERS}"))
         assert insert < delete
         assert ", 3, " in executed[insert]
+
+    def test_backfill_locks_the_product_before_counting_and_editing(self, service, sql, monitored_tables):
+        sql.dialect = "postgres"
+        active = False
+        events = []
+
+        @contextmanager
+        def transaction():
+            nonlocal active
+            active = True
+            try:
+                yield
+            finally:
+                active = False
+
+        def answer(stmt: str, **_kwargs):
+            if "FOR UPDATE" in stmt:
+                assert active
+                events.append("lock")
+                return [["p1"]]
+            if _VERSIONS in stmt and "COUNT(" in stmt.upper():
+                events.append("count")
+                return [["0"]]
+            if _MEMBERS in stmt:
+                return [_member_row("m1", "b1")]
+            return [_product_row(product_id="p1", status="approved", version="3")]
+
+        def write_inside_transaction(stmt: str, **_kwargs):
+            assert active
+            events.append("write")
+
+        sql.transaction.side_effect = transaction
+        sql.query.side_effect = answer
+        sql.execute.side_effect = write_inside_transaction
+        monitored_tables.get_table_fqns.return_value = {"b1": "c.s.orders"}
+
+        service.remove_member("p1", "m1", "bob@x")
+
+        assert events[0] == "lock"
+        assert events.index("lock") < events.index("count") < events.index("write")
 
     def test_a_recorded_version_is_not_recorded_again(self, service, sql):
         _route_queries(
@@ -1465,15 +1531,27 @@ class TestVersionRecording:
 
 
 class TestChanges:
+    def test_current_state_fetches_only_its_member_table_names(self, service, sql, monitored_tables):
+        _route_queries(
+            sql,
+            _product_row(product_id="p1", status="approved", version="2"),
+            members=[_member_row("m1", "b1"), _member_row("m2", "b2")],
+        )
+        monitored_tables.get_table_fqns.return_value = {"b1": "c.s.orders", "b2": "c.s.items"}
+
+        state = service.current_state("p1")
+
+        monitored_tables.get_table_fqns.assert_called_once_with({"b1", "b2"})
+        monitored_tables.list_monitored_tables.assert_not_called()
+        assert state is not None
+        assert [member["table"] for member in state["members"]] == ["c.s.items", "c.s.orders"]
+
     @staticmethod
     def _version(version: int, state: dict) -> list[object]:
         return [version, json.dumps(state), "bob@x", "2026-10-01"]
 
     def test_pending_compares_the_approved_version_with_the_current_members(self, service, sql, monitored_tables):
-        monitored_tables.list_monitored_tables.return_value = [
-            _table_summary(binding_id="b1", table_fqn="c.s.orders"),
-            _table_summary(binding_id="b2", table_fqn="c.s.items"),
-        ]
+        monitored_tables.get_table_fqns.return_value = {"b1": "c.s.orders", "b2": "c.s.items"}
         _route_queries(
             sql,
             _product_row(product_id="p1", status="draft", version="2"),
@@ -1500,7 +1578,7 @@ class TestChanges:
         assert [v.version for v in result.versions] == [2, 1]
 
     def test_an_unrecorded_approved_version_reads_as_the_current_state(self, service, sql, monitored_tables):
-        monitored_tables.list_monitored_tables.return_value = [_table_summary(binding_id="b1", table_fqn="t1")]
+        monitored_tables.get_table_fqns.return_value = {"b1": "t1"}
         _route_queries(
             sql,
             _product_row(product_id="p1", status="approved", version="2"),
@@ -1515,7 +1593,7 @@ class TestChanges:
     def test_pending_against_an_unrecorded_version_shows_the_current_members_added(
         self, service, sql, monitored_tables
     ):
-        monitored_tables.list_monitored_tables.return_value = [_table_summary(binding_id="b1", table_fqn="t1")]
+        monitored_tables.get_table_fqns.return_value = {"b1": "t1"}
         _route_queries(
             sql, _product_row(product_id="p1", status="draft", version="2"), members=[_member_row("m1", "b1")]
         )

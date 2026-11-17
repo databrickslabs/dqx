@@ -8,6 +8,7 @@ writes, `run_rules` / Admin+Author gate for run) without going through
 middleware.
 """
 
+from contextlib import contextmanager
 from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
@@ -1007,6 +1008,53 @@ class TestSaveDataProduct:
         }
         privileges = {c.args[2] for c in perms.require_object.call_args_list}
         assert privileges == {Privilege.MODIFY, Privilege.APPLY}
+
+    def test_every_save_write_shares_one_transaction(self):
+        svc, history = self._svc(), create_autospec(LifecycleHistoryService, instance=True)
+        active = False
+        entered = 0
+
+        @contextmanager
+        def transaction():
+            nonlocal active, entered
+            assert not active
+            active = True
+            entered += 1
+            try:
+                yield
+            finally:
+                active = False
+
+        def inside_transaction(*_args, **_kwargs):
+            assert active
+
+        svc.transaction.side_effect = transaction
+        for method in (svc.require_approved_bindings, svc.add_member, svc.remove_member):
+            method.side_effect = inside_transaction
+        def history_after_commit(*_args, **_kwargs):
+            assert not active, "Best-effort history must run after the domain transaction"
+
+        history.record.side_effect = history_after_commit
+
+        def update_inside(*args, **kwargs):
+            inside_transaction(*args, **kwargs)
+            return _product(status="draft")
+
+        svc.update.side_effect = update_inside
+
+        self._call(
+            svc,
+            history,
+            MagicMock(),
+            {
+                "updates": {"description": "new"},
+                "members": [{"binding_id": "b2", "pinned_version": 2}, {"binding_id": "b3"}],
+            },
+        )
+
+        assert entered == 1
+        svc.require_approved_bindings.assert_called_once_with(["b3"])
+        history.record.assert_called_once()
 
     def test_a_save_that_changes_nothing_records_nothing(self):
         svc, history = self._svc(), create_autospec(LifecycleHistoryService, instance=True)

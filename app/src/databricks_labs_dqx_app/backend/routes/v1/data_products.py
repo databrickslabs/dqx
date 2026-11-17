@@ -612,17 +612,22 @@ def save_data_product(
     after = list(desired) if desired is not None else list(current)
     _require_schedule_grants(product_id, updates, lambda: svc.table_fqns_of(after), grant_svc)
     try:
-        # Refuse before writing anything if a table can't join, so a save doesn't half-apply.
-        svc.require_approved_bindings(added)
-        status = detail.product.status
-        if updates:
-            status = svc.update(product_id, updates, user_email).status
-        for binding_id in [*added, *repinned]:
-            svc.add_member(product_id, binding_id, desired[binding_id] if desired else None, user_email)
-            status = "draft"
-        for member in removed:
-            svc.remove_member(product_id, member.id, user_email)
-            status = "draft"
+        with svc.transaction():
+            # Check new members in the same transaction as the writes. Re-pins
+            # keep add_member's existing semantics: an existing member is not
+            # retroactively evicted when its binding later leaves approved.
+            svc.require_approved_bindings(added)
+            status = detail.product.status
+            if updates:
+                status = svc.update(product_id, updates, user_email).status
+            for binding_id in [*added, *repinned]:
+                svc.add_member(product_id, binding_id, desired[binding_id] if desired else None, user_email)
+                status = "draft"
+            for member in removed:
+                svc.remove_member(product_id, member.id, user_email)
+                status = "draft"
+        # History stays best-effort: a failed audit insert must not abort the
+        # already-committed domain transaction (Postgres aborts on any SQL error).
         history.record(
             "data_product",
             product_id,
@@ -784,7 +789,9 @@ def approve_data_product(
     try:
         user_email = _current_user_email(obo_ws)
         rationale = body.rationale if body else None
-        approved = svc.approve(product_id, user_email, rationale=rationale)
+        with svc.transaction():
+            approved = svc.approve(product_id, user_email, rationale=rationale)
+        # As elsewhere, a best-effort history failure cannot roll back approval.
         history.record(
             "data_product",
             product_id,

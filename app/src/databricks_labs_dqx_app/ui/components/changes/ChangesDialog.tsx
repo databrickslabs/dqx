@@ -194,10 +194,19 @@ function withGaps<T>(values: T[], untouched: (value: T) => boolean, changesOnly:
   return out;
 }
 
-function ItemDiff({ item, layout, changesOnly }: { item: ChangeItem; layout: Layout; changesOnly: boolean }) {
-  const rows: DiffRow[] = useMemo(() => itemRows(item.before, item.after), [item.before, item.after]);
+function ItemDiff({
+  rows,
+  status,
+  layout,
+  changesOnly,
+}: {
+  rows: DiffRow[];
+  status: Status;
+  layout: Layout;
+  changesOnly: boolean;
+}) {
   // Only a modified item has untouched lines worth folding away.
-  const fold = changesOnly && item.status === "modified";
+  const fold = changesOnly && status === "modified";
   // Split, as in a git diff: before on the left, after on the right. An added
   // item's left side and a removed item's right side are empty.
   if (layout === "split") {
@@ -296,14 +305,15 @@ function FileSection({
   const [open, setOpen] = useState(defaultOpen);
   const status = item.status as Status;
   const style = STATUS_STYLE[status] ?? STATUS_STYLE.unchanged;
-  const counts = useMemo(() => {
-    const rows = itemRows(item.before, item.after);
-    return {
+  const rows = useMemo(() => itemRows(item.before, item.after), [item.before, item.after]);
+  const counts = useMemo(
+    () => ({
       added: rows.filter((r) => r.right?.tag === "added").length,
       removed: rows.filter((r) => r.left?.tag === "removed").length,
-    };
-  }, [item.before, item.after]);
-  if (!showHeader) return <ItemDiff item={item} layout={layout} changesOnly={changesOnly} />;
+    }),
+    [rows],
+  );
+  if (!showHeader) return <ItemDiff rows={rows} status={status} layout={layout} changesOnly={changesOnly} />;
   return (
     <div>
       <button
@@ -323,7 +333,7 @@ function FileSection({
         </span>
       </button>
       <Reveal open={open}>
-        <ItemDiff item={item} layout={layout} changesOnly={changesOnly} />
+        <ItemDiff rows={rows} status={status} layout={layout} changesOnly={changesOnly} />
       </Reveal>
     </div>
   );
@@ -406,6 +416,8 @@ export interface ChangesEvent {
 export interface ChangesViewProps {
   sides: ReturnType<typeof useChangesSides>;
   hasPending: boolean;
+  /** The pending/history choice is not known yet; don't flash the wrong dialog title. */
+  modeLoading?: boolean;
   approvedVersion: number;
   /** Approved versions, for the pickers and the History timeline. */
   versions: ChangesVersion[];
@@ -638,7 +650,13 @@ export function ChangesDialog({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-5xl max-h-[90vh] flex flex-col gap-3">
         <DialogHeader>
-          <DialogTitle>{t(view.sides.mode === "pending" ? "tableChanges.pendingTitle" : "tableChanges.historyTitle")}</DialogTitle>
+          <DialogTitle>
+            {view.modeLoading ? (
+              <Skeleton className="h-6 w-40" role="status" aria-label={t("tableChanges.loading")} />
+            ) : (
+              t(view.sides.mode === "pending" ? "tableChanges.pendingTitle" : "tableChanges.historyTitle")
+            )}
+          </DialogTitle>
           <DialogDescription className="font-mono text-xs break-all">{subject}</DialogDescription>
         </DialogHeader>
         <ChangesBody {...view} allowProposed scroll />

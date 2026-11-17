@@ -2285,44 +2285,6 @@ class TestRunMonitoredTableInSamplingKnob:
 
 
 # ---------------------------------------------------------------------------
-# getMonitoredTableVersionChecks — change-diff backing
-# ---------------------------------------------------------------------------
-
-
-class TestVersionChecks:
-    def test_returns_frozen_checks(self):
-        version_svc = MagicMock()
-        version_svc.get_checks.return_value = [{"check": {"function": "is_not_null"}}]
-        out = mt_routes.get_monitored_table_version_checks("b1", 2, version_svc, **_read_perm_deps())
-        assert out.binding_id == "b1"
-        assert out.version == 2
-        assert out.checks == [{"check": {"function": "is_not_null"}}]
-        version_svc.get_checks.assert_called_once_with("b1", 2)
-
-    def test_missing_snapshot_returns_empty(self):
-        version_svc = MagicMock()
-        version_svc.get_checks.side_effect = LookupError("no snapshot")
-        out = mt_routes.get_monitored_table_version_checks("b1", 9, version_svc, **_read_perm_deps())
-        assert out.checks == []
-
-    def test_unexpected_error_maps_to_500(self):
-        version_svc = MagicMock()
-        version_svc.get_checks.side_effect = RuntimeError("boom")
-        with pytest.raises(HTTPException) as exc:
-            mt_routes.get_monitored_table_version_checks("b1", 1, version_svc, **_read_perm_deps())
-        assert exc.value.status_code == 500
-
-    def test_select_denied_raises_403(self):
-        version_svc = MagicMock()
-        perms = create_autospec(PermissionsService, instance=True)
-        perms.require_object.side_effect = HTTPException(status_code=403, detail="Denied")
-        with pytest.raises(HTTPException) as exc:
-            mt_routes.get_monitored_table_version_checks("b1", 1, version_svc, **_read_perm_deps(perms=perms))
-        assert exc.value.status_code == 403
-        version_svc.get_checks.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
 # listPendingApplications — read side of the Bulk Contract Import staging store
 # ---------------------------------------------------------------------------
 

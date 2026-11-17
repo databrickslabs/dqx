@@ -40,6 +40,7 @@ member is treated as failed here too, even though its job is live.
 
 import json
 import logging
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal, cast, get_args
@@ -345,6 +346,14 @@ class DataProductService:
         self._versions_table = sql.fqn("dq_data_product_versions")
         self._score_cache_table = sql.fqn("dq_score_cache")
 
+    def transaction(self) -> AbstractContextManager[None]:
+        """Group several collection operations into one transaction on Postgres.
+
+        Delta's Statement Execution API has no multi-statement transactions;
+        its executor provides a compatibility no-op instead.
+        """
+        return self._sql.transaction()
+
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
@@ -489,6 +498,12 @@ class DataProductService:
             ValueError: an explicit ``name`` update is empty.
             DuplicateDataProductNameError: *name* is changed to one already in use.
         """
+        with self._sql.transaction():
+            self._lock_product(product_id)
+            return self._update_in_transaction(product_id, updates, updated_by)
+
+    def _update_in_transaction(self, product_id: str, updates: dict[str, Any], updated_by: str) -> DataProduct:
+        """Apply a partial update after serializing edits to the collection."""
         product = self._fetch_product(product_id)
         if product is None:
             raise LookupError(f"Data product not found: {product_id}")
@@ -636,65 +651,68 @@ class DataProductService:
             BindingNotApprovedError: the binding is not approved (when adding
                 a new member) — maps to HTTP 400 at the route.
         """
-        product = self._fetch_product(product_id)
-        if product is None:
-            raise LookupError(f"Data product not found: {product_id}")
-        rows = self._sql.select_rows(
-            self._members_table,
-            ["id"],
-            where={"product_id": product_id, "binding_id": binding_id},
-        )
-        if rows:
-            member_id = rows[0][0]
-            self._record_approved_version(product)
-            self._sql.update(
+        with self._sql.transaction():
+            self._lock_product(product_id)
+            product = self._fetch_product(product_id)
+            if product is None:
+                raise LookupError(f"Data product not found: {product_id}")
+            rows = self._sql.select_rows(
                 self._members_table,
-                updates={"pinned_version": pinned_version},
-                where={"id": member_id},
+                ["id"],
+                where={"product_id": product_id, "binding_id": binding_id},
             )
-        else:
-            # New member: the binding must exist AND be approved before it can
-            # join the space (P3.2) — see the docstring for the exact predicate
-            # and the deliberate no-retroactive-eviction asymmetry with the
-            # UPDATE branch above.
-            table = self._require_approved_binding(binding_id)
-            self._record_approved_version(product)
-            member_id = uuid4().hex
-            if pinned_version is None:
-                pinned_version = self._app_settings.resolve_pinned_version_for_new_attachment(None, table.version)
-            try:
-                self._sql.insert(
-                    self._members_table,
-                    values={
-                        "id": member_id,
-                        "product_id": product_id,
-                        "binding_id": binding_id,
-                        "pinned_version": pinned_version,
-                    },
-                )
-            except Exception as exc:
-                # Postgres UNIQUE (product_id, binding_id) — concurrent add_member
-                # lost the race; treat as upsert onto the winner's row.
-                msg = str(exc).lower()
-                if "unique" not in msg and "duplicate" not in msg:
-                    raise
-                rows = self._sql.select_rows(
-                    self._members_table,
-                    ["id"],
-                    where={"product_id": product_id, "binding_id": binding_id},
-                )
-                if not rows:
-                    raise
+            if rows:
                 member_id = rows[0][0]
+                self._record_approved_version(product)
                 self._sql.update(
                     self._members_table,
                     updates={"pinned_version": pinned_version},
                     where={"id": member_id},
                 )
-        self._flip_to_draft(product_id, updated_by)
-        return DataProductMember(
-            id=member_id, product_id=product_id, binding_id=binding_id, pinned_version=pinned_version
-        )
+            else:
+                # New member: the binding must exist AND be approved before it can
+                # join the space (P3.2) — see the docstring for the exact predicate
+                # and the deliberate no-retroactive-eviction asymmetry with the
+                # UPDATE branch above.
+                table = self._require_approved_binding(binding_id)
+                self._record_approved_version(product)
+                member_id = uuid4().hex
+                if pinned_version is None:
+                    pinned_version = self._app_settings.resolve_pinned_version_for_new_attachment(None, table.version)
+                try:
+                    self._sql.insert(
+                        self._members_table,
+                        values={
+                            "id": member_id,
+                            "product_id": product_id,
+                            "binding_id": binding_id,
+                            "pinned_version": pinned_version,
+                        },
+                    )
+                except Exception as exc:
+                    # Delta has no product-row lock; preserve its existing
+                    # concurrent-add upsert fallback. On Postgres the lock above
+                    # prevents this race, whose unique error would abort the tx.
+                    msg = str(exc).lower()
+                    if "unique" not in msg and "duplicate" not in msg:
+                        raise
+                    rows = self._sql.select_rows(
+                        self._members_table,
+                        ["id"],
+                        where={"product_id": product_id, "binding_id": binding_id},
+                    )
+                    if not rows:
+                        raise
+                    member_id = rows[0][0]
+                    self._sql.update(
+                        self._members_table,
+                        updates={"pinned_version": pinned_version},
+                        where={"id": member_id},
+                    )
+            self._flip_to_draft(product_id, updated_by)
+            return DataProductMember(
+                id=member_id, product_id=product_id, binding_id=binding_id, pinned_version=pinned_version
+            )
 
     def remove_member(self, product_id: str, member_id: str, updated_by: str) -> None:
         """Remove a member. Flips the space back to ``draft``.
@@ -703,19 +721,21 @@ class DataProductService:
             LookupError: *product_id* or *member_id* does not exist (or the
                 member belongs to a different product).
         """
-        product = self._fetch_product(product_id)
-        if product is None:
-            raise LookupError(f"Data product not found: {product_id}")
-        rows = self._sql.select_rows(
-            self._members_table,
-            ["id"],
-            where={"id": member_id, "product_id": product_id},
-        )
-        if not rows:
-            raise LookupError(f"Data product member not found: {member_id}")
-        self._record_approved_version(product)
-        self._sql.delete(self._members_table, where={"id": member_id})
-        self._flip_to_draft(product_id, updated_by)
+        with self._sql.transaction():
+            self._lock_product(product_id)
+            product = self._fetch_product(product_id)
+            if product is None:
+                raise LookupError(f"Data product not found: {product_id}")
+            rows = self._sql.select_rows(
+                self._members_table,
+                ["id"],
+                where={"id": member_id, "product_id": product_id},
+            )
+            if not rows:
+                raise LookupError(f"Data product member not found: {member_id}")
+            self._record_approved_version(product)
+            self._sql.delete(self._members_table, where={"id": member_id})
+            self._flip_to_draft(product_id, updated_by)
 
     # ------------------------------------------------------------------
     # Review lifecycle (submit / approve / reject) — P21 item 30
@@ -769,39 +789,41 @@ class DataProductService:
             LookupError: *product_id* does not exist.
             InvalidStatusTransitionError: the space is not ``pending_approval`` (HTTP 409).
         """
-        product = self._fetch_product(product_id)
-        if product is None:
-            raise LookupError(f"Data product not found: {product_id}")
-        if product.status != "pending_approval":
-            raise InvalidStatusTransitionError(
-                f"Cannot approve Table Space {product_id}: status is '{product.status}', expected 'pending_approval'"
+        with self._sql.transaction():
+            self._lock_product(product_id)
+            product = self._fetch_product(product_id)
+            if product is None:
+                raise LookupError(f"Data product not found: {product_id}")
+            if product.status != "pending_approval":
+                raise InvalidStatusTransitionError(
+                    f"Cannot approve Table Space {product_id}: status is '{product.status}', expected 'pending_approval'"
+                )
+            new_version = product.version + 1
+            state = self._current_state(product)
+            self._sql.update(
+                self._products_table,
+                updates={
+                    "status": "approved",
+                    "version": new_version,
+                    "pending_rationale": None,
+                    "last_decision_rationale": rationale,
+                    "updated_by": updated_by,
+                    "updated_at": RawSql("now()"),
+                },
+                where={"product_id": product_id},
             )
-        new_version = product.version + 1
-        state = self._current_state(product)
-        self._sql.update(
-            self._products_table,
-            updates={
-                "status": "approved",
-                "version": new_version,
-                "pending_rationale": None,
-                "last_decision_rationale": rationale,
-                "updated_by": updated_by,
-                "updated_at": RawSql("now()"),
-            },
-            where={"product_id": product_id},
-        )
-        self._insert_version(product_id, new_version, state, updated_by)
-        logger.info("Approved data product %s at version %d", product_id, new_version)
-        return product.model_copy(
-            update={
-                "status": "approved",
-                "version": new_version,
-                "pending_rationale": None,
-                "last_decision_rationale": rationale,
-                "updated_by": updated_by,
-                "updated_at": datetime.now(timezone.utc),
-            }
-        )
+            self._insert_version(product_id, new_version, state, updated_by)
+            logger.info("Approved data product %s at version %d", product_id, new_version)
+            return product.model_copy(
+                update={
+                    "status": "approved",
+                    "version": new_version,
+                    "pending_rationale": None,
+                    "last_decision_rationale": rationale,
+                    "updated_by": updated_by,
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            )
 
     def reject(self, product_id: str, updated_by: str, rationale: str | None = None) -> DataProduct:
         """Reject a Table Space: ``pending_approval`` -> ``rejected``.
@@ -944,15 +966,8 @@ class DataProductService:
 
     def _current_state(self, product: DataProduct) -> dict[str, Any]:
         rows = self._fetch_members(product.product_id)
-        tables = self._table_summary_map()
-        members = [
-            (
-                row.binding_id,
-                tables[row.binding_id].table.table_fqn if row.binding_id in tables else row.binding_id,
-                row.pinned_version,
-            )
-            for row in rows
-        ]
+        tables = self._monitored_tables.get_table_fqns({row.binding_id for row in rows})
+        members = [(row.binding_id, tables.get(row.binding_id, row.binding_id), row.pinned_version) for row in rows]
         return collection_state(product, members)
 
     def _record_approved_version(self, product: DataProduct) -> None:
@@ -1406,6 +1421,17 @@ class DataProductService:
         for row in rows:
             if exclude_product_id is None or row[0] != exclude_product_id:
                 raise DuplicateDataProductNameError(f"A data product named '{name}' already exists.")
+
+    def _lock_product(self, product_id: str) -> None:
+        """Serialize edits to one collection for the rest of its Postgres transaction."""
+        if self._sql.dialect != "postgres":
+            return
+        escaped = escape_sql_string(product_id)
+        rows = self._sql.query(
+            f"SELECT product_id FROM {self._products_table} WHERE product_id = '{escaped}' FOR UPDATE"
+        )
+        if not rows:
+            raise LookupError(f"Data product not found: {product_id}")
 
     def _flip_to_draft(self, product_id: str, updated_by: str) -> None:
         self._sql.update(

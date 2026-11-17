@@ -371,6 +371,9 @@ class TestRunRetentionPostgresDialect:
             ), f"No OLTP DELETE used fqn()'d path for {table_name}"
             # A hardcoded Delta-quoted three-part form must not leak in.
             assert not any(f"`dqx`.`public`.{table_name}" in s for s in oltp_stmts)
+        lifecycle_delete = next((s for s in oltp_stmts if "DELETE FROM dqx.public.dq_lifecycle_history " in s), None)
+        assert lifecycle_delete is not None, "Full lifecycle snapshots must not grow without a retention bound"
+        assert "changed_at < CURRENT_TIMESTAMP - INTERVAL '90 days'" in lifecycle_delete
 
     def test_oltp_failure_does_not_abort_remaining_tables(self, scheduler):
         """Parity with the Delta loop — one bad DELETE must not skip the others."""

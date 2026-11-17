@@ -93,7 +93,8 @@ Lakebase project (when enabled, default `lakebase_project_id` = `dqx-studio-db`)
  └── databricks_postgres              (database — always-present admin DB; no per-app DB provisioned)
      └── dqx_studio                   (schema — created by PgMigrationRunner on first start; configurable via DQX_LAKEBASE_SCHEMA)
          ├── dq_app_settings, dq_role_mappings, dq_quality_rules, 
-         |   dq_resolved_rules, dq_quality_rules_history, dq_comments, 
+         |   dq_resolved_rules, dq_quality_rules_history, dq_comments,
+         |   dq_lifecycle_history, dq_data_product_versions,
          |   dq_schedule_configs, dq_schedule_configs_history, dq_schedule_runs
          └── dq_migrations             (Postgres migration version tracker)
 ```
@@ -556,7 +557,7 @@ per `_RETENTION_INTERVAL_HOURS` (24h). Two knobs, both stored in
 
 | Setting key                  | Default | Tables affected |
 |------------------------------|--------:|-----------------|
-| `retention_days`             | 90      | `dq_validation_runs`, `dq_profiling_results`, `dq_metrics`, plus the OLTP history tables (`dq_resolved_rules_history`, `dq_schedule_configs_history`). Picked to match what trend dashboards expect. |
+| `retention_days`             | 90      | `dq_validation_runs`, `dq_profiling_results`, `dq_metrics`, plus the OLTP history tables (`dq_resolved_rules_history`, `dq_schedule_configs_history`, `dq_lifecycle_history`). Lifecycle rows include full-object comparison snapshots; approved version artifacts are stored separately and are not swept. Picked to match what trend dashboards expect. |
 | `quarantine_retention_days`  | 30      | `dq_quarantine_records` only. Tighter because that table holds the full source row payload (PII surface). |
 
 Both resolvers share a `_RETENTION_DAYS_MIN = 7` floor so a

@@ -1,3 +1,4 @@
+import { comparisonToShow, shouldQueryExplicitChanges } from "@/lib/changes-view";
 import { useTranslation } from "react-i18next";
 import {
   useGetMonitoredTableChanges,
@@ -44,20 +45,19 @@ function useTableChanges(
   const params = sideParams(sides.base, sides.target);
   const query = useGetMonitoredTableChanges(bindingId, params, {
     query: {
-      // A version-0 target is nothing approved yet: there's nothing to compare until a draft is picked.
-      enabled: enabled && !!info && !(sides.target.kind === "version" && sides.target.version === 0),
+      enabled: shouldQueryExplicitChanges(enabled, !!info, sides.isDefault, sides.target),
       staleTime: LIVE_STALE_TIME,
     },
   });
   const versions = useListMonitoredTableVersions(bindingId, { query: { enabled, staleTime: LIVE_STALE_TIME } });
-  // Nothing on the target side (nothing approved yet, no draft picked) is nothing to compare.
-  const shown = sides.target.kind === "version" && sides.target.version === 0 ? undefined : query.data?.data;
+  // Defaults already contain the same comparison; only picked sides need the second request.
+  const shown = comparisonToShow(info, query.data?.data, sides.isDefault, sides.target);
   const reviewEvents = useListMonitoredTableHistory(bindingId, {
     query: { enabled, staleTime: LIVE_STALE_TIME },
   });
   useRefetchOnRevision(revision, () => {
     void defaults.refetch();
-    if (info) void query.refetch();
+    if (info && !sides.isDefault) void query.refetch();
     void versions.refetch();
     void reviewEvents.refetch();
   });

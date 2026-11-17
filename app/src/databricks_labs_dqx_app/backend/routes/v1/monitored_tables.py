@@ -74,7 +74,6 @@ from databricks_labs_dqx_app.backend.models import (
     MonitoredTableReviewOut,
     MonitoredTableSummaryOut,
     MonitoredTableChangesOut,
-    MonitoredTableVersionChecksOut,
     MonitoredTableVersionOut,
     ApplyProfilingSuggestionsIn,
     ApplyProfilingSuggestionsOut,
@@ -915,48 +914,6 @@ def _step_checks(history: LifecycleHistoryService, binding_id: str, history_id: 
 def _check_list(value: object) -> list[dict[str, Any]]:
     """A side of a table comparison as its check dicts (a snapshot or a version's checks)."""
     return [check for check in value if isinstance(check, dict)] if isinstance(value, list) else []
-
-
-@router.get(
-    "/{binding_id}/versions/{version}/checks",
-    response_model=MonitoredTableVersionChecksOut,
-    operation_id="getMonitoredTableVersionChecks",
-    dependencies=[require_role(*_ALL_ROLES)],
-)
-def get_monitored_table_version_checks(
-    binding_id: str,
-    version: int,
-    version_svc: Annotated[MonitoredTableVersionService, Depends(get_monitored_table_version_service)],
-    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    role: CurrentUserRole,
-    principal_ids: CurrentPrincipalIds,
-    perms: Annotated[PermissionsService, Depends(get_permissions_service)],
-) -> MonitoredTableVersionChecksOut:
-    """Return the frozen ``checks_json`` for a specific monitored-table version.
-
-    Complements ``listMonitoredTableVersions`` (metadata only): this is the
-    heavy per-version check payload that backs the Drafts & Review change-diff
-    popout, letting the UI diff a binding's previously frozen checks (vN-1)
-    against the proposed (current) rule set. Returns an empty ``checks`` list
-    when no snapshot exists for the requested version.
-    """
-    user_email = _current_user_email(obo_ws)
-    perms.require_object(
-        ObjectType.MONITORED_TABLE.value,
-        binding_id,
-        Privilege.SELECT,
-        role=role,
-        principal_ids=set(principal_ids),
-        principal_email=user_email,
-    )
-    try:
-        checks = version_svc.get_checks(binding_id, version)
-    except LookupError:
-        checks = []
-    except Exception as e:
-        logger.error(f"Failed to get frozen checks for monitored table {binding_id} v{version}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to get monitored table version checks: {e}")
-    return MonitoredTableVersionChecksOut(binding_id=binding_id, version=version, checks=checks)
 
 
 @router.post(

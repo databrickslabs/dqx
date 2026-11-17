@@ -390,8 +390,8 @@ function RegistryApprovalsSection({
  * (draft -> pending_approval -> approved/rejected), so a pending binding
  * belongs in the same single approvals queue as registry rules and Table
  * Spaces. Driven by ``useListMonitoredTables`` filtered to the
- * ``pending_approval`` status; the change-diff popout reuses the two most
- * recent frozen version snapshots (see TableChangesDialog).
+ * ``pending_approval`` status; the change-diff popout compares the approved
+ * rules with the proposed edit, or any two saved states (see TableChangesDialog).
  */
 function MonitoredTablesApprovalsSection({
   canApproveRules,
