@@ -159,7 +159,6 @@ def test_marketplace_setup_provisions_prefix_storage(
         sql=sql,
         settings=_NoGenieSpaceSettings(),
         app_name="dqx-studio-integration",
-        dashboard_id="",
     )
 
     result = access.reconcile_access()

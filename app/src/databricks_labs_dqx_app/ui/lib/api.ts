@@ -511,6 +511,11 @@ export interface BatchImportRegistryRulesFailure {
 }
 
 /**
+ * Existing active rules the importer chose to reuse (see ``previewBatchImportRegistryRules``), keyed by input index so two imported checks that share a similar_key can still pick different candidates (e.g. ``case: lower`` vs ``case: upper``).
+ */
+export type BatchImportRegistryRulesInReuseRuleIds = {[key: string]: string};
+
+/**
  * Bulk-create registry drafts from imported check dicts (YAML, data contract, …).
  */
 export interface BatchImportRegistryRulesIn {
@@ -529,8 +534,8 @@ export interface BatchImportRegistryRulesIn {
   source?: string;
   /** When true, rules whose slots are named after concrete columns (data contracts) are created as generic rules: slots renamed to 'column'/'column_N', a generic name, and no column-specific description. See ``slot_renames`` on each result. */
   generalize_slots?: boolean;
-  /** Existing active rules the importer chose to reuse (see ``previewBatchImportRegistryRules``), keyed by input index so two imported checks that share a similar_key can still pick different candidates. */
-  reuse_rule_ids?: { [key: string]: string };
+  /** Existing active rules the importer chose to reuse (see ``previewBatchImportRegistryRules``), keyed by input index so two imported checks that share a similar_key can still pick different candidates (e.g. ``case: lower`` vs ``case: upper``). */
+  reuse_rule_ids?: BatchImportRegistryRulesInReuseRuleIds;
 }
 
 /**
@@ -1196,8 +1201,6 @@ export interface CreateRegistryRuleOut {
   input_index?: CreateRegistryRuleOutInputIndex;
   /** Batch import only: input slot name -> slot name on the returned rule, when they differ (the input was matched to, or created as, a generic rule with different slot names). */
   slot_renames?: CreateRegistryRuleOutSlotRenames;
-  /** Batch import only: imported filter that differs from the returned rule's default. Apply it as the applied rule's row_filter. */
-  row_filter?: string | null;
 }
 
 export interface CreateRoleMappingIn {
@@ -3307,6 +3310,11 @@ export type RecordPendingApplicationInRowFilter = string | null;
 export type RecordPendingApplicationInPassThreshold = number | null;
 
 /**
+ * Custom tags from the import, carried to the applied rule on approval. Registry rules keep only reserved metadata keys; these belong on the application.
+ */
+export type RecordPendingApplicationInTags = {[key: string]: string};
+
+/**
  * One staged (binding, rule, mapping) application awaiting the rule's approval.
  */
 export interface RecordPendingApplicationIn {
@@ -3320,8 +3328,49 @@ export interface RecordPendingApplicationIn {
   row_filter?: RecordPendingApplicationInRowFilter;
   /** Per-rule minimum % of rows that must pass, carried to the application on approval. */
   pass_threshold?: RecordPendingApplicationInPassThreshold;
-  /** Custom tags carried to the applied rule on approval. */
-  tags?: {[key: string]: string};
+  /** Custom tags from the import, carried to the applied rule on approval. Registry rules keep only reserved metadata keys; these belong on the application. */
+  tags?: RecordPendingApplicationInTags;
+}
+
+/**
+ * Body of ``POST /schedule-grants/reference-apply``: capped like the reference-table preflight.
+ */
+export interface ReferenceGrantApplyIn {
+  /**
+   * Fully qualified names of the joined tables whose missing task-runner grants to run
+   * @minItems 1
+   * @maxItems 100
+   */
+  table_fqns: string[];
+}
+
+/**
+ * Raw SQL rule text to scan
+ */
+export type ReferenceGrantPreflightInSqlQuery = string | null;
+
+/**
+ * The rule's own table, excluded from the check
+ */
+export type ReferenceGrantPreflightInSourceTableFqn = string | null;
+
+/**
+ * Body of ``POST /schedule-grants/reference-preflight``: the tables a rule reads besides its source.
+
+*table_fqns* are the join targets the low-code builder picked. *sql_query* is a raw SQL
+rule's text; its FROM / JOIN tables are extracted server-side. *source_table_fqn* is the
+rule's own table and is never checked.
+ */
+export interface ReferenceGrantPreflightIn {
+  /**
+   * Joined table names
+   * @maxItems 100
+   */
+  table_fqns?: string[];
+  /** Raw SQL rule text to scan */
+  sql_query?: ReferenceGrantPreflightInSqlQuery;
+  /** The rule's own table, excluded from the check */
+  source_table_fqn?: ReferenceGrantPreflightInSourceTableFqn;
 }
 
 /**
@@ -3717,7 +3766,7 @@ export type RuleDefinitionBody = { [key: string]: unknown };
 export type RuleDefinitionErrorMessage = string | null;
 
 /**
- * Default row filter (a SQL WHERE predicate) for tables this rule is applied to. Applied rules may override it with ``row_filter``; an empty applied filter inherits this default. Supports {{slot}} placeholders substituted at materialize time. Validated for SQL safety on create/update. Not part of the rule fingerprint — two rules that differ only by filter are the same check.
+ * Default row filter (a SQL WHERE predicate) for tables this rule is applied to. Applied rules may override it with ``row_filter``; an empty applied filter inherits this default. Supports {{slot}} placeholders substituted at materialize time. Validated for SQL safety on create/update. Part of the rule fingerprint — two rules that differ only by filter are different checks.
  */
 export type RuleDefinitionFilter = string | null;
 
@@ -3738,7 +3787,7 @@ export interface RuleDefinition {
   parameters?: RuleParameter[];
   /** Optional custom failure message (a Spark SQL expression string), mirroring DQRule.message_expr. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'message_expr' key on the rendered dq_resolved_rules check when set; omitted entirely when None or empty. */
   error_message?: RuleDefinitionErrorMessage;
-  /** Default row filter (a SQL WHERE predicate) for tables this rule is applied to. Applied rules may override it with ``row_filter``; an empty applied filter inherits this default. Supports {{slot}} placeholders substituted at materialize time. Validated for SQL safety on create/update. Not part of the rule fingerprint — two rules that differ only by filter are the same check. */
+  /** Default row filter (a SQL WHERE predicate) for tables this rule is applied to. Applied rules may override it with ``row_filter``; an empty applied filter inherits this default. Supports {{slot}} placeholders substituted at materialize time. Validated for SQL safety on create/update. Part of the rule fingerprint — two rules that differ only by filter are different checks. */
   filter?: RuleDefinitionFilter;
 }
 
@@ -3978,6 +4027,8 @@ export type RuleTestRunInAdhoc = AdhocRunIn | null;
 
 export type RuleTestRunInTable = TableRunIn | null;
 
+export type RuleTestRunInCheckFunction = 'sql_query' | 'sql_expression' | null;
+
 export interface RuleTestRunIn {
   mode: RuleTestRunInMode;
   predicate?: string;
@@ -3994,6 +4045,7 @@ export interface RuleTestRunIn {
    */
   display_cap?: number;
   lowcode_advanced?: boolean;
+  check_function?: RuleTestRunInCheckFunction;
 }
 
 export interface RuleTestRunOut {
@@ -4442,6 +4494,108 @@ export interface SaveRulesIn {
   source?: RuleSource;
   /** If set, update existing rule instead of creating */
   rule_id?: SaveRulesInRuleId;
+}
+
+export interface SavedViewCreateIn {
+  page: SavedViewPage;
+  name: string;
+  scope?: SavedViewScope;
+  payload: SavedViewPayload;
+  make_my_default?: boolean;
+  make_org_default?: boolean;
+}
+
+export type SavedViewLayoutVisibility = {[key: string]: boolean};
+
+/**
+ * Order and visibility of columns or filters.
+ */
+export interface SavedViewLayout {
+  /** @maxItems 64 */
+  order?: string[];
+  visibility?: SavedViewLayoutVisibility;
+}
+
+export interface SavedViewListOut {
+  views: SavedViewOut[];
+  effective_default_id: string;
+}
+
+export type SavedViewMyDefaultInViewId = string | null;
+
+export interface SavedViewMyDefaultIn {
+  page: SavedViewPage;
+  view_id: SavedViewMyDefaultInViewId;
+}
+
+export interface SavedViewOrgDefaultIn {
+  page: SavedViewPage;
+  view_id: string;
+}
+
+export type SavedViewOutPayload = SavedViewPayload | null;
+
+export interface SavedViewOut {
+  id: string;
+  page: SavedViewPage;
+  name: string;
+  scope: SavedViewScope;
+  payload: SavedViewOutPayload;
+  is_builtin: boolean;
+  is_org_default: boolean;
+  is_my_default: boolean;
+  starred: boolean;
+  can_edit: boolean;
+  can_set_org_default: boolean;
+}
+
+/**
+ * Pages that support saved views (allowlist for the page key).
+ */
+export type SavedViewPage = typeof SavedViewPage[keyof typeof SavedViewPage];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const SavedViewPage = {
+  monitored_tables: 'monitored_tables',
+  registry_rules: 'registry_rules',
+  collections: 'collections',
+  schedules: 'schedules',
+  global_results: 'global_results',
+} as const;
+
+export type SavedViewPayloadColumns = SavedViewLayout | null;
+
+export type SavedViewPayloadValues = {[key: string]: string | string[] | null};
+
+/**
+ * Versioned view state: column layout, filter layout and filter values.
+ */
+export interface SavedViewPayload {
+  v?: 1;
+  columns?: SavedViewPayloadColumns;
+  filters?: SavedViewLayout;
+  values?: SavedViewPayloadValues;
+}
+
+export interface SavedViewRenameIn {
+  name: string;
+}
+
+/**
+ * Who a view is visible to.
+ */
+export type SavedViewScope = typeof SavedViewScope[keyof typeof SavedViewScope];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const SavedViewScope = {
+  org: 'org',
+  user: 'user',
+} as const;
+
+export interface SavedViewUpdateIn {
+  payload: SavedViewPayload;
 }
 
 export type ScheduleConfigHistoryOutConfig = { [key: string]: unknown };
@@ -5964,6 +6118,13 @@ entity_id: string;
 
 export type DeleteComment200 = {[key: string]: string};
 
+export type ListSavedViewsParams = {
+/**
+ * Page key the views belong to
+ */
+page: SavedViewPage;
+};
+
 export type ListQuarantineRecordsParams = {
 /**
  * @minimum 0
@@ -6026,6 +6187,9 @@ table?: string[] | null;
 catalog?: string[] | null;
 schema?: string[] | null;
 outcome?: string[] | null;
+collection?: string[] | null;
+owner?: string[] | null;
+score_bucket?: '75-100' | '50-75' | '25-50' | '0-25' | 'none' | null;
 run_id?: string | null;
 axes?: string;
 include_drafts?: boolean;
@@ -17031,14 +17195,14 @@ export function useListRegistryRuleVersionsSuspense<TData = Awaited<ReturnType<t
 
 "Similar" rules run the same check on the same slots but with different
 parameters (e.g. ``trim_strings``); the importer decides whether to reuse
-one by passing it in ``reuse_rule_ids`` on the batch import.
+one by passing it in ``reuse_rule_ids`` (input index -> rule id) on the batch import.
  * @summary Preview Batch Import Registry Rules
  */
 export const previewBatchImportRegistryRules = (
     previewBatchImportRegistryRulesIn: PreviewBatchImportRegistryRulesIn, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<PreviewBatchImportRegistryRulesOut>> => {
-
-
+    
+    
     return axios.default.post(
       `/api/v1/registry-rules/batch-import/preview`,
       previewBatchImportRegistryRulesIn,options
@@ -17058,7 +17222,7 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
       : {...options, mutation: {...options.mutation, mutationKey}}
       : {mutation: { mutationKey, }, axios: undefined};
 
-
+      
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof previewBatchImportRegistryRules>>, {data: PreviewBatchImportRegistryRulesIn}> = (props) => {
@@ -17067,7 +17231,7 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?
           return  previewBatchImportRegistryRules(data,axiosOptions)
         }
 
-
+        
 
 
   return  { mutationFn, ...mutationOptions }}
@@ -17092,7 +17256,7 @@ export const usePreviewBatchImportRegistryRules = <TError = AxiosError<HTTPValid
 
       return useMutation(mutationOptions, queryClient);
     }
-
+    
 /**
  * Bulk-create registry drafts from imported checks in a single request.
 
@@ -17109,6 +17273,13 @@ the batch.
 Imported ``dimension``/``severity`` tags are folded onto the configured
 label vocabulary first (an ODCS contract spells them lowercase), so they
 match the values the rest of the app filters and colours by.
+
+When the workspace has a configured severity vocabulary, every imported
+rule must carry a ``severity`` tag that maps onto that vocabulary —
+missing or unknown values fail that row (Marketplace and direct API
+callers included). Custom tags beyond the reserved keys are dropped from
+the registry rule; callers that apply the rule should pass them as
+applied-rule ``tags``.
  * @summary Batch Import Registry Rules
  */
 export const batchImportRegistryRules = (
@@ -22706,6 +22877,720 @@ export const useDeleteComment = <TError = AxiosError<HTTPValidationError>,
     }
     
 /**
+ * List the org views and the caller's personal views for a page.
+ * @summary List Saved Views
+ */
+export const listSavedViews = (
+    params: ListSavedViewsParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SavedViewListOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/saved-views`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+
+
+export const getListSavedViewsQueryKey = (params?: ListSavedViewsParams,) => {
+    return [
+    `/api/v1/saved-views`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getListSavedViewsQueryOptions = <TData = Awaited<ReturnType<typeof listSavedViews>>, TError = AxiosError<HTTPValidationError>>(params: ListSavedViewsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSavedViews>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListSavedViewsQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSavedViews>>> = ({ signal }) => listSavedViews(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listSavedViews>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListSavedViewsQueryResult = NonNullable<Awaited<ReturnType<typeof listSavedViews>>>
+export type ListSavedViewsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListSavedViews<TData = Awaited<ReturnType<typeof listSavedViews>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListSavedViewsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSavedViews>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listSavedViews>>,
+          TError,
+          Awaited<ReturnType<typeof listSavedViews>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListSavedViews<TData = Awaited<ReturnType<typeof listSavedViews>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListSavedViewsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSavedViews>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listSavedViews>>,
+          TError,
+          Awaited<ReturnType<typeof listSavedViews>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListSavedViews<TData = Awaited<ReturnType<typeof listSavedViews>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListSavedViewsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSavedViews>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Saved Views
+ */
+
+export function useListSavedViews<TData = Awaited<ReturnType<typeof listSavedViews>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListSavedViewsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSavedViews>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListSavedViewsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListSavedViewsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listSavedViews>>, TError = AxiosError<HTTPValidationError>>(params: ListSavedViewsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSavedViews>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListSavedViewsQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSavedViews>>> = ({ signal }) => listSavedViews(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSavedViews>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListSavedViewsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listSavedViews>>>
+export type ListSavedViewsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListSavedViewsSuspense<TData = Awaited<ReturnType<typeof listSavedViews>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListSavedViewsParams, options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSavedViews>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListSavedViewsSuspense<TData = Awaited<ReturnType<typeof listSavedViews>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListSavedViewsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSavedViews>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListSavedViewsSuspense<TData = Awaited<ReturnType<typeof listSavedViews>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListSavedViewsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSavedViews>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Saved Views
+ */
+
+export function useListSavedViewsSuspense<TData = Awaited<ReturnType<typeof listSavedViews>>, TError = AxiosError<HTTPValidationError>>(
+ params: ListSavedViewsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listSavedViews>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListSavedViewsSuspenseQueryOptions(params,options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
+ * Create a saved view (org scope is admin-only).
+ * @summary Create Saved View
+ */
+export const createSavedView = (
+    savedViewCreateIn: SavedViewCreateIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SavedViewOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/saved-views`,
+      savedViewCreateIn,options
+    );
+  }
+
+
+
+export const getCreateSavedViewMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createSavedView>>, TError,{data: SavedViewCreateIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof createSavedView>>, TError,{data: SavedViewCreateIn}, TContext> => {
+
+const mutationKey = ['createSavedView'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createSavedView>>, {data: SavedViewCreateIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createSavedView(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateSavedViewMutationResult = NonNullable<Awaited<ReturnType<typeof createSavedView>>>
+    export type CreateSavedViewMutationBody = SavedViewCreateIn
+    export type CreateSavedViewMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Create Saved View
+ */
+export const useCreateSavedView = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createSavedView>>, TError,{data: SavedViewCreateIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createSavedView>>,
+        TError,
+        {data: SavedViewCreateIn},
+        TContext
+      > => {
+
+      const mutationOptions = getCreateSavedViewMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Set or clear the caller's personal default view for a page.
+ * @summary Set My Saved View Default
+ */
+export const setMySavedViewDefault = (
+    savedViewMyDefaultIn: SavedViewMyDefaultIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SavedViewListOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/saved-views/defaults/me`,
+      savedViewMyDefaultIn,options
+    );
+  }
+
+
+
+export const getSetMySavedViewDefaultMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setMySavedViewDefault>>, TError,{data: SavedViewMyDefaultIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof setMySavedViewDefault>>, TError,{data: SavedViewMyDefaultIn}, TContext> => {
+
+const mutationKey = ['setMySavedViewDefault'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setMySavedViewDefault>>, {data: SavedViewMyDefaultIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  setMySavedViewDefault(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetMySavedViewDefaultMutationResult = NonNullable<Awaited<ReturnType<typeof setMySavedViewDefault>>>
+    export type SetMySavedViewDefaultMutationBody = SavedViewMyDefaultIn
+    export type SetMySavedViewDefaultMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Set My Saved View Default
+ */
+export const useSetMySavedViewDefault = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setMySavedViewDefault>>, TError,{data: SavedViewMyDefaultIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setMySavedViewDefault>>,
+        TError,
+        {data: SavedViewMyDefaultIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSetMySavedViewDefaultMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Make an org view the org default for a page (admin only).
+ * @summary Set Org Saved View Default
+ */
+export const setOrgSavedViewDefault = (
+    savedViewOrgDefaultIn: SavedViewOrgDefaultIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SavedViewListOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/saved-views/defaults/org`,
+      savedViewOrgDefaultIn,options
+    );
+  }
+
+
+
+export const getSetOrgSavedViewDefaultMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setOrgSavedViewDefault>>, TError,{data: SavedViewOrgDefaultIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof setOrgSavedViewDefault>>, TError,{data: SavedViewOrgDefaultIn}, TContext> => {
+
+const mutationKey = ['setOrgSavedViewDefault'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setOrgSavedViewDefault>>, {data: SavedViewOrgDefaultIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  setOrgSavedViewDefault(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetOrgSavedViewDefaultMutationResult = NonNullable<Awaited<ReturnType<typeof setOrgSavedViewDefault>>>
+    export type SetOrgSavedViewDefaultMutationBody = SavedViewOrgDefaultIn
+    export type SetOrgSavedViewDefaultMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Set Org Saved View Default
+ */
+export const useSetOrgSavedViewDefault = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setOrgSavedViewDefault>>, TError,{data: SavedViewOrgDefaultIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof setOrgSavedViewDefault>>,
+        TError,
+        {data: SavedViewOrgDefaultIn},
+        TContext
+      > => {
+
+      const mutationOptions = getSetOrgSavedViewDefaultMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Replace the payload of a saved view.
+ * @summary Update Saved View
+ */
+export const updateSavedView = (
+    viewId: string,
+    savedViewUpdateIn: SavedViewUpdateIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SavedViewOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/saved-views/${viewId}`,
+      savedViewUpdateIn,options
+    );
+  }
+
+
+
+export const getUpdateSavedViewMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSavedView>>, TError,{viewId: string;data: SavedViewUpdateIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof updateSavedView>>, TError,{viewId: string;data: SavedViewUpdateIn}, TContext> => {
+
+const mutationKey = ['updateSavedView'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateSavedView>>, {viewId: string;data: SavedViewUpdateIn}> = (props) => {
+          const {viewId,data} = props ?? {};
+
+          return  updateSavedView(viewId,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateSavedViewMutationResult = NonNullable<Awaited<ReturnType<typeof updateSavedView>>>
+    export type UpdateSavedViewMutationBody = SavedViewUpdateIn
+    export type UpdateSavedViewMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Update Saved View
+ */
+export const useUpdateSavedView = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSavedView>>, TError,{viewId: string;data: SavedViewUpdateIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateSavedView>>,
+        TError,
+        {viewId: string;data: SavedViewUpdateIn},
+        TContext
+      > => {
+
+      const mutationOptions = getUpdateSavedViewMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Rename a saved view.
+ * @summary Rename Saved View
+ */
+export const renameSavedView = (
+    viewId: string,
+    savedViewRenameIn: SavedViewRenameIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SavedViewOut>> => {
+    
+    
+    return axios.default.patch(
+      `/api/v1/saved-views/${viewId}`,
+      savedViewRenameIn,options
+    );
+  }
+
+
+
+export const getRenameSavedViewMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof renameSavedView>>, TError,{viewId: string;data: SavedViewRenameIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof renameSavedView>>, TError,{viewId: string;data: SavedViewRenameIn}, TContext> => {
+
+const mutationKey = ['renameSavedView'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof renameSavedView>>, {viewId: string;data: SavedViewRenameIn}> = (props) => {
+          const {viewId,data} = props ?? {};
+
+          return  renameSavedView(viewId,data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RenameSavedViewMutationResult = NonNullable<Awaited<ReturnType<typeof renameSavedView>>>
+    export type RenameSavedViewMutationBody = SavedViewRenameIn
+    export type RenameSavedViewMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Rename Saved View
+ */
+export const useRenameSavedView = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof renameSavedView>>, TError,{viewId: string;data: SavedViewRenameIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof renameSavedView>>,
+        TError,
+        {viewId: string;data: SavedViewRenameIn},
+        TContext
+      > => {
+
+      const mutationOptions = getRenameSavedViewMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Delete a saved view.
+ * @summary Delete Saved View
+ */
+export const deleteSavedView = (
+    viewId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<void>> => {
+    
+    
+    return axios.default.delete(
+      `/api/v1/saved-views/${viewId}`,options
+    );
+  }
+
+
+
+export const getDeleteSavedViewMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteSavedView>>, TError,{viewId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteSavedView>>, TError,{viewId: string}, TContext> => {
+
+const mutationKey = ['deleteSavedView'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteSavedView>>, {viewId: string}> = (props) => {
+          const {viewId} = props ?? {};
+
+          return  deleteSavedView(viewId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteSavedViewMutationResult = NonNullable<Awaited<ReturnType<typeof deleteSavedView>>>
+    
+    export type DeleteSavedViewMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Delete Saved View
+ */
+export const useDeleteSavedView = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteSavedView>>, TError,{viewId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteSavedView>>,
+        TError,
+        {viewId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getDeleteSavedViewMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Move the caller's own personal view into the org scope (admin only).
+ * @summary Share Saved View
+ */
+export const shareSavedView = (
+    viewId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SavedViewOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/saved-views/${viewId}/share`,undefined,options
+    );
+  }
+
+
+
+export const getShareSavedViewMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof shareSavedView>>, TError,{viewId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof shareSavedView>>, TError,{viewId: string}, TContext> => {
+
+const mutationKey = ['shareSavedView'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof shareSavedView>>, {viewId: string}> = (props) => {
+          const {viewId} = props ?? {};
+
+          return  shareSavedView(viewId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ShareSavedViewMutationResult = NonNullable<Awaited<ReturnType<typeof shareSavedView>>>
+    
+    export type ShareSavedViewMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Share Saved View
+ */
+export const useShareSavedView = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof shareSavedView>>, TError,{viewId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof shareSavedView>>,
+        TError,
+        {viewId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getShareSavedViewMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Star a saved view for the caller.
+ * @summary Star Saved View
+ */
+export const starSavedView = (
+    viewId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SavedViewOut>> => {
+    
+    
+    return axios.default.put(
+      `/api/v1/saved-views/${viewId}/star`,undefined,options
+    );
+  }
+
+
+
+export const getStarSavedViewMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof starSavedView>>, TError,{viewId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof starSavedView>>, TError,{viewId: string}, TContext> => {
+
+const mutationKey = ['starSavedView'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof starSavedView>>, {viewId: string}> = (props) => {
+          const {viewId} = props ?? {};
+
+          return  starSavedView(viewId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StarSavedViewMutationResult = NonNullable<Awaited<ReturnType<typeof starSavedView>>>
+    
+    export type StarSavedViewMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Star Saved View
+ */
+export const useStarSavedView = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof starSavedView>>, TError,{viewId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof starSavedView>>,
+        TError,
+        {viewId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getStarSavedViewMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Remove the caller's star from a saved view.
+ * @summary Unstar Saved View
+ */
+export const unstarSavedView = (
+    viewId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SavedViewOut>> => {
+    
+    
+    return axios.default.delete(
+      `/api/v1/saved-views/${viewId}/star`,options
+    );
+  }
+
+
+
+export const getUnstarSavedViewMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unstarSavedView>>, TError,{viewId: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof unstarSavedView>>, TError,{viewId: string}, TContext> => {
+
+const mutationKey = ['unstarSavedView'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof unstarSavedView>>, {viewId: string}> = (props) => {
+          const {viewId} = props ?? {};
+
+          return  unstarSavedView(viewId,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UnstarSavedViewMutationResult = NonNullable<Awaited<ReturnType<typeof unstarSavedView>>>
+    
+    export type UnstarSavedViewMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Unstar Saved View
+ */
+export const useUnstarSavedView = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof unstarSavedView>>, TError,{viewId: string}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof unstarSavedView>>,
+        TError,
+        {viewId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getUnstarSavedViewMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
  * @summary List Quarantine Records
  */
 export const listQuarantineRecords = (
@@ -24058,6 +24943,11 @@ the By-table cross-filter: a repeatable list of member FQNs, applied
 app-side like the other four facets (the rows it filters are already
 catalog-gated, so an inaccessible value simply matches nothing).
 *outcome* keeps only ``passed`` or ``failed`` checks.
+
+*collection* (data-product ids), *owner* (owner_display_name -> owner ->
+created_by) and *score_bucket* (cached DQ score) narrow the TABLE
+UNIVERSE like *catalog* does: intersected, applied after the catalog
+gate, and to every axis including by_table.
 
 Concurrent member runs of one run set are consolidated onto their
 RUN-BATCH instant (``dq_run_set_members`` join) so the per-table trend
@@ -31597,6 +32487,135 @@ export const useApplyScheduleGrants = <TError = AxiosError<HTTPValidationError>,
       > => {
 
       const mutationOptions = getApplyScheduleGrantsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Check whether the task-runner SP can read the tables a rule joins or reads.
+
+Raw SQL is scanned server-side for FROM / JOIN tables. The rule's own source table is
+excluded. The check is advisory: it never blocks saving the rule.
+ * @summary Preflight Reference Grants
+ */
+export const preflightReferenceGrants = (
+    referenceGrantPreflightIn: ReferenceGrantPreflightIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<SchedulePreflightOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/schedule-grants/reference-preflight`,
+      referenceGrantPreflightIn,options
+    );
+  }
+
+
+
+export const getPreflightReferenceGrantsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof preflightReferenceGrants>>, TError,{data: ReferenceGrantPreflightIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof preflightReferenceGrants>>, TError,{data: ReferenceGrantPreflightIn}, TContext> => {
+
+const mutationKey = ['preflightReferenceGrants'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof preflightReferenceGrants>>, {data: ReferenceGrantPreflightIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  preflightReferenceGrants(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PreflightReferenceGrantsMutationResult = NonNullable<Awaited<ReturnType<typeof preflightReferenceGrants>>>
+    export type PreflightReferenceGrantsMutationBody = ReferenceGrantPreflightIn
+    export type PreflightReferenceGrantsMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Preflight Reference Grants
+ */
+export const usePreflightReferenceGrants = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof preflightReferenceGrants>>, TError,{data: ReferenceGrantPreflightIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof preflightReferenceGrants>>,
+        TError,
+        {data: ReferenceGrantPreflightIn},
+        TContext
+      > => {
+
+      const mutationOptions = getPreflightReferenceGrantsMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
+ * Run the grants :func:`preflight_reference_grants` lists for these tables, as the signed-in user.
+ * @summary Apply Reference Grants
+ */
+export const applyReferenceGrants = (
+    referenceGrantApplyIn: ReferenceGrantApplyIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ScheduleGrantApplyOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/schedule-grants/reference-apply`,
+      referenceGrantApplyIn,options
+    );
+  }
+
+
+
+export const getApplyReferenceGrantsMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyReferenceGrants>>, TError,{data: ReferenceGrantApplyIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof applyReferenceGrants>>, TError,{data: ReferenceGrantApplyIn}, TContext> => {
+
+const mutationKey = ['applyReferenceGrants'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof applyReferenceGrants>>, {data: ReferenceGrantApplyIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  applyReferenceGrants(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApplyReferenceGrantsMutationResult = NonNullable<Awaited<ReturnType<typeof applyReferenceGrants>>>
+    export type ApplyReferenceGrantsMutationBody = ReferenceGrantApplyIn
+    export type ApplyReferenceGrantsMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Apply Reference Grants
+ */
+export const useApplyReferenceGrants = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof applyReferenceGrants>>, TError,{data: ReferenceGrantApplyIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof applyReferenceGrants>>,
+        TError,
+        {data: ReferenceGrantApplyIn},
+        TContext
+      > => {
+
+      const mutationOptions = getApplyReferenceGrantsMutationOptions(options);
 
       return useMutation(mutationOptions, queryClient);
     }
