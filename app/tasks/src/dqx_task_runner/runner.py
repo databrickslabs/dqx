@@ -182,7 +182,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 
 def _jsonable(c: Column, t: DataType) -> Column:
-    """Convert *c* of type *t* into a value that *to_json* can serialise.
+    """Convert *c* of type *t* into a value that *to_json* can serialise; used for sample and quarantine rows.
 
     GEOMETRY and GEOGRAPHY values become hex-encoded EWKB / WKB and TIME values become strings. Arrays,
     maps and structs are converted element by element, so nested values are covered too. Everything else
@@ -203,17 +203,25 @@ def _jsonable(c: Column, t: DataType) -> Column:
     return c
 
 
-def _quote_column_name(name: str) -> str:
-    """Quote *name* so *F.col* resolves it as one top-level column, even when it contains dots or backticks."""
-    return "`" + name.replace("`", "``") + "`"
+def _row_struct(df: DataFrame, columns: list[str]) -> Column:
+    """Build a struct of the top-level *columns* of *df*, converting each value with *_jsonable*.
+
+    Column names are quoted, so names containing dots or backticks resolve as one top-level column.
+    """
+    from databricks.labs.dqx.utils import quote_column_name
+
+    return F.struct(
+        *[
+            _jsonable(F.col(quote_column_name(f.name)), f.dataType).alias(f.name)
+            for f in df.schema.fields
+            if f.name in columns
+        ]
+    )
 
 
 def _row_json(df: DataFrame) -> Column:
     """Serialise each row of *df* to a JSON object in Spark, keeping null fields."""
-    return F.to_json(
-        F.struct(*[_jsonable(F.col(_quote_column_name(f.name)), f.dataType).alias(f.name) for f in df.schema.fields]),
-        {"ignoreNullFields": "false"},
-    )
+    return F.to_json(_row_struct(df, df.schema.fieldNames()), {"ignoreNullFields": "false"})
 
 
 def _sample_rows(df: DataFrame, limit: int = 10) -> list[dict[str, Any]]:
@@ -891,7 +899,8 @@ def _write_quarantine_records(
     ``row_data`` and ``errors`` columns are VARIANT in the baseline
     schema. We materialise them via ``parse_json(to_json(...))`` so the
     row payload becomes a typed JSON value (queryable with
-    ``variant_get``) rather than an opaque STRING.
+    ``variant_get``) rather than an opaque STRING. Row values are converted
+    with ``_jsonable``, as in the sample payload.
     """
     invalid_count = invalid_df.count()
     if invalid_count == 0:
@@ -913,7 +922,7 @@ def _write_quarantine_records(
         .withColumn("run_id", F.lit(run_id))
         .withColumn("source_table_fqn", F.lit(source_table_fqn))
         .withColumn("requesting_user", F.lit(requesting_user))
-        .withColumn("row_data", F.parse_json(F.to_json(F.struct(*data_cols))))
+        .withColumn("row_data", F.parse_json(F.to_json(_row_struct(invalid_df, data_cols))))
         .withColumn("errors", F.parse_json(F.to_json(F.col("_errors"))))
         .withColumn("warnings", warnings_expr)
         .withColumn("created_at", F.current_timestamp())
@@ -981,7 +990,9 @@ def _write_sql_quarantine_records(
     # ``row_data``/``errors`` are VARIANT — wrap with parse_json so the
     # values land as typed JSON rather than opaque strings.
     data_cols = [c for c in capped_df.columns if c not in ("_warnings", "_errors", "_rule_name")]
-    row_data_expr = F.parse_json(F.to_json(F.struct(*data_cols))) if data_cols else F.parse_json(F.lit("{}"))
+    row_data_expr = (
+        F.parse_json(F.to_json(_row_struct(capped_df, data_cols))) if data_cols else F.parse_json(F.lit("{}"))
+    )
     # List of one struct, matching DQX's ``dq_result_item_schema`` so the
     # frontend's ``row.errors.map(formatError)`` and the Pydantic
     # ``QuarantineRecordOut.errors: list[Any]`` both work without

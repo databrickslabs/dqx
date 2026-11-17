@@ -544,6 +544,82 @@ class TestSampleRowJson:
         assert rows == [{"id": 1, "location": "0101000020E6100000000000000000F03F0000000000000040", "note": None}]
 
 
+class TestQuarantineRowData:
+    """Both quarantine writers build ``row_data`` with the same value conversion as the sample payload."""
+
+    @staticmethod
+    def _df(schema):
+        df = MagicMock(name="df")
+        df.schema = schema
+        df.columns = [f.name for f in schema.fields]
+        df.count.return_value = 1
+        chain = MagicMock(name="chain")
+        chain.withColumn.return_value = chain
+        chain.select.return_value = chain
+        df.withColumn.return_value = chain
+        return df, chain
+
+    @staticmethod
+    def _row_data(chain) -> str:
+        return next(str(c.args[1]) for c in chain.withColumn.call_args_list if c.args[0] == "row_data")
+
+    def _write_row_level(self, runner_module, schema) -> str:
+        df, chain = self._df(schema)
+        runner_module._write_quarantine_records(MagicMock(), df, "r1", "cat.sch.tbl", "alice@x", "rc", "rs")
+        return self._row_data(chain)
+
+    def _write_sql(self, runner_module, schema) -> str:
+        df, chain = self._df(schema)
+        runner_module._write_sql_quarantine_records(
+            MagicMock(),
+            df,
+            run_id="r1",
+            source_table_fqn="cat.sch.tbl",
+            requesting_user="alice@x",
+            check_name="my_sql_check",
+            invalid_count=1,
+            result_catalog="rc",
+            result_schema="rs",
+        )
+        return self._row_data(chain)
+
+    def test_row_level_writer_converts_geospatial_and_drops_dqx_columns(self, runner_module):
+        from pyspark.sql.types import ArrayType, StringType, StructField, StructType
+
+        schema = StructType(
+            [
+                StructField("id", StringType()),
+                StructField("location", _spark_type("geometry")),
+                StructField("area", _spark_type("geography")),
+                StructField("_errors", ArrayType(StringType())),
+                StructField("_warnings", ArrayType(StringType())),
+            ]
+        )
+
+        assert self._write_row_level(runner_module, schema) == (
+            "Column<'parse_json(to_json(struct(`id` AS id, hex(CallFunction('st_asewkb', `location`)) AS location, "
+            "hex(CallFunction('st_asbinary', `area`)) AS area)))'>"
+        )
+
+    def test_sql_writer_converts_geospatial(self, runner_module):
+        from pyspark.sql.types import StringType, StructField, StructType
+
+        schema = StructType([StructField("id", StringType()), StructField("location", _spark_type("geometry"))])
+
+        assert self._write_sql(runner_module, schema) == (
+            "Column<'parse_json(to_json(struct(`id` AS id, hex(CallFunction('st_asewkb', `location`)) AS location)))'>"
+        )
+
+    def test_writers_quote_top_level_column_names(self, runner_module):
+        from pyspark.sql.types import LongType, StructField, StructType
+
+        schema = StructType([StructField("a.b", LongType()), StructField("x`y", LongType())])
+        expected = "Column<'parse_json(to_json(struct(`a.b` AS a.b, `x``y` AS x`y)))'>"
+
+        assert self._write_row_level(runner_module, schema) == expected
+        assert self._write_sql(runner_module, schema) == expected
+
+
 # ---------------------------------------------------------------------------
 # _parse_job_run_id — {{job.run_id}} run-context parsing (B2-69)
 # ---------------------------------------------------------------------------
