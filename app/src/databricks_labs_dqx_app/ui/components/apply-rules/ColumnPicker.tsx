@@ -83,6 +83,9 @@ export interface ColumnDropdownListProps {
   /** Total column count on the table, for the filter summary line. */
   totalAll: number;
   onSelect: (colName: string) => void;
+  /** True when picking this column would recreate an existing application
+   *  of the rule (same columns on every slot). Such candidates are hidden. */
+  isDuplicate?: (colName: string) => boolean;
 }
 
 /** Popover body: search box + "Suggested"/"Compatible columns" grouping —
@@ -90,15 +93,16 @@ export interface ColumnDropdownListProps {
  *  `bindings/MappingChips.tsx` `ColumnPicker`, now on the `Command`
  *  primitive so it keeps our own exact-match ordering (`shouldFilter=false`
  *  + a manual substring filter) instead of cmdk's fuzzy scoring. */
-export function ColumnDropdownList({ slot, matches, totalAll, onSelect }: ColumnDropdownListProps) {
+export function ColumnDropdownList({ slot, matches, totalAll, onSelect, isDuplicate }: ColumnDropdownListProps) {
   const { t } = useTranslation();
   const [search, setSearch] = useState("");
 
-  const matchSearch = (c: ColumnOut) => search === "" || c.name.toLowerCase().includes(search.toLowerCase());
+  const isVisible = (c: ColumnOut) =>
+    !isDuplicate?.(c.name) && (search === "" || c.name.toLowerCase().includes(search.toLowerCase()));
   const suggested = useMemo(() => matches.filter((c) => isExactMatch(slot.name, c.name)), [matches, slot.name]);
   const rest = useMemo(() => matches.filter((c) => !isExactMatch(slot.name, c.name)), [matches, slot.name]);
-  const suggestedVisible = suggested.filter(matchSearch);
-  const restVisible = rest.filter(matchSearch);
+  const suggestedVisible = suggested.filter(isVisible);
+  const restVisible = rest.filter(isVisible);
   const noMatches = suggestedVisible.length === 0 && restVisible.length === 0;
 
   return (
@@ -161,6 +165,8 @@ interface SingleColumnPickerProps {
   onChange: (column: string) => void;
   /** See `columnsForSlot`'s `excludeColumns`. */
   excludeColumns?: string[];
+  /** See `ColumnDropdownList`'s `isDuplicate`. */
+  isDuplicate?: (colName: string) => boolean;
   /** Auto-open the popover on mount — mirrors dqlake's auto-open of a
    *  freshly added mapping-group placeholder chip right after
    *  "+ Apply to another column" is clicked, so the owner doesn't need an
@@ -173,7 +179,7 @@ interface SingleColumnPickerProps {
  *  (search + Suggested/Compatible columns). Selecting a row commits the
  *  value and closes the popover immediately — matching dqlake's
  *  click-to-select-and-commit behavior. */
-export function SingleColumnPicker({ slot, columns, value, onChange, excludeColumns, autoOpen }: SingleColumnPickerProps) {
+export function SingleColumnPicker({ slot, columns, value, onChange, excludeColumns, isDuplicate, autoOpen }: SingleColumnPickerProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(Boolean(autoOpen));
   const matches = columnsForSlot(columns, slot, excludeColumns);
@@ -198,6 +204,7 @@ export function SingleColumnPicker({ slot, columns, value, onChange, excludeColu
         <ColumnDropdownList
           slot={slot}
           matches={matches}
+          isDuplicate={isDuplicate}
           totalAll={columns.length}
           onSelect={(colName) => {
             onChange(colName);
@@ -216,12 +223,20 @@ interface MultiColumnPickerProps {
   onChange: (columns: string[]) => void;
   /** See `columnsForSlot`'s `excludeColumns`. */
   excludeColumns?: string[];
+  /** Given the slot value that would result from checking one more column
+   *  (the selection joined with ","), reports whether it duplicates an
+   *  existing application. Such columns are hidden. */
+  isDuplicate?: (candidateValue: string) => boolean;
 }
 
 /** Multi-column checklist picker for a `cardinality: "many"` slot. */
-export function MultiColumnPicker({ slot, columns, value, onChange, excludeColumns }: MultiColumnPickerProps) {
+export function MultiColumnPicker({ slot, columns, value, onChange, excludeColumns, isDuplicate }: MultiColumnPickerProps) {
   const { t } = useTranslation();
-  const matches = columnsForSlot(columns, slot, excludeColumns);
+  // Only unchecked candidates can introduce a duplicate; checked columns stay
+  // listed so they can always be unchecked.
+  const matches = columnsForSlot(columns, slot, excludeColumns).filter(
+    (col) => value.includes(col.name) || !isDuplicate?.([...value, col.name].join(",")),
+  );
   if (matches.length === 0) {
     return <p className="text-xs text-muted-foreground">{t("monitoredTables.noMatchingColumns")}</p>;
   }

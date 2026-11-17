@@ -67,6 +67,7 @@ import {
 import { findReferenceTables, inferRefTableColumns } from "@/lib/refTableColumns";
 import { ManualGrid, type ManualColumn } from "./ManualGrid";
 import { ResultGrid, type ResultColumn } from "./ResultGrid";
+import { DatasetVerdict } from "./DatasetVerdict";
 import { TableTestSource, type TableSourcePayload } from "./TableTestSource";
 import type { CellFamily } from "./TypedCell";
 import { useWarehousePrewarm } from "./useWarehousePrewarm";
@@ -186,6 +187,8 @@ export function RuleTestPanel({
   canTest,
   ruleMode = "sql",
   lowcodeAdvanced = false,
+  checkFunction,
+  datasetLevel = false,
   nativeFunction,
   nativeArguments,
   parameters = [],
@@ -202,6 +205,13 @@ export function RuleTestPanel({
    *  forwarded so the route can reject a mis-testable rule (belt-and-braces —
    *  the parent already hides the surface for these). */
   lowcodeAdvanced?: boolean;
+  /** The check the saved body materializes to (`sql_query` or `sql_expression`).
+   *  Forwarded so the backend tests the rule with the same shape the job runs;
+   *  when omitted the shape is inferred from the predicate text. */
+  checkFunction?: "sql_query" | "sql_expression";
+  /** True when the rule runs at dataset level: its query returns one row whose
+   *  verdict covers the whole table, shown as a single pass/fail summary. */
+  datasetLevel?: boolean;
   /** DQX Native check function name (required when ruleMode is dqx_native). */
   nativeFunction?: string;
   /** Frozen native body.arguments with {{slot}} placeholders. */
@@ -214,8 +224,9 @@ export function RuleTestPanel({
   const { ready: warehouseReady } = useWarehousePrewarm();
 
   // Whole-SELECT rules (`sql_query`) run as a query against the data instead of
-  // as a per-row predicate, which changes what the result grid holds.
-  const isCrossTable = sqlEditorShape(predicate) === "query";
+  // as a per-row predicate, which changes what the result grid holds. The saved
+  // check decides when known, matching the backend; the text is the fallback.
+  const isCrossTable = checkFunction ? checkFunction === "sql_query" : sqlEditorShape(predicate) === "query";
   // Each table the rule's query joins gets its own manual grid, so a cross-table
   // rule can be exercised on fabricated rows without creating any table. Read off
   // the query text, since that is where a joined table is named — and only for a
@@ -423,6 +434,7 @@ export function RuleTestPanel({
       native_arguments: testNativeArguments,
       polarity,
       lowcode_advanced: lowcodeAdvanced,
+      check_function: ruleMode === "dqx_native" ? undefined : checkFunction,
     };
     if (mode === "adhoc") {
       runMutation.mutate(
@@ -635,7 +647,9 @@ export function RuleTestPanel({
       {resultIsGrid &&
         (mode === "adhoc" || tablePayload) &&
         result &&
-        (result.rows.length === 0 ? (
+        (isCrossTable && datasetLevel ? (
+          <DatasetVerdict columns={result.columns} rows={result.rows} />
+        ) : result.rows.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t("ruleTest.noRows")}</p>
         ) : (
           <ResultGrid columns={tableColumns} rows={tableRows} verdicts={result.rows.map((r) => r.passed)} />

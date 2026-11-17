@@ -280,3 +280,54 @@ class TestGenerate:
         with pytest.raises(HTTPException) as exc:
             await generate_rule_test_data(GenerateDataIn(predicate="p", columns=[SlotIn(name="a")]), svc, "u@x")
         assert exc.value.status_code == 503
+
+
+class TestCheckFunctionForwarding:
+    @pytest.mark.asyncio
+    async def test_saved_check_function_is_forwarded_to_the_service(self, svc):
+        seen: dict[str, object] = {}
+
+        async def _run(**kwargs):
+            seen.update(kwargs)
+            return TestRunResult(columns=["a"], rows=[], truncated=False)
+
+        svc.run_adhoc.side_effect = _run
+        body = _adhoc_body(check_function="sql_expression")
+        await run_rule_test(body, svc)
+        assert seen["check_function"] == "sql_expression"
+
+    @pytest.mark.asyncio
+    async def test_table_run_forwards_check_function(self, svc):
+        seen: dict[str, object] = {}
+
+        async def _run(**kwargs):
+            seen.update(kwargs)
+            return TestRunResult(columns=["a"], rows=[], truncated=False)
+
+        svc.run_table.side_effect = _run
+        body = RuleTestRunIn(
+            mode="sql",
+            predicate="{{a}} > 0",
+            slots=[SlotIn(name="a")],
+            source_kind="table",
+            table=TableRunIn(table_fqn="c.s.t", column_mapping={"a": "a"}),
+            check_function="sql_query",
+        )
+        await run_rule_test(body, svc)
+        assert seen["check_function"] == "sql_query"
+
+    @pytest.mark.asyncio
+    async def test_omitted_check_function_is_forwarded_as_none(self, svc):
+        seen: dict[str, object] = {}
+
+        async def _run(**kwargs):
+            seen.update(kwargs)
+            return TestRunResult(columns=["a"], rows=[], truncated=False)
+
+        svc.run_adhoc.side_effect = _run
+        await run_rule_test(_adhoc_body(), svc)
+        assert seen["check_function"] is None
+
+    def test_unknown_check_function_is_rejected_by_the_request_model(self):
+        with pytest.raises(ValueError):
+            _adhoc_body(check_function="sql_other")
