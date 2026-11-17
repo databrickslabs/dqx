@@ -153,6 +153,17 @@ describe("group copy", () => {
     expect(html).toContain(escapeHtml(en.setup.configuration.audience_groupHelp));
   });
 
+  test("explains why a workspace-level group was rejected", () => {
+    const html = renderForm({ errorCode: "audience_group_workspace_level" });
+
+    expect(html).toContain(
+      escapeHtml(en.setup.configuration.errors.audience_group_workspace_level),
+    );
+    expect(html).not.toContain(
+      escapeHtml(en.setup.configuration.errors.default),
+    );
+  });
+
   test("explains why a built-in group was rejected", () => {
     const html = renderForm({ errorCode: "audience_group_builtin" });
 

@@ -35,7 +35,6 @@ class AppConfig(BaseSettings):
     tmp_schema_name: str = Field(default="", validation_alias="DQX_TMP_SCHEMA")
     genie_schema_name: str = Field(default="", validation_alias="DQX_GENIE_SCHEMA")
     demo_schema_name: str = Field(default="", validation_alias="DQX_DEMO_SCHEMA")
-    default_dashboard_id: str = Field(default="", validation_alias="DQX_DEFAULT_DASHBOARD_ID")
     job_id: str = Field(default="", validation_alias="DQX_JOB_ID")
 
     @property

@@ -23,7 +23,7 @@ class AudienceGroupRequiredError(InvalidParameterError):
 class StudioAudience:
     """Principals that receive Studio OBO prerequisites.
 
-    *workspace_principals* receive app, warehouse, Genie space and dashboard ACLs.
+    *workspace_principals* receive app, warehouse and Genie space ACLs.
     *uc_principals* receive catalog, temporary, Genie and demo grants. The workspace
     admins group never appears in *uc_principals*: Unity Catalog cannot grant to
     workspace-local groups.
