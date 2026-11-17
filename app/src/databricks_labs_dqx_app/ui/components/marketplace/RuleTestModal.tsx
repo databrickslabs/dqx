@@ -65,6 +65,8 @@ export function RuleTestModal({
     mode === "dqx_native"
       ? Boolean(nativeFunction) && checkFunctions.some((f) => f.name === nativeFunction && f.rule_testable)
       : predicate.trim().length > 0;
+  // The stored check is the shape the job runs, so the Test run is told it directly.
+  const checkFunction = innerCheck?.function === "sql_query" ? "sql_query" : "sql_expression";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -78,6 +80,12 @@ export function RuleTestModal({
             polarity={polarity}
             slots={slots}
             ruleMode={mode}
+            checkFunction={checkFunction}
+            // DQX runs a sql_query check table-level unless merge_columns join it back to rows.
+            datasetLevel={
+              checkFunction === "sql_query" &&
+              !(Array.isArray(nativeArguments.merge_columns) && nativeArguments.merge_columns.length > 0)
+            }
             nativeFunction={mode === "dqx_native" ? nativeFunction : undefined}
             nativeArguments={mode === "dqx_native" ? nativeArguments : undefined}
             canTest={canTest}

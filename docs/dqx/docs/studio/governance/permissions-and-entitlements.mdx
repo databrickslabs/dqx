@@ -78,7 +78,6 @@ Setup applies the access below, then **re-reads it to verify**. A missing grant,
 | App | Runtime identity | None | `CAN_USE` | `CAN_USE` |
 | Task-runner job | `CAN_MANAGE` | Configured `run_as` | None | Managed via setup |
 | Genie space (if configured) | Manage | None | `CAN_RUN` | `CAN_RUN` |
-| Dashboard (if configured) | Publisher; `CAN_MANAGE` on the bundle dashboard (DAB) | None | `CAN_READ` | `CAN_READ` |
 | Lakebase app schema | Owner, migrations, CRUD | None | None | None |
 | User source data | Authorized scheduled workloads only | Run-specific verified access | Caller's own OBO access | Caller's own OBO access |
 
@@ -90,7 +89,7 @@ The runner service principal needs no Lakebase role or grants. Run configs too l
 
 The **audience** is a dedicated, existing workspace group. Studio never creates groups, and the setup form rejects `users`, `account users`, and `admins`.
 
-**Broad mode** (bundle deployments only, `STUDIO_USER_GROUP=users`) shares the app, warehouse, dashboard, and Genie space with the workspace `users` group and grants Unity Catalog access to `account users`. That is **account-wide**: everyone in the account can reach the Studio catalog objects. Use it only when that is intended.
+**Broad mode** (bundle deployments only, `STUDIO_USER_GROUP=users`) shares the app, warehouse, and Genie space with the workspace `users` group and grants Unity Catalog access to `account users`. That is **account-wide**: everyone in the account can reach the Studio catalog objects. Use it only when that is intended.
 
 | Audience input | Workspace ACL principal | Unity Catalog principal |
 | --- | --- | --- |

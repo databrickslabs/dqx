@@ -162,7 +162,7 @@ class TestAppSettingsStatusPreservation:
     (reset + demo) or it destroys the very row the 409 guard, the UI poll, and
     the terminal succeeded/failed write all depend on."""
 
-    def test_app_settings_delete_preserves_the_two_job_status_keys(self):
+    def test_app_settings_delete_preserves_the_job_status_keys_and_the_runner_job_id(self):
         delta = _FakeExecutor()
         oltp = _FakeExecutor()
         DatabaseResetService(delta_sql=delta, oltp_sql=oltp).reset_all_data(performed_by="a@x")
@@ -170,8 +170,8 @@ class TestAppSettingsStatusPreservation:
         settings_stmts = [s for s, t in zip(oltp.executed, _targeted_tables(oltp.executed)) if t == "dq_app_settings"]
         assert len(settings_stmts) == 1
         stmt = settings_stmts[0]
-        # Scoped to keep exactly the two in-flight job-status keys and clear the
-        # rest — mirroring the admin-preserving dq_role_mappings clear.
+        # Scoped to keep the two in-flight job-status keys and the saved runner job ID
+        # (so a restart doesn't create a second job), clearing the rest.
         assert stmt == (
             "DELETE FROM cat.sch.dq_app_settings "
             "WHERE setting_key NOT IN ('reset_database_status', 'demo_content_status') "

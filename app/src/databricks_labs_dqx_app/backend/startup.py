@@ -268,7 +268,6 @@ class _Binder:
                 sql=sp_sql,
                 settings=self.settings,
                 app_name=conf.app_slug_name,
-                dashboard_id=conf.default_dashboard_id,
             ),
             delta_migrations=MigrationRunner(sp_sql),
             publish_wheels=publish_wheels,
@@ -384,6 +383,7 @@ async def start_studio(app: FastAPI) -> StudioLifecycle | None:
         )
         lifecycle.binder = binder
         configuration_store = SetupConfigurationStore(app_settings)
+        app_sp_id = compute.sp_application_id()
         orchestrator = SetupOrchestrator(
             runtime=setup_runtime,
             bootstrap=bootstrap,
@@ -393,7 +393,7 @@ async def start_studio(app: FastAPI) -> StudioLifecycle | None:
             binder=binder,
             jobs=TaskRunnerJobManager(sp_ws),
             app_settings=app_settings,
-            app_sp_id=compute.sp_application_id(),
+            app_sp_id=app_sp_id,
             overrides=SetupOverrides(app_settings),
         )
         app.state.setup_orchestrator = orchestrator
