@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/command";
 import { Check, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { TruncatedLabel } from "@/components/data-table/TruncatedLabel";
 import { FILTER_TRIGGER_CLASS } from "@/components/data-table/filter-bar";
 
 export interface SearchableSelectOption {
@@ -97,7 +98,7 @@ export function SearchableSelect({
             className,
           )}
         >
-          <span className="truncate">{selectedLabel}</span>
+          <TruncatedLabel text={selectedLabel} />
           <ChevronDown className="size-4 shrink-0 opacity-50" />
         </button>
       </PopoverTrigger>
@@ -121,9 +122,7 @@ export function SearchableSelect({
               {filteredOptions.map((o) => (
                 <CommandItem key={o.value} value={o.value} onSelect={() => select(o.value)} className="text-xs">
                   <Check className={cn("size-3.5", value === o.value ? "opacity-100" : "opacity-0")} />
-                  <span className="truncate" title={o.label}>
-                    {o.label}
-                  </span>
+                  <TruncatedLabel text={o.label} />
                 </CommandItem>
               ))}
             </CommandGroup>

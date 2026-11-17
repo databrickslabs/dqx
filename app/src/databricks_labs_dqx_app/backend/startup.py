@@ -61,6 +61,7 @@ from databricks_labs_dqx_app.backend.services.resource_tagging_service import (
 )
 from databricks_labs_dqx_app.backend.services.rule_embeddings import RuleEmbeddingsService
 from databricks_labs_dqx_app.backend.services.scheduler_service import SchedulerService
+from databricks_labs_dqx_app.backend.services.scheduler_wake import SCHEDULER_WAKE_MARKER_PATH, SchedulerWakeMarker
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.services.score_view_service import ScoreViewService
 from databricks_labs_dqx_app.backend.services.tag_reconcile_service import TagReconcileService
@@ -267,7 +268,6 @@ class _Binder:
                 sql=sp_sql,
                 settings=self.settings,
                 app_name=conf.app_slug_name,
-                dashboard_id=conf.default_dashboard_id,
             ),
             delta_migrations=MigrationRunner(sp_sql),
             publish_wheels=publish_wheels,
@@ -383,6 +383,7 @@ async def start_studio(app: FastAPI) -> StudioLifecycle | None:
         )
         lifecycle.binder = binder
         configuration_store = SetupConfigurationStore(app_settings)
+        app_sp_id = compute.sp_application_id()
         orchestrator = SetupOrchestrator(
             runtime=setup_runtime,
             bootstrap=bootstrap,
@@ -392,7 +393,7 @@ async def start_studio(app: FastAPI) -> StudioLifecycle | None:
             binder=binder,
             jobs=TaskRunnerJobManager(sp_ws),
             app_settings=app_settings,
-            app_sp_id=compute.sp_application_id(),
+            app_sp_id=app_sp_id,
             overrides=SetupOverrides(app_settings),
         )
         app.state.setup_orchestrator = orchestrator
@@ -786,6 +787,7 @@ async def _start_scheduler(
             monitored_table_service=monitored_tables,
             tag_reconcile_service=tag_reconcile,
             reconcile_scores_on_start=True,
+            wake_marker=SchedulerWakeMarker(SCHEDULER_WAKE_MARKER_PATH),
         )
         set_scheduler(scheduler)
         scheduler.start()

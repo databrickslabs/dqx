@@ -406,10 +406,10 @@ app-check-cli: ## Verify the Databricks CLI meets the minimum version for deploy
 #
 # FORCE=1 appends ``--force`` to ``bundle deploy``. Use it when the deploy
 # aborts because a resource was modified in the workspace UI since the last
-# deploy (e.g. "dashboard ... has been modified remotely") — ``--force``
-# overwrites the remote copy with the bundle's local definition. This DROPS
-# any in-UI edits, so only set it once you've confirmed the local version is
-# the one you want to ship.
+# deploy (e.g. "job ... has been modified remotely") — ``--force``overwrites
+# the remote copy with the bundle's local definition. This DROPS any in-UI
+# edits, so only set it once you've confirmed the local version is the one
+# you want to ship.
 app-deploy: app-check-cli $(if $(filter release,$(TARGET)),,app-build) ## Deploy and start app; release target uses prebuilt tag (FORCE=1 to overwrite remote edits)
 	@test -n "$(PROFILE)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
 	@test -n "$(TARGET)" || (echo "Usage: make app-deploy PROFILE=<databricks-profile> TARGET=<bundle-target>"; exit 1)
