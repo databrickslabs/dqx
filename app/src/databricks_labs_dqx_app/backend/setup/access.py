@@ -1,7 +1,7 @@
 """Apply and verify audience and administrator access to Studio-managed resources.
 
 Unity Catalog grants on the temporary, Genie and demo schemas, and workspace ACLs on
-the configured Genie space and dashboard, are applied on a best-effort basis and then
+the configured Genie space, are applied on a best-effort basis and then
 re-read. Verification alone decides readiness, and anything that cannot be inspected
 blocks readiness (fail closed).
 """
@@ -55,7 +55,6 @@ GENIE_ALLOWLIST: tuple[str, ...] = (
     DIM_MONITORED_TABLES_TABLE_NAME,
 )
 
-_DASHBOARD_READ_LEVELS = frozenset({"CAN_READ", "CAN_RUN", "CAN_EDIT", "CAN_MANAGE", "IS_OWNER"})
 _APP_USE_LEVELS = frozenset({"CAN_USE", "CAN_MANAGE"})
 logger = logging.getLogger(__name__)
 
@@ -69,7 +68,6 @@ class AudienceAccess:
         sql: App service principal SQL executor used to apply grants.
         settings: Application settings holding the provisioned Genie space ID.
         app_name: Databricks App name, used when verifying app sharing.
-        dashboard_id: Configured default dashboard ID; empty when none is configured.
     """
 
     def __init__(
@@ -80,14 +78,12 @@ class AudienceAccess:
         sql: SqlExecutor,
         settings: SetupSettings,
         app_name: str,
-        dashboard_id: str,
     ) -> None:
         self._resources = resources
         self._workspace = workspace
         self._sql = sql
         self._settings = settings
         self._app_name = app_name
-        self._dashboard_id = dashboard_id.strip()
 
     def required_uc_grants(self) -> tuple[tuple[str, str, str], ...]:
         """Return the Unity Catalog grants every UC audience principal needs.
@@ -125,7 +121,7 @@ class AudienceAccess:
             reader_sql: Administrator SQL executor enabling the SHOW GRANTS fallback
                 when effective permissions cannot be read.
             reader_ws: Setup administrator's client used only to read the Genie space
-                and dashboard ACLs when the app service principal cannot read them.
+                ACL when the app service principal cannot read it.
 
         Returns:
             A passed access step, or an action-required step describing what is missing.
@@ -138,7 +134,6 @@ class AudienceAccess:
         not_applicable: list[str] = []
         shared_unknown: list[str] = []
         genie_missing: list[str] = []
-        dashboard_missing: list[str] = []
         genie_space_id = self._genie_space_id()
         if genie_space_id is None:
             shared_unknown.append("Studio couldn't read its own settings. Click Verify again in a minute.")
@@ -151,17 +146,6 @@ class AudienceAccess:
             if status == "unknown":
                 shared_unknown.append(_acl_check_instruction("Genie space", genie_space_id))
             genie_missing.extend(_acl_instruction("Can run", "Genie space", genie_space_id, group) for group in missing)
-        if not self._dashboard_id:
-            not_applicable.append("dashboard sharing")
-        else:
-            status, missing = self._reconcile_acl(
-                "dashboards", self._dashboard_id, PermissionLevel.CAN_READ, _DASHBOARD_READ_LEVELS, reader_ws
-            )
-            if status == "unknown":
-                shared_unknown.append(_acl_check_instruction("dashboard", self._dashboard_id))
-            dashboard_missing.extend(
-                _acl_instruction("Can view", "dashboard", self._dashboard_id, group) for group in missing
-            )
 
         # The GRANT statements are kept apart from the prose; the owner guidance comes last so
         # it sits directly above them.
@@ -169,7 +153,6 @@ class AudienceAccess:
             *uc_unknown,
             *shared_unknown,
             *genie_missing,
-            *dashboard_missing,
             *((RUN_GRANTS_AS_OWNER,) if uc_missing else ()),
         )
         grants = tuple(uc_missing)
@@ -180,7 +163,7 @@ class AudienceAccess:
         if shared_unknown:
             return _blocked(
                 "shared_resource_check_failed",
-                "Studio couldn't check who can open its Genie space or dashboard.",
+                "Studio couldn't check who can open its Genie space.",
                 instructions,
                 grants,
             )
@@ -194,10 +177,6 @@ class AudienceAccess:
         if genie_missing:
             return _blocked(
                 "genie_space_sharing_missing", "Studio users can't use the DQ Genie space yet.", instructions
-            )
-        if dashboard_missing:
-            return _blocked(
-                "dashboard_sharing_missing", "Studio users can't open the Studio dashboard yet.", instructions
             )
         summary = "Studio users and administrators have the access they need."
         if not_applicable:

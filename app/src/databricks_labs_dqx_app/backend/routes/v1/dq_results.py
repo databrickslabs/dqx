@@ -26,8 +26,8 @@ Permission model (unchanged from Phase 1):
 """
 
 import logging
-from collections.abc import Iterable
-from typing import Annotated
+from collections.abc import Callable, Iterable
+from typing import Annotated, Literal
 
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -47,6 +47,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_registry_service,
     get_run_set_service,
     get_score_cache_service,
+    get_scheduler_wake_marker,
     get_sp_sql_executor,
     get_user_catalog_names,
     require_role,
@@ -71,6 +72,7 @@ from databricks_labs_dqx_app.backend.models import (
     SeverityOut,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.scheduler_wake import SchedulerWakeMarker
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductService
 from databricks_labs_dqx_app.backend.services.dq_results_service import (
@@ -212,7 +214,8 @@ def _fetch_check_rows(
     where = f"WHERE {' AND '.join(conds)} " if conds else ""
     stmt = (
         f"SELECT input_location, run_id, CAST(run_time AS STRING) AS run_date, "
-        f"check_name, error_count, warning_count, input_row_count, run_mode, check_granularity, "
+        f"check_name, error_count, warning_count, input_row_count, evaluated_row_count, "
+        f"run_mode, check_granularity, "
         # As-of-run attribution baked into the view rows (frozen
         # checks_json payload — see score_view_service).
         f"severity, dimension, criticality, registry_rule_id, rule_name, pass_threshold, "
@@ -258,7 +261,8 @@ def _fetch_asof_check_rows(
     conds.extend(_catalog_gate_predicates(allowed_catalogs))
     stmt = (
         f"SELECT input_location, run_id, CAST(as_of_time AS STRING) AS run_date, "
-        f"check_name, error_count, warning_count, input_row_count, run_mode, check_granularity, "
+        f"check_name, error_count, warning_count, input_row_count, evaluated_row_count, "
+        f"run_mode, check_granularity, "
         f"severity, dimension, criticality, registry_rule_id, rule_name, pass_threshold, "
         f"to_json(columns) AS columns_json "
         f"FROM {view} "  # noqa: S608
@@ -423,6 +427,64 @@ def _facets(
         schemas=tuple(schema or ()),
         outcomes=tuple(value for value in (outcome or ()) if value in ("passed", "failed")),
     )
+
+
+ScoreBucket = Literal["75-100", "50-75", "25-50", "0-25", "none"]
+
+
+def _matches_score_bucket(score: float | None, bucket: ScoreBucket) -> bool:
+    """Server twin of the UI's *matchesDqScoreBucket* (scores are stored 0-1)."""
+    if score is None:
+        return bucket == "none"
+    pct = score * 100
+    if bucket == "0-25":
+        return pct < 25
+    if bucket == "25-50":
+        return 25 <= pct < 50
+    if bucket == "50-75":
+        return 50 <= pct < 75
+    if bucket == "75-100":
+        return pct >= 75
+    return False
+
+
+def _table_universe_filter(
+    monitored_tables: MonitoredTableService,
+    data_products: DataProductService,
+    collection: list[str] | None,
+    owner: list[str] | None,
+    score_bucket: ScoreBucket | None,
+) -> Callable[[str], bool] | None:
+    """Predicate over table FQNs for the collection / owner / score_bucket
+    table-universe filters (intersected), or None when none is set.
+
+    Owner identity is owner_display_name -> owner -> created_by (the UI's
+    *monitoredTableOwner*); the score is the cached ``dq_score_cache`` value.
+    A table with no monitored-table row has no owner and no cached score.
+    """
+    if not collection and not owner and score_bucket is None:
+        return None
+    # One slim table-universe read per request, shared by the collection join
+    # and the owner / score lookups (only fetched when one of them needs it).
+    listed = monitored_tables.list_table_universe() if owner or score_bucket is not None else None
+    allowed = data_products.member_fqns(collection, tables=listed) if collection else None
+    rows = {t.table_fqn: t for t in listed} if listed is not None else {}
+    owners = set(owner or ())
+
+    def predicate(fqn: str) -> bool:
+        if allowed is not None and fqn not in allowed:
+            return False
+        row = rows.get(fqn)
+        if owners:
+            if row is None:
+                return False
+            if (row.owner_display_name or row.owner or row.created_by or "") not in owners:
+                return False
+        if score_bucket is not None and not _matches_score_bucket(row.score if row else None, score_bucket):
+            return False
+        return True
+
+    return predicate
 
 
 def _validate_table_facet(table: list[str] | None) -> None:
@@ -636,6 +698,8 @@ def _consolidate_runs(rows: list[RunRowOut], run_set_by_run_id: dict[str, str]) 
         rates = [m.pass_rate for m in members if m.pass_rate is not None]
         failed = [m.failed_tests for m in members if m.failed_tests is not None]
         totals = [m.total_tests for m in members if m.total_tests is not None]
+        table_failed = [m.table_failed_tests for m in members if m.table_failed_tests is not None]
+        table_totals = [m.table_total_tests for m in members if m.table_total_tests is not None]
         # A batch breaches if any member run breached; carries the worst.
         batch_crit: str | None = None
         for m in members:
@@ -648,6 +712,8 @@ def _consolidate_runs(rows: list[RunRowOut], run_set_by_run_id: dict[str, str]) 
                 pass_rate=sum(rates) / len(rates) if rates else None,
                 failed_tests=sum(failed) if failed else None,
                 total_tests=sum(totals) if totals else None,
+                table_failed_tests=sum(table_failed) if table_failed else None,
+                table_total_tests=sum(table_totals) if table_totals else None,
                 # A batch is 'draft' only if every member is a draft run;
                 # any published member makes it a published batch.
                 run_mode=(
@@ -696,7 +762,9 @@ def _runs_from_metric_view(
     stmt = (
         f"SELECT run_id, CAST(run_time AS STRING) AS run_ts, run_mode, "
         f"MEASURE(score) AS pass_rate, MEASURE(failed_tests) AS failed_tests, "
-        f"MEASURE(total_tests) AS total_tests "
+        f"MEASURE(total_tests) AS total_tests, "
+        f"MEASURE(table_failed_tests) AS table_failed_tests, "
+        f"MEASURE(table_total_tests) AS table_total_tests "
         f"FROM {mv} "  # noqa: S608
         f"WHERE {' AND '.join(conds)} "
         f"GROUP BY run_id, run_time, run_mode "
@@ -710,6 +778,8 @@ def _runs_from_metric_view(
             pass_rate=safe_float(row.get("pass_rate")),
             failed_tests=safe_int(row.get("failed_tests")),
             total_tests=safe_int(row.get("total_tests")),
+            table_failed_tests=safe_int(row.get("table_failed_tests")),
+            table_total_tests=safe_int(row.get("table_total_tests")),
             run_mode=row.get("run_mode"),
             breached=breaches.get(row.get("run_id")) is not None,
             breach_criticality=breaches.get(row.get("run_id")),
@@ -863,6 +933,8 @@ def get_global_results(
     run_sets: Annotated[RunSetService, Depends(get_run_set_service)],
     app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     registry: Annotated[RegistryService, Depends(get_registry_service)],
+    data_products: Annotated[DataProductService, Depends(get_data_product_service)],
+    wake: Annotated[SchedulerWakeMarker, Depends(get_scheduler_wake_marker)],
     dimension: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
@@ -871,6 +943,9 @@ def get_global_results(
     catalog: Annotated[list[str] | None, Query()] = None,
     schema: Annotated[list[str] | None, Query()] = None,
     outcome: Annotated[list[str] | None, Query()] = None,
+    collection: Annotated[list[str] | None, Query(max_length=200)] = None,
+    owner: Annotated[list[str] | None, Query(max_length=200)] = None,
+    score_bucket: Annotated[ScoreBucket | None, Query()] = None,
     run_id: str | None = Query(None),
     axes: str = Query("all"),
     include_drafts: bool = Query(False),
@@ -886,18 +961,32 @@ def get_global_results(
     catalog-gated, so an inaccessible value simply matches nothing).
     *outcome* keeps only ``passed`` or ``failed`` checks.
 
+    *collection* (data-product ids), *owner* (owner_display_name -> owner ->
+    created_by) and *score_bucket* (cached DQ score) narrow the TABLE
+    UNIVERSE like *catalog* does: intersected, applied after the catalog
+    gate, and to every axis including by_table.
+
     Concurrent member runs of one run set are consolidated onto their
     RUN-BATCH instant (``dq_run_set_members`` join) so the per-table trend
     markers align; *as_of_batch* caps to a chosen batch's instant.
+
+    Signals the scheduler on the way in (the Results page load), so a run
+    started with no page watching gets its score refreshed promptly.
     """
+    wake.signal()
     _validate_run_id(run_id)
     _validate_run_id(as_of_batch)
     _validate_table_facet(table)
     try:
+        in_universe = _table_universe_filter(monitored_tables, data_products, collection, owner, score_bucket)
+
+        def visible(fqn: str) -> bool:
+            return catalog_of(fqn) in user_catalogs and (in_universe is None or in_universe(fqn))
+
         rows = [
             row
             for row in _fetch_check_rows(sql, app_conf, None, run_id, include_drafts, allowed_catalogs=user_catalogs)
-            if catalog_of(row.table_fqn) in user_catalogs
+            if visible(row.table_fqn)
         ]
         accessible_fqns = sorted({row.table_fqn for row in rows})
         failed_records = _fetch_failed_records_by_run(sql, app_conf, accessible_fqns)
@@ -912,7 +1001,7 @@ def get_global_results(
                 for row in _fetch_asof_check_rows(
                     sql, app_conf, None, run_id, include_drafts, allowed_catalogs=user_catalogs
                 )
-                if catalog_of(row.table_fqn) in user_catalogs
+                if visible(row.table_fqn)
             ]
     except Exception as exc:
         logger.exception("Failed to compute global results")

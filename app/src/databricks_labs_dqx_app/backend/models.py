@@ -2186,11 +2186,18 @@ class FailingRecordOut(BaseModel):
 
 
 class CheckMetricBreakdown(BaseModel):
-    """Per-check error/warning breakdown produced by ``DQMetricsObserver``."""
+    """Per-check error/warning breakdown produced by ``DQMetricsObserver``.
+
+    *evaluated_count* is the number of rows a filtered row-level check
+    evaluated (the rows its filter selected), from the run's
+    *check_evaluated_rows* metric. None for unfiltered and dataset checks
+    and for runs that predate the metric: those use the table's input rows.
+    """
 
     check_name: str
     error_count: int = 0
     warning_count: int = 0
+    evaluated_count: int | None = None
 
 
 class MetricSnapshotOut(BaseModel):
@@ -2240,8 +2247,10 @@ class TableScoreOut(BaseModel):
     source_table_fqn: str
     score: float | None = None
     latest_run_id: str | None = None
-    total_tests: int = 0
-    failed_tests: int = 0
+    total_tests: int = Field(default=0, description="Row-level tests (evaluated rows x row checks)")
+    failed_tests: int = Field(default=0, description="Failed row-level tests")
+    table_total_tests: int | None = Field(default=None, description="Table-level checks, one test each")
+    table_failed_tests: int | None = Field(default=None, description="Failed table-level checks")
 
 
 class RuleScoreOut(BaseModel):
@@ -2296,10 +2305,12 @@ class GroupRowOut(BaseModel):
     binding_id: str | None = None
     rule_id: str | None = None
     pass_rate: float | None = None
-    failed_tests: int | None = None
+    failed_tests: int | None = Field(default=None, description="Failed row-level tests")
     rule_count: int | None = None
     check_count: int | None = None
-    total_tests: int | None = None
+    total_tests: int | None = Field(default=None, description="Row-level tests (evaluated rows x row checks)")
+    table_failed_tests: int | None = Field(default=None, description="Failed table-level checks")
+    table_total_tests: int | None = Field(default=None, description="Table-level checks, one test each")
     breached: bool = False
     breach_criticality: str | None = None
     pass_threshold: int | None = None
@@ -2327,7 +2338,9 @@ class TrendPointOut(BaseModel):
     series: str | None = None
     pass_rate: float | None = None
     rule_count: int | None = None
-    total_tests: int | None = None
+    total_tests: int | None = Field(default=None, description="Row-level tests (evaluated rows x row checks)")
+    table_total_tests: int | None = Field(default=None, description="Table-level checks, one test each")
+    table_failed_tests: int | None = Field(default=None, description="Failed table-level checks")
     version: int | None = None
     is_draft: bool = False
     breached: bool = False
@@ -2336,8 +2349,8 @@ class TrendPointOut(BaseModel):
 
 class TrendCountPointOut(BaseModel):
     """Per-run count axes: distinct rules, checks (rows), and tests
-    (record-level evaluations). Feeds the "Number of Rules, Checks & Tests"
-    chart."""
+    (record-level evaluations of row checks plus one per dataset check).
+    Feeds the "Number of Rules, Checks & Tests" chart."""
 
     run_date: str | None = None
     rule_count: int | None = None
@@ -2393,8 +2406,10 @@ class RunRowOut(BaseModel):
     run_id: str | None = None
     run_ts: str | None = None
     pass_rate: float | None = None
-    failed_tests: int | None = None
-    total_tests: int | None = None
+    failed_tests: int | None = Field(default=None, description="Failed row-level tests")
+    total_tests: int | None = Field(default=None, description="Row-level tests (evaluated rows x row checks)")
+    table_failed_tests: int | None = Field(default=None, description="Failed table-level checks")
+    table_total_tests: int | None = Field(default=None, description="Table-level checks, one test each")
     run_mode: str | None = None
     breached: bool = False
     breach_criticality: str | None = None
@@ -2768,6 +2783,26 @@ class SchedulePreflightOut(BaseModel):
     tables: list[SchedulePreflightTableOut] = Field(default_factory=list)
 
 
+# Most joined tables one reference-table access check or grant takes; each one costs several
+# permission lookups.
+MAX_REFERENCE_TABLES = 100
+
+
+class ReferenceGrantPreflightIn(BaseModel):
+    """Body of ``POST /schedule-grants/reference-preflight``: the tables a rule reads besides its source.
+
+    *table_fqns* are the join targets the low-code builder picked. *sql_query* is a raw SQL
+    rule's text; its FROM / JOIN tables are extracted server-side. *source_table_fqn* is the
+    rule's own table and is never checked.
+    """
+
+    table_fqns: list[str] = Field(
+        default_factory=list, max_length=MAX_REFERENCE_TABLES, description="Joined table names"
+    )
+    sql_query: str | None = Field(default=None, max_length=65536, description="Raw SQL rule text to scan")
+    source_table_fqn: str | None = Field(default=None, description="The rule's own table, excluded from the check")
+
+
 class ScheduleGrantApplyIn(BaseModel):
     """Body of ``POST /schedule-grants/apply``: only table names, never SQL.
 
@@ -2789,6 +2824,16 @@ class ScheduleGrantApplyIn(BaseModel):
             if len(fqn.split(".")) != 3:
                 raise ValueError("Each entry must be a catalog.schema.table name.")
         return list(dict.fromkeys(table_fqns))
+
+
+class ReferenceGrantApplyIn(ScheduleGrantApplyIn):
+    """Body of ``POST /schedule-grants/reference-apply``: capped like the reference-table preflight."""
+
+    table_fqns: list[str] = Field(
+        min_length=1,
+        max_length=MAX_REFERENCE_TABLES,
+        description="Fully qualified names of the joined tables whose missing task-runner grants to run",
+    )
 
 
 class ScheduleGrantFailureOut(BaseModel):

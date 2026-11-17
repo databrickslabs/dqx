@@ -47,6 +47,7 @@ class TaskRunnerRun:
     life_cycle_state: str | None
     result_state: str | None
     start_time_ms: int | None
+    state_message: str | None = None
 
     @property
     def is_terminal(self) -> bool:
@@ -88,6 +89,7 @@ def parse_task_runner_run(run: BaseRun) -> TaskRunnerRun | None:
         life_cycle_state=state.life_cycle_state.value if state and state.life_cycle_state else None,
         result_state=state.result_state.value if state and state.result_state else None,
         start_time_ms=run.start_time,
+        state_message=state.state_message if state else None,
     )
 
 

@@ -19,12 +19,14 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_obo_ws,
     get_review_status_service,
     get_rules_catalog_service,
+    get_scheduler_wake_marker,
     get_sp_sql_executor,
     get_user_catalog_names,
     get_view_service,
     require_role,
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+from databricks_labs_dqx_app.backend.services.scheduler_wake import SchedulerWakeMarker
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
@@ -285,6 +287,7 @@ def batch_run_from_catalog(
     rules_svc: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
     settings_svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    wake: Annotated[SchedulerWakeMarker, Depends(get_scheduler_wake_marker)],
 ) -> BatchRunFromCatalogOut:
     """Read approved checks from the rules catalog for the given tables and submit dry-run jobs."""
     submitted: list[DryRunSubmitOut] = []
@@ -373,6 +376,8 @@ def batch_run_from_catalog(
             logger.error("Failed to submit run for %s: %s", table_fqn, e, exc_info=True)
             errors.append(f"{table_fqn}: {e}")
 
+    if submitted:
+        wake.signal()
     return BatchRunFromCatalogOut(submitted=submitted, errors=errors)
 
 
@@ -390,6 +395,7 @@ def submit_dry_run(
     validate_checks_fn: Annotated[Callable[[list[Any]], ChecksValidationStatus], Depends(get_check_validator)],
     settings_svc: Annotated[AppSettingsService, Depends(get_app_settings_service)],
     sql: Annotated[SqlExecutor, Depends(get_sp_sql_executor)],
+    wake: Annotated[SchedulerWakeMarker, Depends(get_scheduler_wake_marker)],
 ) -> DryRunSubmitOut:
     """Validate checks, create a temporary view (OBO), and submit a dry-run job (SP)."""
     try:
@@ -480,6 +486,8 @@ def submit_dry_run(
                 )
             raise
 
+        if not body.skip_history:
+            wake.signal()
         return DryRunSubmitOut(run_id=run_id, job_run_id=job_run_id, view_fqn=view_fqn)
     except HTTPException:
         raise
