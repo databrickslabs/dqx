@@ -35,6 +35,7 @@ from sqlalchemy.exc import DatabaseError, ProgrammingError, OperationalError, In
 import yaml
 from pyspark.sql import DataFrame, Row, SparkSession, functions as F
 from databricks.sdk.errors import NotFound
+from databricks.sdk.service.postgres import EndpointType
 from databricks.sdk.service.workspace import ImportFormat
 
 from databricks.labs.dqx.config import (
@@ -547,8 +548,6 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         Returns:
             Lakebase connection URL.
         """
-        if not config.instance_name and not config.endpoint:
-            raise InvalidConfigError("instance_name or endpoint must be provided for Lakebase storage")
         if not config.location:
             raise InvalidConfigError("location must be provided for Lakebase storage")
 
@@ -560,7 +559,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
         return f"{prefix}://{user}@{host}:{port}/{database}?sslmode=require"
 
-    def _get_host(self, config: LakebaseChecksStorageConfig) -> str | None:
+    def _get_host(self, config: LakebaseChecksStorageConfig) -> str:
         """
         Resolve the read/write host of the Lakebase database instance or Autoscaling endpoint.
 
@@ -571,12 +570,13 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             The read/write host.
 
         Raises:
-            InvalidConfigError: If the Autoscaling endpoint has no read/write host.
+            InvalidConfigError: If neither instance_name nor endpoint is provided, if the Autoscaling endpoint is
+                not a read/write endpoint or has no host, or if the database instance has no read/write DNS.
         """
         if config.endpoint:
             status = self.ws.postgres.get_endpoint(name=config.endpoint).status
             host = status.hosts.host if status and status.hosts else None
-            if not host:
+            if not host or status is None or status.endpoint_type != EndpointType.ENDPOINT_TYPE_READ_WRITE:
                 raise InvalidConfigError(
                     f"Lakebase endpoint '{config.endpoint}' has no read/write host. "
                     "Check that the endpoint exists and is a read/write endpoint."
@@ -585,7 +585,10 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
         if not config.instance_name:
             raise InvalidConfigError("instance_name or endpoint must be provided for Lakebase storage")
-        return self.ws.database.get_database_instance(config.instance_name).read_write_dns
+        dns = self.ws.database.get_database_instance(config.instance_name).read_write_dns
+        if not dns:
+            raise InvalidConfigError(f"Lakebase instance '{config.instance_name}' has no read/write DNS.")
+        return dns
 
     def _prepare_before_connect(self, config: LakebaseChecksStorageConfig):
         """
@@ -605,6 +608,8 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
             def _before_connect_endpoint(_dialect, _conn_rec, _cargs, cparams) -> None:
                 cred = self.ws.postgres.generate_database_credential(endpoint=endpoint)
+                if not cred.token:
+                    raise InvalidConfigError("Lakebase credential response contained no token.")
                 cparams["password"] = cred.token
 
             return _before_connect_endpoint
@@ -1311,7 +1316,7 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         config.location = checks_location
 
         matches_table_pattern = is_table_location(config.location)
-        is_lakebase_storage = config.instance_name is not None or config.endpoint is not None
+        is_lakebase_storage = bool(config.instance_name or config.endpoint)
 
         if matches_table_pattern and is_lakebase_storage:
             # validators of LakebaseChecksStorageConfig skip subclasses, so validate the connection target here

@@ -42,8 +42,10 @@ checked_df = engine.apply_checks_by_metadata(df, checks)
 ```
 
 If Studio's Lakebase is a Lakebase Autoscaling project rather than a database instance, pass the
-project's endpoint instead of `instance_name`:
-`endpoint="projects/<project>/branches/<branch>/endpoints/<endpoint>"`.
+project's read/write endpoint instead of `instance_name`:
+`endpoint="projects/<project>/branches/<branch>/endpoints/<endpoint>"`. To find the endpoint name, list the
+branch's endpoints with the Databricks CLI:
+`databricks postgres list-endpoints projects/<project>/branches/<branch>`.
 
 Only **approved** rules are loaded — drafts and rejected rules are never returned. You get the
 table's current approved set, so no version pinning is needed. There's no argument for loading a single

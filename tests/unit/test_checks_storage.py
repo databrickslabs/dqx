@@ -6,6 +6,9 @@ from pyspark.sql import Column, DataFrame, Row, SparkSession
 from pyspark.sql.functions import col, lit
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
+from databricks.sdk.service.database import DatabaseAPI, DatabaseCredential, DatabaseInstance
+from databricks.sdk.service.postgres import DatabaseCredential as PostgresDatabaseCredential
+from databricks.sdk.service.postgres import Endpoint, EndpointHosts, EndpointStatus, EndpointType, PostgresAPI
 
 from databricks.labs.dqx.check_funcs import make_condition
 from databricks.labs.dqx.checks_serializer import deserialize_checks, serialize_checks
@@ -334,7 +337,16 @@ _LAKEBASE_ENDPOINT = "projects/dqx-studio-db/branches/production/endpoints/prima
 
 
 def _lakebase_ws() -> MagicMock:
-    return MagicMock(spec=WorkspaceClient)
+    # create_autospec(WorkspaceClient) does not spec the property-backed service APIs, so spec them explicitly
+    # to catch wrong argument names on get_endpoint / generate_database_credential.
+    ws = create_autospec(WorkspaceClient)
+    ws.postgres = create_autospec(PostgresAPI, instance=True)
+    ws.database = create_autospec(DatabaseAPI, instance=True)
+    return ws
+
+
+def _endpoint(host: str | None, endpoint_type: EndpointType = EndpointType.ENDPOINT_TYPE_READ_WRITE) -> Endpoint:
+    return Endpoint(status=EndpointStatus(hosts=EndpointHosts(host=host), endpoint_type=endpoint_type))
 
 
 def _lakebase_handler(ws: MagicMock) -> LakebaseChecksStorageHandler:
@@ -344,7 +356,7 @@ def _lakebase_handler(ws: MagicMock) -> LakebaseChecksStorageHandler:
 
 def test_lakebase_connection_url_resolves_autoscaling_endpoint_host():
     ws = _lakebase_ws()
-    ws.postgres.get_endpoint.return_value.status.hosts.host = "ep-primary.database.example.com"
+    ws.postgres.get_endpoint.return_value = _endpoint("ep-primary.database.example.com")
     ws.current_user.me.return_value.user_name = "user@example.com"
     config = LakebaseChecksStorageConfig(
         location="databricks_postgres.dqx_studio.dq_rules_core", endpoint=_LAKEBASE_ENDPOINT
@@ -361,7 +373,7 @@ def test_lakebase_connection_url_resolves_autoscaling_endpoint_host():
 
 def test_lakebase_connection_url_uses_client_id_with_autoscaling_endpoint():
     ws = _lakebase_ws()
-    ws.postgres.get_endpoint.return_value.status.hosts.host = "ep-primary.database.example.com"
+    ws.postgres.get_endpoint.return_value = _endpoint("ep-primary.database.example.com")
     config = LakebaseChecksStorageConfig(
         location="databricks_postgres.dqx_studio.dq_rules_core",
         endpoint=_LAKEBASE_ENDPOINT,
@@ -374,10 +386,18 @@ def test_lakebase_connection_url_uses_client_id_with_autoscaling_endpoint():
     ws.current_user.me.assert_not_called()
 
 
-@pytest.mark.parametrize("status", [None, MagicMock(hosts=None), MagicMock(hosts=MagicMock(host=None))])
-def test_lakebase_connection_url_raises_when_autoscaling_endpoint_has_no_host(status):
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        Endpoint(status=None),
+        Endpoint(status=EndpointStatus(hosts=None, endpoint_type=EndpointType.ENDPOINT_TYPE_READ_WRITE)),
+        _endpoint(None),
+        _endpoint("ep-replica.database.example.com", EndpointType.ENDPOINT_TYPE_READ_ONLY),
+    ],
+)
+def test_lakebase_connection_url_raises_when_autoscaling_endpoint_is_not_read_write(endpoint):
     ws = _lakebase_ws()
-    ws.postgres.get_endpoint.return_value.status = status
+    ws.postgres.get_endpoint.return_value = endpoint
     config = LakebaseChecksStorageConfig(location="db.schema.table", endpoint=_LAKEBASE_ENDPOINT)
 
     with pytest.raises(InvalidConfigError, match="has no read/write host"):
@@ -386,7 +406,9 @@ def test_lakebase_connection_url_raises_when_autoscaling_endpoint_has_no_host(st
 
 def test_lakebase_connection_url_resolves_database_instance_host():
     ws = _lakebase_ws()
-    ws.database.get_database_instance.return_value.read_write_dns = "instance.database.example.com"
+    ws.database.get_database_instance.return_value = DatabaseInstance(
+        name="my-instance", read_write_dns="instance.database.example.com"
+    )
     ws.current_user.me.return_value.user_name = "user@example.com"
 
     url = _lakebase_handler(ws)._get_connection_url(_lakebase_config())
@@ -398,7 +420,7 @@ def test_lakebase_connection_url_resolves_database_instance_host():
 
 def test_lakebase_before_connect_generates_autoscaling_endpoint_credential():
     ws = _lakebase_ws()
-    ws.postgres.generate_database_credential.return_value.token = "endpoint-token"
+    ws.postgres.generate_database_credential.return_value = PostgresDatabaseCredential(token="endpoint-token")
     config = LakebaseChecksStorageConfig(location="db.schema.table", endpoint=_LAKEBASE_ENDPOINT)
     cparams = {}
 
@@ -409,9 +431,26 @@ def test_lakebase_before_connect_generates_autoscaling_endpoint_credential():
     ws.database.generate_database_credential.assert_not_called()
 
 
+def test_lakebase_before_connect_raises_when_endpoint_credential_has_no_token():
+    ws = _lakebase_ws()
+    ws.postgres.generate_database_credential.return_value = PostgresDatabaseCredential(token=None)
+    config = LakebaseChecksStorageConfig(location="db.schema.table", endpoint=_LAKEBASE_ENDPOINT)
+
+    with pytest.raises(InvalidConfigError, match="Lakebase credential response contained no token."):
+        _lakebase_handler(ws)._prepare_before_connect(config)(None, None, None, {})
+
+
+def test_lakebase_connection_url_raises_when_database_instance_has_no_dns():
+    ws = _lakebase_ws()
+    ws.database.get_database_instance.return_value = DatabaseInstance(name="my-instance", read_write_dns=None)
+
+    with pytest.raises(InvalidConfigError, match="has no read/write DNS"):
+        _lakebase_handler(ws)._get_connection_url(_lakebase_config())
+
+
 def test_lakebase_before_connect_generates_database_instance_credential():
     ws = _lakebase_ws()
-    ws.database.generate_database_credential.return_value.token = "instance-token"
+    ws.database.generate_database_credential.return_value = DatabaseCredential(token="instance-token")
     cparams = {}
 
     _lakebase_handler(ws)._prepare_before_connect(_lakebase_config())(None, None, None, cparams)
@@ -462,7 +501,7 @@ def test_installation_storage_rejects_invalid_endpoint():
         location="db.schema.table", overwrite_location=True, endpoint="primary", install_folder="/Workspace/dqx"
     )
 
-    with pytest.raises(InvalidConfigError, match="Invalid Lakebase endpoint"):
+    with pytest.raises(InvalidParameterError, match="Invalid Lakebase endpoint"):
         handler._get_storage_handler_and_config(config)
 
 

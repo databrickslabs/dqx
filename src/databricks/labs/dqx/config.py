@@ -440,14 +440,14 @@ def validate_lakebase_connection(instance_name: str | None, endpoint: str | None
         endpoint: Resource name of a Lakebase Autoscaling endpoint.
 
     Raises:
-        InvalidParameterError: If both *instance_name* and *endpoint* are set.
-        InvalidConfigError: If *endpoint* is not in the format 'projects/<p>/branches/<b>/endpoints/<e>'.
+        InvalidParameterError: If both *instance_name* and *endpoint* are set, or if *endpoint* is not in the
+            format 'projects/<p>/branches/<b>/endpoints/<e>'.
     """
     if instance_name and endpoint:
         raise InvalidParameterError("Specify either 'instance_name' or 'endpoint', not both.")
 
     if endpoint and not _LAKEBASE_ENDPOINT_PATTERN.fullmatch(endpoint):
-        raise InvalidConfigError(
+        raise InvalidParameterError(
             f"Invalid Lakebase endpoint '{endpoint}'. "
             "Must be in the format 'projects/<project>/branches/<branch>/endpoints/<endpoint>'."
         )
@@ -613,10 +613,7 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
             return self
 
         if not self.instance_name and not self.endpoint:
-            raise InvalidParameterError(
-                "Instance name must not be empty or None. Set 'instance_name' for a Lakebase database instance "
-                "or 'endpoint' for a Lakebase Autoscaling endpoint."
-            )
+            raise InvalidParameterError("Either 'instance_name' or 'endpoint' must be set.")
 
         validate_lakebase_connection(self.instance_name, self.endpoint)
 
