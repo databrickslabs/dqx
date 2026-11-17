@@ -2868,6 +2868,26 @@ class SchedulePreflightOut(BaseModel):
     tables: list[SchedulePreflightTableOut] = Field(default_factory=list)
 
 
+# Most joined tables one reference-table access check or grant takes; each one costs several
+# permission lookups.
+MAX_REFERENCE_TABLES = 100
+
+
+class ReferenceGrantPreflightIn(BaseModel):
+    """Body of ``POST /schedule-grants/reference-preflight``: the tables a rule reads besides its source.
+
+    *table_fqns* are the join targets the low-code builder picked. *sql_query* is a raw SQL
+    rule's text; its FROM / JOIN tables are extracted server-side. *source_table_fqn* is the
+    rule's own table and is never checked.
+    """
+
+    table_fqns: list[str] = Field(
+        default_factory=list, max_length=MAX_REFERENCE_TABLES, description="Joined table names"
+    )
+    sql_query: str | None = Field(default=None, max_length=65536, description="Raw SQL rule text to scan")
+    source_table_fqn: str | None = Field(default=None, description="The rule's own table, excluded from the check")
+
+
 class ScheduleGrantApplyIn(BaseModel):
     """Body of ``POST /schedule-grants/apply``: only table names, never SQL.
 
@@ -2889,6 +2909,16 @@ class ScheduleGrantApplyIn(BaseModel):
             if len(fqn.split(".")) != 3:
                 raise ValueError("Each entry must be a catalog.schema.table name.")
         return list(dict.fromkeys(table_fqns))
+
+
+class ReferenceGrantApplyIn(ScheduleGrantApplyIn):
+    """Body of ``POST /schedule-grants/reference-apply``: capped like the reference-table preflight."""
+
+    table_fqns: list[str] = Field(
+        min_length=1,
+        max_length=MAX_REFERENCE_TABLES,
+        description="Fully qualified names of the joined tables whose missing task-runner grants to run",
+    )
 
 
 class ScheduleGrantFailureOut(BaseModel):
