@@ -118,8 +118,8 @@ schema:
         description: Total order amount
         required: true
         logicalTypeOptions:
+          # A single bound: is_not_less_than flags only the rows below it
           minimum: 0.01
-          maximum: 100000.00
         quality:
           # Field-level quality check (explicit DQX rule)
           - type: custom
@@ -159,7 +159,9 @@ schema:
         logicalTypeOptions:
           minimum: 0.0
           maximum: 100.0
-    
+          # ODCS v3.0.x exclusive flag: the maximum becomes strict, so is_less_than flags 100 and above
+          exclusiveMaximum: true
+
     # Dataset-level quality checks (explicit DQX rules and text-based expectations)
     quality:
       # Example 1: Custom DQX rule - Check dataset is not empty

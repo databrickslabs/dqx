@@ -12,6 +12,7 @@ import json
 import logging
 import math
 import re
+import zoneinfo
 from collections import Counter
 from collections.abc import Callable, Iterator
 from enum import Enum
@@ -53,15 +54,24 @@ if TYPE_CHECKING:  # pragma: no cover
 logger = logging.getLogger(__name__)
 
 _TEXT_PHYSICAL_TYPE = re.compile(r"^\s*(STRING|VARCHAR|CHAR)\b", re.IGNORECASE)
+_NUMERIC_PHYSICAL_TYPE = re.compile(r"^\s*(TINYINT|SMALLINT|INT|BIGINT|FLOAT|DOUBLE|DECIMAL)\b", re.IGNORECASE)
+_TEMPORAL_PHYSICAL_TYPE = re.compile(r"^\s*(DATE|TIMESTAMP|TIMESTAMP_NTZ)\b", re.IGNORECASE)
+_TIMESTAMP_PHYSICAL_TYPE = re.compile(r"^\s*(TIMESTAMP|TIMESTAMP_NTZ)\b", re.IGNORECASE)
 # A date or timestamp string a range check reads as one on every supported Python version. get_limit_expr reads a
 # string without ':' as a date and a digit-only string as SQL, so a timestamp needs hours and minutes.
 _ISO_DATE_OR_TIMESTAMP = re.compile(
     r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.(?:\d{3}|\d{6}))?)?(?:Z|[+-]\d{2}:\d{2})?)?"
 )
+# Range checks pass integer bounds to Spark as 64-bit literals.
+_INT64_MIN = -(2**63)
+_INT64_MAX = 2**63 - 1
+# ODCS reads a timestamp without an offset in logicalTypeOptions.defaultTimezone, which defaults to UTC.
+_DEFAULT_TIMEZONE = "Etc/UTC"
 _NUMBER_BOUND = "number"
 _TEMPORAL_BOUND = "date or timestamp"
-# Kind of range bound ODCS defines, by logical type (datetime is accepted as timestamp, as for format). A field
-# without a logical type accepts either kind; other logical types have no range bounds.
+# Kind of range bound DQX takes, by logical type (datetime is accepted as timestamp, as for format). A field without
+# a logical type takes the kind its physical type implies, or either kind. ODCS gives string, boolean, object and
+# array no range; time bounds are allowed from ODCS v3.1.0 but not supported yet.
 _BOUND_KIND_BY_LOGICAL_TYPE = {
     "integer": _NUMBER_BOUND,
     "number": _NUMBER_BOUND,
@@ -69,36 +79,41 @@ _BOUND_KIND_BY_LOGICAL_TYPE = {
     "timestamp": _TEMPORAL_BOUND,
     "datetime": _TEMPORAL_BOUND,
 }
-# Type a range check casts a column stored as text to, by ODCS logical type.
+# Type a range check casts a column stored as text to, by ODCS logical type. TIMESTAMP_LTZ rather than TIMESTAMP,
+# which spark.sql.timestampType can turn into TIMESTAMP_NTZ, and that drops the offsets.
 _TEXT_CAST_TYPE_BY_LOGICAL_TYPE = {
     "date": "DATE",
-    "timestamp": "TIMESTAMP",
-    "datetime": "TIMESTAMP",
+    "timestamp": "TIMESTAMP_LTZ",
+    "datetime": "TIMESTAMP_LTZ",
     "integer": "DOUBLE",
     "number": "DOUBLE",
 }
+
+_BoundValue = int | float | datetime.date | str
 
 
 class _RangeBound(NamedTuple):
     """A validated range bound from logicalTypeOptions."""
 
-    value: Any  # value passed to the range check
+    value: _BoundValue  # value passed to the range check
     kind: str  # _NUMBER_BOUND or _TEMPORAL_BOUND
     lower: bool  # a lower bound rather than an upper one
-    strict: bool = False
+    strict: bool = False  # an exclusive bound
 
 
-def _parse_range_bound(value: object) -> tuple[str, Any] | None:
+def _parse_range_bound(value: object) -> tuple[str, _BoundValue] | None:
     """Return the kind of a range bound and the value to pass to the check, or None when it can't be a bound.
 
     A range check reads any string limit other than an ISO date or timestamp as a column name or SQL expression,
-    which a contract value must not become. So a bound is a finite number, a date YAML loaded from an unquoted
-    value, or an ISO date or timestamp string. A 'Z' offset is passed as '+00:00', which every supported Python
-    version parses.
+    which a contract value must not become. So a bound is a finite number (a 64-bit one if an integer), a date YAML
+    loaded from an unquoted value, or an ISO date or timestamp string. A 'Z' offset is passed as '+00:00', which
+    every supported Python version parses.
     """
     if isinstance(value, bool):
         return None
-    if isinstance(value, (int, float)):
+    if isinstance(value, int):  # checked before math.isfinite, which can't convert a very large int to a float
+        return (_NUMBER_BOUND, value) if _INT64_MIN <= value <= _INT64_MAX else None
+    if isinstance(value, float):
         return (_NUMBER_BOUND, value) if math.isfinite(value) else None
     if isinstance(value, datetime.date):  # also covers datetime.datetime
         return _TEMPORAL_BOUND, value
@@ -115,27 +130,103 @@ def _parse_range_bound(value: object) -> tuple[str, Any] | None:
 def _range_bound(
     column_path: str, option: str, value: object, expected_kind: str | None, *, lower: bool, strict: bool = False
 ) -> _RangeBound | None:
-    """Return the validated bound, or None (with a warning when it is not of the kind the logical type expects)."""
+    """Return the validated bound, or None (with a warning when it is not of the kind the field takes)."""
     if value is None:
         return None
     parsed = _parse_range_bound(value)
     if parsed is not None and expected_kind in (None, parsed[0]):
         kind, check_value = parsed
         return _RangeBound(check_value, kind, lower, strict)
+    shown = str(value)
+    if isinstance(value, int) and not isinstance(value, bool) and parsed is None:
+        shown = shown if len(shown) <= 24 else f"{shown[:20]}... ({len(shown)} digits)"
+        reason = "is outside the 64-bit integer range"
+    else:
+        reason = f"is not a {expected_kind or 'number, date or timestamp'}"
     logger.warning(
-        f"Skipping {option} on '{sanitize_for_logging(column_path)}': "
-        f"'{sanitize_for_logging(str(value))}' is not a {expected_kind or 'number, date or timestamp'}."
+        f"Skipping {option} on '{sanitize_for_logging(column_path)}': '{sanitize_for_logging(shown)}' {reason}."
     )
     return None
 
 
-def _as_datetime(value: Any) -> datetime.datetime:
+def _expected_bound_kind(logical_type: str | None, physical_type: str | None) -> str | None:
+    """Return the kind of bound a field takes: by logical type, else by physical type, else None (either kind)."""
+    if logical_type:
+        return _BOUND_KIND_BY_LOGICAL_TYPE.get(logical_type)
+    if physical_type and _NUMERIC_PHYSICAL_TYPE.match(physical_type):
+        return _NUMBER_BOUND
+    if physical_type and _TEMPORAL_PHYSICAL_TYPE.match(physical_type):
+        return _TEMPORAL_BOUND
+    return None
+
+
+def _has_time(value: _BoundValue) -> bool:
+    """Return whether a date or timestamp bound has a time of day."""
+    return isinstance(value, datetime.datetime) or (isinstance(value, str) and ":" in value)
+
+
+def _as_datetime(value: _BoundValue) -> datetime.datetime:
     """Return a date or timestamp bound as a datetime, so two bounds can be ordered."""
     if isinstance(value, datetime.datetime):
         return value
     if isinstance(value, datetime.date):
         return datetime.datetime.combine(value, datetime.time.min)
-    return datetime.datetime.fromisoformat(value)
+    return datetime.datetime.fromisoformat(str(value))
+
+
+def _with_offset(value: _BoundValue, zone: zoneinfo.ZoneInfo) -> _BoundValue:
+    """Return a timestamp bound with an explicit UTC offset, reading one without an offset in *zone*.
+
+    A date becomes midnight in *zone*. The offset is the one *zone* has at that instant, so it follows daylight
+    saving time. A string stays an ISO string; a date or datetime becomes a datetime.
+    """
+    timestamp = _as_datetime(value)
+    if timestamp.tzinfo is not None:
+        return value
+    local = timestamp.replace(tzinfo=zone)
+    with_offset = local.astimezone(datetime.timezone(local.utcoffset() or datetime.timedelta(0)))
+    return with_offset.isoformat() if isinstance(value, str) else with_offset
+
+
+def _is_timestamp_field(logical_type: str | None, physical_type: str | None, bounds: list[_RangeBound]) -> bool:
+    """Return whether a field's date or timestamp bounds compare as timestamps rather than dates."""
+    if logical_type in {"timestamp", "datetime"}:
+        return True
+    if not logical_type and physical_type and _TIMESTAMP_PHYSICAL_TYPE.match(physical_type):
+        return True
+    return any(_has_time(bound.value) for bound in bounds)
+
+
+def _timestamp_bounds_with_offsets(
+    column_path: str, logical_type: str | None, physical_type: str | None, bounds: list[_RangeBound], opts: dict
+) -> list[_RangeBound] | None:
+    """Return the bounds with explicit offsets when they are timestamps, or None (with a warning) for an unknown zone.
+
+    ODCS reads a timestamp without an offset in the field's defaultTimezone, which defaults to UTC. Making the offset
+    explicit compares every bound as the same instant whatever the Spark session or client time zone is, and lets a
+    date and a timestamp bound be ordered. Bounds of a date field that are all dates stay dates.
+    """
+    if not any(bound.kind == _TEMPORAL_BOUND for bound in bounds):
+        return bounds
+    if not _is_timestamp_field(logical_type, physical_type, bounds):
+        return bounds
+    zone_name = str(opts.get("defaultTimezone") or _DEFAULT_TIMEZONE)
+    try:
+        zone = zoneinfo.ZoneInfo(zone_name)
+    except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+        logger.warning(
+            f"Skipping range bounds on '{sanitize_for_logging(column_path)}': "
+            f"unknown defaultTimezone '{sanitize_for_logging(zone_name)}'."
+        )
+        return None
+    return [bound._replace(value=_with_offset(bound.value, zone)) for bound in bounds]
+
+
+def _as_number(value: _BoundValue) -> int | float:
+    """Return a number bound as a number, so two bounds can be ordered."""
+    if isinstance(value, (int, float)):
+        return value
+    raise TypeError(f"not a number bound: {value!r}")
 
 
 def _describe_bound(bound: _RangeBound) -> str:
@@ -153,15 +244,13 @@ def _empty_range_reason(bounds: list[_RangeBound]) -> str | None:
         return "the bounds mix numbers with dates or timestamps"
     for low in (bound for bound in bounds if bound.lower):
         for high in (bound for bound in bounds if not bound.lower):
-            low_key, high_key = (
-                (low.value, high.value)
-                if low.kind == _NUMBER_BOUND
-                else (_as_datetime(low.value), _as_datetime(high.value))
-            )
-            try:
-                empty = low_key > high_key or (low_key == high_key and (low.strict or high.strict))
-            except TypeError:  # a timezone-aware and a naive timestamp, which Spark still compares
-                continue
+            strict = low.strict or high.strict
+            if low.kind == _NUMBER_BOUND:
+                low_number, high_number = _as_number(low.value), _as_number(high.value)
+                empty = low_number > high_number or (strict and low_number == high_number)
+            else:
+                low_time, high_time = _as_datetime(low.value), _as_datetime(high.value)
+                empty = low_time > high_time or (strict and low_time == high_time)
             if empty:
                 return f"no value is {_describe_bound(low)} and {_describe_bound(high)}"
     return None
@@ -180,11 +269,7 @@ def _text_cast_type(logical_type: str | None, physical_type: str | None, bounds:
         return _TEXT_CAST_TYPE_BY_LOGICAL_TYPE.get(logical_type)
     if bounds[0].kind == _NUMBER_BOUND:
         return "DOUBLE"
-    has_time = any(
-        isinstance(bound.value, datetime.datetime) or (isinstance(bound.value, str) and ":" in bound.value)
-        for bound in bounds
-    )
-    return "TIMESTAMP" if has_time else "DATE"
+    return "TIMESTAMP_LTZ" if any(_has_time(bound.value) for bound in bounds) else "DATE"
 
 
 def _range_checks(column: str, bounds: list[_RangeBound]) -> list[tuple[dict, str]]:
@@ -1015,13 +1100,14 @@ class DataContractRulesGenerator(DQEngineBase):
         ODCS defines every bound per value, so each becomes a row-level check that flags only the rows out of range.
         An exclusive bound comes in either ODCS form: a flag that makes minimum/maximum exclusive (v3.0.x), or a bound
         of its own (v3.1.0+). Bounds are taken for integer, number, date and timestamp fields (or fields without a
-        logical type), and must be of the kind ODCS gives them: numbers, or dates and timestamps. Anything else is
-        skipped with a warning, as are bounds that no value could satisfy. A column stored as text is compared
-        through *try_cast*.
+        logical type, by their physical type), and must be of the kind ODCS gives them: numbers, or dates and
+        timestamps. Timestamp bounds without an offset are read in the field's defaultTimezone (UTC by default).
+        Anything else is skipped with a warning, as are bounds that no value could satisfy. A column stored as text is
+        compared through *try_cast*.
         """
         if all(opts.get(option) is None for option in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum")):
             return []
-        expected_kind = _BOUND_KIND_BY_LOGICAL_TYPE.get(logical_type or "")
+        expected_kind = _expected_bound_kind(logical_type, physical_type)
         if logical_type and expected_kind is None:
             reason = (
                 "range bounds on time fields aren't supported yet"
@@ -1041,8 +1127,10 @@ class DataContractRulesGenerator(DQEngineBase):
             bounds.extend(
                 self._side_bounds(column_path, inclusive_option, exclusive_option, opts, expected_kind, lower=lower)
             )
-        if not bounds:
+        bounds_with_offsets = _timestamp_bounds_with_offsets(column_path, logical_type, physical_type, bounds, opts)
+        if not bounds_with_offsets:
             return []
+        bounds = bounds_with_offsets
         empty_reason = _empty_range_reason(bounds)
         if empty_reason:
             logger.warning(
