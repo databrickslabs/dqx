@@ -61,7 +61,18 @@ import {
   viewValueChanges,
   type GlobalResultsFilterKey,
   type GlobalResultsFilterOptionValues,
+  type GlobalResultsViewKey,
 } from "@/components/results/global-results-view";
+import {
+  effectiveTagKey,
+  groupsForTagKey,
+  parseTagFacetValue,
+  tagFacetLabel,
+  tagFacetValue,
+  tagFilterOptions,
+  tagKeysFromHistory,
+  trendForTagKey,
+} from "@/components/results/tag-results";
 
 // The multi-table results composition, extracted from the reviewed
 // `components/data-products/ProductResultsTab.tsx` (itself a 1:1 port of
@@ -133,6 +144,7 @@ export function breakdownParams(
 ): EntityResultsParams {
   return {
     ...facetQueryParams(filters),
+    ...tagParam(filters),
     // Global Results' table-universe filters (Collection / Owner / DQ score);
     // always empty — so omitted — on the other surfaces.
     ...topFilterParams(filters),
@@ -143,6 +155,12 @@ export function breakdownParams(
     // is pinned so the query stays the "newest" default.
     ...(asOfBatch ? { as_of_batch: asOfBatch } : {}),
   };
+}
+
+/** The rule-tag facet as the multi-table endpoints' `tag` param (omitted when empty). The
+ *  single-table endpoints take no tag, so it stays out of the shared facetQueryParams. */
+export function tagParam(filters: Pick<MultiFilters, "tag">): { tag?: string[] } {
+  return filters.tag.length ? { tag: filters.tag } : {};
 }
 
 /** Muted, desaturated palette for the per-table contributing lines on the
@@ -295,6 +313,7 @@ export interface TopFilterOptionLists {
   rule: FacetFilterOption[];
   dimension: FacetFilterOption[];
   severity: FacetFilterOption[];
+  tag: FacetFilterOption[];
 }
 
 /**
@@ -313,6 +332,7 @@ export function topFilterOptionLists(
   base: EntityResultsOut | undefined,
   filters: Pick<MultiFilters, "catalog" | "schema">,
   collectionFqns: ReadonlySet<string> | null = null,
+  missingTagLabel = "Untagged",
 ): TopFilterOptionLists {
   const allTableFqns = (base?.by_table ?? [])
     .map((g) => g.label)
@@ -352,6 +372,7 @@ export function topFilterOptionLists(
     ),
     dimension: labelOptions(base?.by_dimension),
     severity: labelOptions(base?.by_severity),
+    tag: tagFilterOptions(base?.tag_options, missingTagLabel),
   };
 }
 
@@ -403,8 +424,10 @@ export function globalResultsValuesReconciler(
  */
 export function baseFilterOptionValues(
   base: EntityResultsOut | undefined,
-): Pick<GlobalResultsFilterOptionValues, keyof TopFilterOptionLists> {
-  if (!base) return { catalog: null, schema: null, table: null, rule: null, dimension: null, severity: null };
+): Pick<GlobalResultsFilterOptionValues, keyof TopFilterOptionLists> & { tagKey: readonly string[] | null } {
+  if (!base) {
+    return { catalog: null, schema: null, table: null, rule: null, dimension: null, severity: null, tag: null, tagKey: null };
+  }
   const lists = topFilterOptionLists(base, { catalog: [], schema: [] });
   const values = (opts: FacetFilterOption[]) => opts.map((o) => o.value);
   return {
@@ -414,6 +437,8 @@ export function baseFilterOptionValues(
     rule: values(lists.rule),
     dimension: values(lists.dimension),
     severity: values(lists.severity),
+    tag: values(lists.tag),
+    tagKey: tagKeysFromHistory(base.tag_options, base.by_tag),
   };
 }
 
@@ -446,6 +471,7 @@ const TOP_FILTER_COPY: Record<
     search: "resultsUi.filterSearchSeverities",
     none: "resultsUi.filterNoSeverities",
   },
+  tag: { all: "resultsUi.filterAllTags", search: "resultsUi.filterSearchTags", none: "resultsUi.filterNoTags" },
 };
 
 /** Facet → chip-label i18n key (static keys so the extractor sees them). */
@@ -458,6 +484,7 @@ const CHIP_LABEL_KEYS: Record<Facet, string> = {
   catalog: "resultsUi.chipCatalog",
   schema: "resultsUi.chipSchema",
   outcome: "resultsUi.chipOutcome",
+  tag: "resultsUi.chipTag",
 };
 
 export interface MultiTableResultsSectionProps {
@@ -523,7 +550,7 @@ export interface MultiTableResultsSectionProps {
    *  Omitted elsewhere — the other surfaces keep their local filter state. */
   topFilterLayout?: readonly GlobalResultsFilterKey[];
   topFilterValues?: ViewValues;
-  onTopFilterChange?: (key: GlobalResultsFilterKey, value: ViewValue) => void;
+  onTopFilterChange?: (key: GlobalResultsViewKey, value: ViewValue) => void;
   /** Owner / Collection bubble options and collection membership (id → FQNs). */
   topFilterOptions?: {
     owners: FacetFilterOption[];
@@ -613,6 +640,9 @@ export function MultiTableResultsSection({
   const [countChartsOpen, setCountChartsOpen] = useState(false);
   const [ruleColOpen, setRuleColOpen] = useState(true);
   const [invalidSamplesOpen, setInvalidSamplesOpen] = useState(true);
+  // The tag key the Score by tag chart and By tag box show (one key at a
+  // time; null = the first key in scope). Shared by both widgets.
+  const [chosenTagKey, setChosenTagKey] = useState<string | null>(null);
 
   // The FILTERED trends: cross-filtered by the active facet chips (dqlake's
   // product tab re-scopes its trends on the chips, unlike the monitored-table
@@ -623,6 +653,7 @@ export function MultiTableResultsSection({
   const trendQuery = useEntityResults(
     {
       ...facetQueryParams(filters),
+      ...tagParam(filters),
       ...topFilterParams(filters),
       axes: "trend",
       include_drafts: draftsParam,
@@ -675,6 +706,7 @@ export function MultiTableResultsSection({
     filters.catalog.length > 0 ||
     filters.schema.length > 0 ||
     filters.outcome.length > 0 ||
+    filters.tag.length > 0 ||
     filters.owner.length > 0 ||
     filters.collection.length > 0 ||
     filters.scoreBucket !== EMPTY_FILTERS.scoreBucket;
@@ -733,7 +765,7 @@ export function MultiTableResultsSection({
   // fetch via the Task 7 OBO-gated failed-rows endpoint (FQN-keyed).
   const failedRowsQuery = useGetDqResultsFailedRows(
     selectedFqn ?? "",
-    { limit: 200, include_drafts: draftsParam },
+    { limit: 200, include_drafts: draftsParam, ...tagParam(filters) },
     {
       query: {
         enabled: Boolean(selectedFqn),
@@ -750,7 +782,7 @@ export function MultiTableResultsSection({
   // is picked the box is empty; once picked it shows that table's columns.
   const tableColumnsQuery = useGetTableResults(
     selectedFqn ?? "",
-    { axes: "breakdown", include_drafts: draftsParam },
+    { axes: "breakdown", include_drafts: draftsParam, ...tagParam(filters) },
     {
       query: {
         enabled: Boolean(selectedFqn),
@@ -768,6 +800,7 @@ export function MultiTableResultsSection({
     const res = await getDqResultsFailedRows(selectedFqn, {
       limit: EXPORT_ROW_LIMIT,
       include_drafts: draftsParam,
+      ...tagParam(filters),
     });
     return toFailingRecords(res.data.rows);
   };
@@ -845,6 +878,61 @@ export function MultiTableResultsSection({
   // set is remapped the same way to stay matched.
   const tableFacet = buildFacet(results?.by_table, baseResults?.by_table);
 
+  // Rule tags: keys come from the history options and the current rows so the key list does
+  // not vanish under a filter. Within one key a check has one value, so the
+  // key's rows partition the scope like By dimension. The facet value is
+  // `key=value`; an empty value selects checks without that key.
+  const tagKeys = tagKeysFromHistory(baseResults?.tag_options, baseResults?.by_tag, results?.by_tag);
+  const savedTagKey = controlledValues && typeof controlledValues.tagKey === "string" ? controlledValues.tagKey : null;
+  const tagKey = effectiveTagKey(tagKeys, controlledValues ? savedTagKey : chosenTagKey);
+  const tagFacetRows = buildFacet(
+    groupsForTagKey(results?.by_tag, tagKey),
+    groupsForTagKey(baseResults?.by_tag, tagKey),
+  );
+  const tagFacet = {
+    ...tagFacetRows,
+    mutedLabels: [
+      ...tagFacetRows.mutedLabels,
+      ...(!applicableOnly && hasActiveFilter &&
+      groupsForTagKey(baseResults?.by_tag, tagKey).some((r) => r.label === null) &&
+      !groupsForTagKey(results?.by_tag, tagKey).some((r) => r.label === null)
+        ? [t("resultsUi.untaggedSeries")]
+        : []),
+    ],
+    rows: tagFacetRows.rows.map((r) => ({
+      ...r,
+      label: r.label ?? t("resultsUi.untaggedSeries"),
+      value: tagKey === null ? null : tagFacetValue(tagKey, r.label),
+    })),
+  };
+  // Use the facet value as the chart's internal series key. This keeps a real
+  // tag value named "Untagged" separate from the missing-value series.
+  const untaggedSeries = t("resultsUi.untaggedSeries");
+  const tagTrend = trendForTagKey(trends?.trend_by_tag, tagKey).map((p) =>
+    ({ ...p, series: tagFacetValue(tagKey ?? "", p.series ?? null) }),
+  );
+  const onTagSeriesClick = (series: string) => {
+    if (tagKey !== null) onRowToggle("tag", series);
+  };
+  const tagKeySelect =
+    tagKeys.length > 1 ? (
+      <Select value={tagKey ?? undefined} onValueChange={(key) => {
+        if (onTopFilterChange) onTopFilterChange("tagKey", key);
+        else setChosenTagKey(key);
+      }}>
+        <SelectTrigger className="h-7 w-auto gap-1 text-xs" aria-label={t("resultsUi.tagKeySelectAria")}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {tagKeys.map((k) => (
+            <SelectItem key={k} value={k} className="text-xs">
+              {k}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    ) : null;
+
   // Rule name → breach criticality for the failing-records cell hover's ⚠.
   // Keyed by the by_rule row label (what failures carry as rule_name); only
   // breached rows contribute; suppressed when the threshold feature is off.
@@ -876,10 +964,11 @@ export function MultiTableResultsSection({
     // Schema chips show the bare schema name (the catalog has its own chip).
     if (facet === "schema") return friendlySchemaName(value);
     if (facet === "outcome") return value === "failed" ? t("resultsUi.outcomeFailed") : t("resultsUi.outcomePassed");
+    if (facet === "tag") return tagFacetLabel(value, t("resultsUi.untaggedSeries"));
     return value;
   };
   const chips = (
-    ["dimension", "severity", "rule", "column", "table", "catalog", "schema", "outcome"] as const
+    ["dimension", "severity", "rule", "column", "table", "catalog", "schema", "outcome", "tag"] as const
   ).flatMap((facet) =>
     filters[facet].map((value) => ({
       key: `${facet}:${value}`,
@@ -893,7 +982,7 @@ export function MultiTableResultsSection({
     topFilterOptions?.collectionMembers ?? new Map<string, readonly string[]>(),
     filters.collection,
   );
-  const topOptions = topFilterOptionLists(baseResults, filters, collectionFqns);
+  const topOptions = topFilterOptionLists(baseResults, filters, collectionFqns, t("resultsUi.untaggedSeries"));
 
   // Setting the Tables dropdown drives the `table` facet directly (multi-select
   // filter). It intentionally does NOT touch `selectedTable` — that single
@@ -1066,6 +1155,7 @@ export function MultiTableResultsSection({
       case "rule":
       case "dimension":
       case "severity":
+      case "tag":
         return facetBubble(key, TOP_FILTER_COPY[key], topOptions[key], filters[key], (v) =>
           onFacetFilterChange(key, v),
         );
@@ -1202,6 +1292,21 @@ export function MultiTableResultsSection({
               />
             </ChartFrame>
           </div>
+          {/* Score by tag: one series per value of the chosen tag key. Shown
+              only when some check in scope carries a tag. */}
+          {tagKey !== null && (
+            <div data-testid="trend-by-tag">
+              <ChartFrame>
+                <ScoreTrendChart
+                  data={toTrendSeries(tagTrend)}
+                  title={t("resultsUi.scoreByTagTitle", { key: tagKey })}
+                  headerRight={tagKeySelect}
+                  onSeriesClick={onTagSeriesClick}
+                  seriesLabel={(series) => parseTagFacetValue(series)?.value ?? untaggedSeries}
+                />
+              </ChartFrame>
+            </div>
+          )}
           <div className="grid gap-6 md:grid-cols-2">
             <ChartFrame>
               <ScoreTrendChart
@@ -1270,6 +1375,21 @@ export function MultiTableResultsSection({
               onSelect={(label) => onRowToggle("severity", label)}
               breachEnabled={thresholdEnabled}
             />
+            {tagKey !== null && (
+              <div className="md:col-span-2" data-testid="breakdown-by-tag">
+                <DimensionBreakdown
+                  title={t("resultsUi.byTagTitle", { key: tagKey })}
+                  valueHeader={tagKey}
+                  headerRight={tagKeySelect}
+                  rows={tagFacet.rows}
+                  mutedLabels={tagFacet.mutedLabels}
+                  loading={breakdownRefetching}
+                  selected={filters.tag}
+                  onSelect={(value) => onRowToggle("tag", value)}
+                  breachEnabled={thresholdEnabled}
+                />
+              </div>
+            )}
             {!hideRuleBreakdown && (
               <div className="md:col-span-2" data-testid="breakdown-by-rule">
                 <DimensionBreakdown

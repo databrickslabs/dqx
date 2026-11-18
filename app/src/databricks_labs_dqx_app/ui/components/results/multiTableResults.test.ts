@@ -164,6 +164,12 @@ describe("topFilterOptionLists / baseFilterOptionValues (Global Results bubbles)
     by_rule: [{ label: "Not null", rule_id: "r1" }, { label: "Legacy" }],
     by_dimension: [{ label: "Validity" }, { label: "Completeness" }],
     by_severity: [{ label: "High" }],
+    by_tag: [
+      { tag_key: "domain", label: "finance" },
+      { tag_key: "domain", label: null },
+      { tag_key: "pii", label: "true" },
+    ],
+    tag_options: { domain: ["finance", "historical", null], pii: ["true"] },
   } as unknown as EntityResultsOut;
 
   it("narrows table options to the selected collections' members", () => {
@@ -189,6 +195,17 @@ describe("topFilterOptionLists / baseFilterOptionValues (Global Results bubbles)
     expect(lists.severity.map((o) => o.value)).toEqual(["High"]);
   });
 
+  it("offers historical and missing tag values", () => {
+    expect(topFilterOptionLists(base, { catalog: [], schema: [] }).tag).toEqual([
+      { value: "domain=finance", label: "domain = finance" },
+      { value: "domain=historical", label: "domain = historical" },
+      { value: "domain=", label: "domain = Untagged" },
+      { value: "pii=true", label: "pii = true" },
+    ]);
+    expect(baseFilterOptionValues(undefined).tag).toBeNull();
+    expect(baseFilterOptionValues(base).tagKey).toEqual(["domain", "pii"]);
+  });
+
   it("is all-null while the base rows load, else the full option universe", () => {
     expect(baseFilterOptionValues(undefined).table).toBeNull();
     const values = baseFilterOptionValues(base);
@@ -204,6 +221,11 @@ describe("breakdownParams carries the Global Results universe filters", () => {
     expect(params.score_bucket).toBe("none");
     expect("collection" in params).toBe(false);
     expect("score_bucket" in breakdownParams(EMPTY_FILTERS)).toBe(false);
+  });
+
+  it("adds the tag facet only when set", () => {
+    expect(breakdownParams({ ...EMPTY_FILTERS, tag: ["domain=finance"] }).tag).toEqual(["domain=finance"]);
+    expect("tag" in breakdownParams(EMPTY_FILTERS)).toBe(false);
   });
 });
 

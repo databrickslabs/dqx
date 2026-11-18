@@ -103,6 +103,27 @@ def test_run_creates_all_rules_and_writes_terminal_status():
     assert last.state in {"succeeded", "failed"}
 
 
+def test_run_stamps_rule_tags_into_created_rule_metadata():
+    svc, deps = _svc()
+    _use_create_path(deps)
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    created = {
+        call.kwargs["user_metadata"]["name"]: call.kwargs["user_metadata"]
+        for call in deps["registry"].create_rule.call_args_list
+    }
+    tagged = [spec for spec in manifest.RULES if spec.tags]
+    assert tagged, "expected tagged demo rules"
+    for spec in tagged:
+        metadata = created[spec.name]
+        for key, value in spec.tags.items():
+            assert metadata[key] == value, f"{spec.key}: tag {key!r} missing from user_metadata"
+        assert metadata["dimension"] == spec.dimension
+        assert metadata["severity"] == spec.severity
+
+
 def test_build_source_data_tags_demo_schema_and_tables():
     # Ownership tagging must run through the service-principal reconciler after
     # the Studio-owned demo objects exist; it is separate from governed column

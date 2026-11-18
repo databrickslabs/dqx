@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { applyFilterToggle, builtinViewState, reconcileView } from "@/components/data-table/saved-views";
+import { applyFilterToggle, builtinViewState, isDirty, reconcileView, toPayload } from "@/components/data-table/saved-views";
 import { EMPTY_FILTERS } from "@/components/monitored-tables/BindingResultsTab";
 import {
   GLOBAL_RESULTS_FILTER_ORDER,
@@ -25,7 +25,7 @@ const LOADING: GlobalResultsFilterOptionValues = {
 describe("buildGlobalResultsViewDefs", () => {
   const defs = buildGlobalResultsViewDefs(LOADING);
 
-  it("ships the ten bubbles in spec order with the spec's default visibility", () => {
+  it("ships the eleven bubbles in spec order with the spec's default visibility", () => {
     expect(GLOBAL_RESULTS_FILTER_ORDER).toEqual([
       "catalog",
       "schema",
@@ -37,6 +37,7 @@ describe("buildGlobalResultsViewDefs", () => {
       "outcome",
       "dimension",
       "severity",
+      "tag",
     ]);
     const state = builtinViewState(defs);
     expect(state.columns).toBeNull();
@@ -46,6 +47,7 @@ describe("buildGlobalResultsViewDefs", () => {
       "table",
       "rule",
       "outcome",
+      "tag",
     ]);
     expect(state.values.dqScore).toBe("all");
     expect(state.values.owner).toEqual([]);
@@ -84,6 +86,16 @@ describe("buildGlobalResultsViewDefs", () => {
     expect(state.values.collection).toEqual([]);
     expect(state.values.schema).toEqual(["x.y"]);
     expect(state.values.dqScore).toBe("all");
+  });
+
+  it("saves the selected tag key without showing it as a filter bubble", () => {
+    const loaded = buildGlobalResultsViewDefs({ ...LOADING, tagKey: ["domain", "pii"] });
+    const builtin = builtinViewState(loaded);
+    const chosen = { ...builtin, values: { ...builtin.values, tagKey: "pii" } };
+    const restored = reconcileView(toPayload(chosen, loaded), loaded);
+    expect(restored.values.tagKey).toBe("pii");
+    expect(restored.filters.visibility.tagKey).toBe(false);
+    expect(isDirty(builtin, restored, loaded)).toBe(true);
   });
 });
 

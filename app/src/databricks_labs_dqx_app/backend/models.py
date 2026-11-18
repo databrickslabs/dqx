@@ -2292,7 +2292,9 @@ class GroupRowOut(BaseModel):
     by_rule axis only (additive — the frozen registry rule id the group
     is keyed on, so the UI can facet-filter by rule IDENTITY across
     renames; None for legacy/untagged name-keyed groups and on every
-    other axis).
+    other axis). *tag_key* is filled on the by_tag axis only — the tag key
+    the group belongs to; *label* is then the tag value (None = the checks
+    without that key).
 
     *pass_threshold* is the frozen per-run pass threshold (%) in effect for
     the group — the value stamped on the NEWEST run pooled into the group
@@ -2304,6 +2306,7 @@ class GroupRowOut(BaseModel):
     label: str | None = None
     binding_id: str | None = None
     rule_id: str | None = None
+    tag_key: str | None = None
     pass_rate: float | None = None
     failed_tests: int | None = Field(default=None, description="Failed row-level tests")
     rule_count: int | None = None
@@ -2332,10 +2335,14 @@ class TrendPointOut(BaseModel):
     as-of carry-forward), it is draft if ANY contributing run was a draft —
     the conservative choice so a mixed instant is never silently shown as
     fully published.
+
+    *tag_key* is set on the by-tag trend only: the tag key of the point's
+    series (*series* is the tag value; None = checks without that key).
     """
 
     run_date: str | None = None
     series: str | None = None
+    tag_key: str | None = None
     pass_rate: float | None = None
     rule_count: int | None = None
     total_tests: int | None = Field(default=None, description="Row-level tests (evaluated rows x row checks)")
@@ -2384,10 +2391,15 @@ class EntityResultsOut(BaseModel):
     by_column: list[GroupRowOut] = Field(default_factory=list)
     by_table: list[GroupRowOut] = Field(default_factory=list)
     by_rule: list[GroupRowOut] = Field(default_factory=list)
+    by_tag: list[GroupRowOut] = Field(default_factory=list)
+    # All values seen in the scoped run history, including values absent from
+    # the latest-run breakdown. None means a check had no value for that key.
+    tag_options: dict[str, list[str | None]] = Field(default_factory=dict)
     trend: list[TrendPointOut] = Field(default_factory=list)
     trend_by_dimension: list[TrendPointOut] = Field(default_factory=list)
     trend_by_severity: list[TrendPointOut] = Field(default_factory=list)
     trend_by_table: list[TrendPointOut] = Field(default_factory=list)
+    trend_by_tag: list[TrendPointOut] = Field(default_factory=list)
     trend_counts: list[TrendCountPointOut] = Field(default_factory=list)
     trend_failures: list[TrendFailurePointOut] = Field(default_factory=list)
     tables: list[GroupRowOut] = Field(default_factory=list)

@@ -79,6 +79,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RESERVED_DESCRIPTION_KEY,
     RESERVED_DIMENSION_KEY,
     RESERVED_NAME_KEY,
+    RESERVED_RULE_METADATA_KEYS,
     RESERVED_SEVERITY_KEY,
     AuthorKind,
     ParamType,
@@ -787,7 +788,12 @@ class DemoSeedService:
 
     @staticmethod
     def _metadata_for(spec: RuleSpec) -> dict[str, Any]:
-        """Build a rule's reserved-tag ``user_metadata`` from a manifest :class:`RuleSpec`."""
+        """Build a rule's ``user_metadata`` from a manifest :class:`RuleSpec`.
+
+        Reserved tags (name, description, dimension, severity, slot tags) come
+        first; the spec's free-text tags are added after them and never replace
+        a reserved key.
+        """
         metadata: dict[str, Any] = {}
         metadata = set_reserved_tag(metadata, RESERVED_NAME_KEY, spec.name)
         metadata = set_reserved_tag(metadata, RESERVED_DESCRIPTION_KEY, spec.description)
@@ -795,6 +801,9 @@ class DemoSeedService:
         metadata = set_reserved_tag(metadata, RESERVED_SEVERITY_KEY, spec.severity)
         if spec.slot_tags:
             metadata = set_slot_tags(metadata, {slot: list(tags) for slot, tags in spec.slot_tags.items()})
+        for key, value in spec.tags.items():
+            if key not in RESERVED_RULE_METADATA_KEYS:
+                metadata[key] = value
         return metadata
 
     # ------------------------------------------------------------------

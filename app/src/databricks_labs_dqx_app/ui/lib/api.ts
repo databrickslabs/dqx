@@ -1604,6 +1604,10 @@ export interface EffectivePermissionsOut {
   is_owner?: boolean;
 }
 
+export type EntityResultsOutTagOptionsItem = string | null;
+
+export type EntityResultsOutTagOptions = {[key: string]: EntityResultsOutTagOptionsItem[]};
+
 /**
  * Breakdowns + trends for one results entity (table / product / rule / global).
 
@@ -1617,10 +1621,13 @@ export interface EntityResultsOut {
   by_column?: GroupRowOut[];
   by_table?: GroupRowOut[];
   by_rule?: GroupRowOut[];
+  by_tag?: GroupRowOut[];
+  tag_options?: EntityResultsOutTagOptions;
   trend?: TrendPointOut[];
   trend_by_dimension?: TrendPointOut[];
   trend_by_severity?: TrendPointOut[];
   trend_by_table?: TrendPointOut[];
+  trend_by_tag?: TrendPointOut[];
   trend_counts?: TrendCountPointOut[];
   trend_failures?: TrendFailurePointOut[];
   tables?: GroupRowOut[];
@@ -2032,6 +2039,8 @@ export type GroupRowOutBindingId = string | null;
 
 export type GroupRowOutRuleId = string | null;
 
+export type GroupRowOutTagKey = string | null;
+
 export type GroupRowOutPassRate = number | null;
 
 /**
@@ -2075,7 +2084,9 @@ monitored or on every other axis). *rule_id* is filled on the
 by_rule axis only (additive — the frozen registry rule id the group
 is keyed on, so the UI can facet-filter by rule IDENTITY across
 renames; None for legacy/untagged name-keyed groups and on every
-other axis).
+other axis). *tag_key* is filled on the by_tag axis only — the tag key
+the group belongs to; *label* is then the tag value (None = the checks
+without that key).
 
 *pass_threshold* is the frozen per-run pass threshold (%) in effect for
 the group — the value stamped on the NEWEST run pooled into the group
@@ -2087,6 +2098,7 @@ export interface GroupRowOut {
   label?: GroupRowOutLabel;
   binding_id?: GroupRowOutBindingId;
   rule_id?: GroupRowOutRuleId;
+  tag_key?: GroupRowOutTagKey;
   pass_rate?: GroupRowOutPassRate;
   /** Failed row-level tests */
   failed_tests?: GroupRowOutFailedTests;
@@ -5400,6 +5412,8 @@ export type TrendPointOutRunDate = string | null;
 
 export type TrendPointOutSeries = string | null;
 
+export type TrendPointOutTagKey = string | null;
+
 export type TrendPointOutPassRate = number | null;
 
 export type TrendPointOutRuleCount = number | null;
@@ -5439,10 +5453,14 @@ collapses several runs onto one instant (multi-table pooling, or the
 as-of carry-forward), it is draft if ANY contributing run was a draft —
 the conservative choice so a mixed instant is never silently shown as
 fully published.
+
+*tag_key* is set on the by-tag trend only: the tag key of the point's
+series (*series* is the tag value; None = checks without that key).
  */
 export interface TrendPointOut {
   run_date?: TrendPointOutRunDate;
   series?: TrendPointOutSeries;
+  tag_key?: TrendPointOutTagKey;
   pass_rate?: TrendPointOutPassRate;
   rule_count?: TrendPointOutRuleCount;
   /** Row-level tests (evaluated rows x row checks) */
@@ -6112,6 +6130,7 @@ table?: string[] | null;
 catalog?: string[] | null;
 schema?: string[] | null;
 outcome?: string[] | null;
+tag?: string[] | null;
 collection?: string[] | null;
 owner?: string[] | null;
 score_bucket?: '75-100' | '50-75' | '25-50' | '0-25' | 'none' | null;
@@ -6127,6 +6146,7 @@ severity?: string[] | null;
 rule?: string[] | null;
 column?: string[] | null;
 table?: string[] | null;
+tag?: string[] | null;
 run_id?: string | null;
 axes?: string;
 include_drafts?: boolean;
@@ -6143,6 +6163,7 @@ severity?: string[] | null;
 rule?: string[] | null;
 column?: string[] | null;
 table?: string[] | null;
+tag?: string[] | null;
 run_id?: string | null;
 axes?: string;
 include_drafts?: boolean;
@@ -6154,6 +6175,7 @@ dimension?: string[] | null;
 severity?: string[] | null;
 rule?: string[] | null;
 column?: string[] | null;
+tag?: string[] | null;
 run_id?: string | null;
 /**
  * @minimum 1
@@ -6176,6 +6198,7 @@ dimension?: string[] | null;
 severity?: string[] | null;
 rule?: string[] | null;
 column?: string[] | null;
+tag?: string[] | null;
 run_id?: string | null;
 axes?: string;
 include_drafts?: boolean;

@@ -110,6 +110,9 @@ class RuleSpec:
             describes a passing (``pass``) or failing (``fail``) row. The demo's
             SQL and low-code predicates all describe a VALID row, so they are
             ``pass``. ``dqx_native`` rules leave this ``None``.
+        tags: optional free-text rule tags (key -> value) stamped into the rule's
+            ``user_metadata`` so the demo has tagged rules and results. Keys must
+            not be reserved ``user_metadata`` keys (name, severity, ...).
     """
 
     key: str
@@ -124,6 +127,7 @@ class RuleSpec:
     parameters: tuple[ParamSpec, ...] = ()
     slot_tags: dict[str, tuple[str, ...]] = field(default_factory=dict)
     polarity: str | None = None
+    tags: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -306,6 +310,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("number", "numeric"),),
         author_kind="human",
         polarity="pass",
+        tags={"domain": "finance"},
     ),
     RuleSpec(
         key="pct_range",
@@ -325,6 +330,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("pct", "numeric"),),
         author_kind="ai_assisted",
         polarity="pass",
+        tags={"domain": "finance"},
     ),
     RuleSpec(
         key="country_set",
@@ -344,6 +350,7 @@ RULES: tuple[RuleSpec, ...] = (
         ),
         author_kind="ai_generated",
         slot_tags={"country": ("class.location",)},
+        tags={"domain": "customer"},
     ),
     RuleSpec(
         key="tier_set",
@@ -356,6 +363,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("tier", "text", arg_key="column"),),
         parameters=(ParamSpec("allowed", "list", ["'Free'", "'Pro'", "'Enterprise'"]),),
         author_kind="ai_generated",
+        tags={"domain": "customer"},
     ),
     RuleSpec(
         key="status_set",
@@ -381,6 +389,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("status", "text"),),
         author_kind="ai_assisted",
         polarity="pass",
+        tags={"domain": "fulfillment"},
     ),
     RuleSpec(
         key="method_set",
@@ -393,6 +402,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("method", "text", arg_key="column"),),
         parameters=(ParamSpec("allowed", "list", ["'card'", "'paypal'", "'transfer'"]),),
         author_kind="ai_generated",
+        tags={"domain": "finance"},
     ),
     RuleSpec(
         key="category_set",
@@ -418,6 +428,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("category", "text"),),
         author_kind="ai_assisted",
         polarity="pass",
+        tags={"domain": "fulfillment"},
     ),
     RuleSpec(
         key="not_future",
@@ -469,6 +480,7 @@ RULES: tuple[RuleSpec, ...] = (
         parameters=(ParamSpec("regex", "regex", "^[0-9]{4}$"),),
         author_kind="ai_assisted",
         slot_tags={"code": ("class.credit_card",)},
+        tags={"domain": "finance", "pii": "true"},
     ),
     RuleSpec(
         key="min_len",
@@ -481,6 +493,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("text", "text"),),
         author_kind="human",
         polarity="pass",
+        tags={"domain": "fulfillment"},
     ),
     RuleSpec(
         key="end_after_start",
@@ -493,6 +506,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("start_ts", "temporal"), SlotSpec("end_ts", "temporal")),
         author_kind="ai_generated",
         polarity="pass",
+        tags={"domain": "fulfillment"},
     ),
     RuleSpec(
         key="card_when_card",
@@ -505,6 +519,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("method", "text"), SlotSpec("card_last4", "text")),
         author_kind="ai_generated",
         polarity="pass",
+        tags={"domain": "finance", "pii": "true"},
     ),
     RuleSpec(
         key="amount_and_discount",
@@ -519,6 +534,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("amount", "numeric"), SlotSpec("discount_pct", "numeric")),
         author_kind="ai_assisted",
         polarity="pass",
+        tags={"domain": "finance"},
     ),
     # ----------------------------------------------------------------------- #
     # Governed-tag SHOWCASE rules — carry a class.* slot tag but are NOT
@@ -541,6 +557,7 @@ RULES: tuple[RuleSpec, ...] = (
         parameters=(ParamSpec("regex", "regex", "^[A-Z]{2}$"),),
         author_kind="ai_generated",
         slot_tags={"country": ("class.location",)},
+        tags={"domain": "customer"},
     ),
     RuleSpec(
         key="card_not_null",
@@ -553,6 +570,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("code", "any", arg_key="column"),),
         author_kind="ai_assisted",
         slot_tags={"code": ("class.credit_card",)},
+        tags={"domain": "finance", "pii": "true"},
     ),
     # ----------------------------------------------------------------------- #
     # Submitted-but-not-approved SHOWCASE rule — seeded via create -> submit
@@ -572,6 +590,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("ssn", "text", arg_key="column"),),
         parameters=(ParamSpec("regex", "regex", r"^\d{3}-\d{2}-\d{4}$"),),
         author_kind="human",
+        tags={"domain": "customer", "pii": "true"},
     ),
 )
 

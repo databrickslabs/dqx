@@ -88,6 +88,12 @@ import databricks.labs.dqx.check_funcs  # noqa: F401
 from databricks.labs.dqx.checks_resolver import _load_optional_check_module
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
 
+from databricks_labs_dqx_app.backend.registry_models import (
+    ORIGIN_KEY,
+    RESERVED_COLUMN_PASS_THRESHOLDS_KEY,
+    RESERVED_MAPPED_COLUMNS_KEY,
+    RESERVED_RULE_METADATA_KEYS,
+)
 from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
 from databricks_labs_dqx_app.backend.sql_utils import quote_object_fqn
 
@@ -109,6 +115,23 @@ RUN_MODE_TAG = "run_mode"
 BINDING_VERSION_TAG = "binding_version"
 RUN_MODE_DRAFT = "draft"
 RUN_MODE_PUBLISHED = "published"
+
+# user_metadata keys Studio itself writes onto a rendered check: the reserved
+# rule keys, the materializer's provenance keys (services.materializer
+# _build_user_metadata / render_check), the applied-rule keys, and the
+# run-assembly stamps above. Every other key is a free-text tag the author set
+# on the rule or its application, projected by the attribution view as *tags*.
+STUDIO_CHECK_METADATA_KEYS: frozenset[str] = RESERVED_RULE_METADATA_KEYS | {
+    RESERVED_MAPPED_COLUMNS_KEY,
+    RESERVED_COLUMN_PASS_THRESHOLDS_KEY,
+    ORIGIN_KEY,
+    "polarity",
+    "registry_rule_id",
+    "registry_version",
+    "applied_rule_id",
+    RUN_MODE_TAG,
+    BINDING_VERSION_TAG,
+}
 
 # from_json schema for the observer's check_metrics JSON-array payload:
 # [{"check_name": ..., "error_count": ..., "warning_count": ...}, ...].
@@ -158,6 +181,11 @@ _DATASET_CHECK_FUNCTIONS = tuple(
 def _dataset_function_sql_list() -> str:
     """Return a SQL literal list for built-in dataset-level check functions."""
     return ", ".join("'" + name.replace("'", "''") + "'" for name in _DATASET_CHECK_FUNCTIONS)
+
+
+def _studio_metadata_key_sql_list() -> str:
+    """Return a SQL literal list of :data:`STUDIO_CHECK_METADATA_KEYS`, sorted for a stable DDL."""
+    return ", ".join("'" + key.replace("'", "''") + "'" for key in sorted(STUDIO_CHECK_METADATA_KEYS))
 
 
 def metric_view_fqn(catalog: str, schema: str) -> str:
@@ -268,6 +296,10 @@ class ScoreViewService:
             "  user_metadata['dimension'] AS dimension,\n"
             "  user_metadata['registry_rule_id'] AS registry_rule_id,\n"
             "  user_metadata['name'] AS rule_name,\n"
+            # Free-text rule tags as-of the run: the frozen user_metadata minus
+            # the keys Studio writes itself. NULL when the run froze no metadata.
+            "  map_filter(user_metadata, (k, v) ->\n"
+            f"    NOT array_contains(array({_studio_metadata_key_sql_list()}), k)) AS tags,\n"
             # Granularity is derived from the exact rendered check frozen with
             # the run. sql_query is the one polymorphic function: merge keys
             # make it row-level; without them its single verdict is broadcast
@@ -422,6 +454,7 @@ class ScoreViewService:
             "    a.dimension,\n"
             "    a.registry_rule_id,\n"
             "    a.rule_name,\n"
+            "    a.tags,\n"
             "    a.check_granularity,\n"
             "    a.pass_threshold,\n"
             "    a.columns\n"
@@ -471,6 +504,7 @@ class ScoreViewService:
             "  dimension,\n"
             "  registry_rule_id,\n"
             "  rule_name,\n"
+            "  tags,\n"
             "  check_granularity,\n"
             # Unscorable checks carry no rule key and are not counted, so a
             # rule averages its scorable checks and a rule with none drops
@@ -571,6 +605,7 @@ class ScoreViewService:
             "  c.dimension,\n"
             "  c.registry_rule_id,\n"
             "  c.rule_name,\n"
+            "  c.tags,\n"
             "  c.check_granularity,\n"
             "  c.rule_instance_key,\n"
             "  c.rule_check_count,\n"

@@ -22,7 +22,11 @@ export type GlobalResultsFilterKey =
   | "rule"
   | "outcome"
   | "dimension"
-  | "severity";
+  | "severity"
+  | "tag";
+
+/** The tag chart's selected key is stored with the view but has no filter bubble. */
+export type GlobalResultsViewKey = GlobalResultsFilterKey | "tagKey";
 
 export const GLOBAL_RESULTS_FILTER_ORDER: readonly GlobalResultsFilterKey[] = [
   "catalog",
@@ -35,6 +39,7 @@ export const GLOBAL_RESULTS_FILTER_ORDER: readonly GlobalResultsFilterKey[] = [
   "outcome",
   "dimension",
   "severity",
+  "tag",
 ];
 
 export const GLOBAL_RESULTS_FILTERS: Record<GlobalResultsFilterKey, FilterLayoutDef> = {
@@ -48,6 +53,13 @@ export const GLOBAL_RESULTS_FILTERS: Record<GlobalResultsFilterKey, FilterLayout
   outcome: { labelKey: "resultsUi.filterLabelAlerts", defaultVisible: true },
   dimension: { labelKey: "resultsUi.filterLabelDimension", defaultVisible: false },
   severity: { labelKey: "resultsUi.filterLabelSeverity", defaultVisible: false },
+  tag: { labelKey: "resultsUi.filterLabelTag", defaultVisible: true },
+};
+
+const GLOBAL_RESULTS_VIEW_ORDER: readonly GlobalResultsViewKey[] = [...GLOBAL_RESULTS_FILTER_ORDER, "tagKey"];
+const GLOBAL_RESULTS_VIEW_FILTERS: Record<GlobalResultsViewKey, FilterLayoutDef> = {
+  ...GLOBAL_RESULTS_FILTERS,
+  tagKey: { labelKey: "resultsUi.tagKeySelectAria", defaultVisible: false },
 };
 
 export const GLOBAL_RESULTS_EMPTY_VALUES: Record<GlobalResultsFilterKey, ViewValue> = {
@@ -61,6 +73,11 @@ export const GLOBAL_RESULTS_EMPTY_VALUES: Record<GlobalResultsFilterKey, ViewVal
   outcome: [],
   dimension: [],
   severity: [],
+  tag: [],
+};
+const GLOBAL_RESULTS_VIEW_EMPTY_VALUES: Record<GlobalResultsViewKey, ViewValue> = {
+  ...GLOBAL_RESULTS_EMPTY_VALUES,
+  tagKey: "",
 };
 
 /** Set by breakdown-row clicks too, so hiding their bubble keeps the value (shown as a chip). */
@@ -69,6 +86,7 @@ export const GLOBAL_RESULTS_KEEP_VALUE_ON_HIDE: readonly GlobalResultsFilterKey[
   "rule",
   "dimension",
   "severity",
+  "tag",
 ];
 
 export const GLOBAL_RESULTS_OUTCOME_VALUES: readonly string[] = ["failed", "passed"];
@@ -77,7 +95,7 @@ export const GLOBAL_RESULTS_OUTCOME_VALUES: readonly string[] = ["failed", "pass
 export type GlobalResultsFilterOptionValues = Record<
   Exclude<GlobalResultsFilterKey, "dqScore" | "outcome">,
   readonly string[] | null
->;
+> & { tagKey?: readonly string[] | null };
 
 /**
  * Saved-view definitions of Global Results (Filters only, no columns). Memoise on
@@ -86,18 +104,19 @@ export type GlobalResultsFilterOptionValues = Record<
 export function buildGlobalResultsViewDefs(
   options: GlobalResultsFilterOptionValues,
   reconcileValues?: (values: ViewValues) => ViewValues,
-): ViewDefs<never, GlobalResultsFilterKey> {
+): ViewDefs<never, GlobalResultsViewKey> {
   return {
-    filters: { defaultOrder: GLOBAL_RESULTS_FILTER_ORDER, filters: GLOBAL_RESULTS_FILTERS },
-    emptyValues: GLOBAL_RESULTS_EMPTY_VALUES,
-    keepValueOnHide: GLOBAL_RESULTS_KEEP_VALUE_ON_HIDE,
-    sanitizeValue: optionsSanitizer<GlobalResultsFilterKey>(
+    filters: { defaultOrder: GLOBAL_RESULTS_VIEW_ORDER, filters: GLOBAL_RESULTS_VIEW_FILTERS },
+    emptyValues: GLOBAL_RESULTS_VIEW_EMPTY_VALUES,
+    keepValueOnHide: [...GLOBAL_RESULTS_KEEP_VALUE_ON_HIDE, "tagKey"],
+    sanitizeValue: optionsSanitizer<GlobalResultsViewKey>(
       {
         ...options,
+        tagKey: options.tagKey ?? null,
         dqScore: DQ_SCORE_BUCKETS.map((b) => b.value),
         outcome: GLOBAL_RESULTS_OUTCOME_VALUES,
       },
-      GLOBAL_RESULTS_EMPTY_VALUES,
+      GLOBAL_RESULTS_VIEW_EMPTY_VALUES,
     ),
     reconcileValues,
   };
@@ -121,6 +140,7 @@ export function filtersFromViewValues(values: ViewValues, column: string[] = [])
     outcome: stringArrayValue(values.outcome),
     dimension: stringArrayValue(values.dimension),
     severity: stringArrayValue(values.severity),
+    tag: stringArrayValue(values.tag),
     column,
   };
 }

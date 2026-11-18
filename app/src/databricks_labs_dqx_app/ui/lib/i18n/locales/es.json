@@ -3087,7 +3087,16 @@
     "filterLabelRule": "Regla",
     "filterLabelAlerts": "Alertas",
     "filterLabelDimension": "Dimensión",
-    "filterLabelSeverity": "Severidad"
+    "filterLabelSeverity": "Severidad",
+    "chipTag": "Etiqueta: {{value}}",
+    "filterLabelTag": "Etiqueta",
+    "filterAllTags": "Todas las etiquetas",
+    "filterSearchTags": "Buscar etiquetas…",
+    "filterNoTags": "Sin etiquetas",
+    "scoreByTagTitle": "Puntuación por etiqueta: {{key}}",
+    "byTagTitle": "Por etiqueta: {{key}}",
+    "untaggedSeries": "Sin etiqueta",
+    "tagKeySelectAria": "Etiqueta que mostrar"
   },
   "genie": {
     "iconTitle": "Databricks Genie",

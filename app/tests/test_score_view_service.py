@@ -31,8 +31,11 @@ from databricks_labs_dqx_app.backend.services.score_service import ScoreService
 from databricks_labs_dqx_app.backend.services.score_view_service import (
     ASOF_VIEW_NAME,
     ATTRIBUTION_VIEW_NAME,
+    BINDING_VERSION_TAG,
     METRIC_VIEW_NAME,
+    RUN_MODE_TAG,
     SHAPING_VIEW_NAME,
+    STUDIO_CHECK_METADATA_KEYS,
     ScoreViewService,
     metric_view_fqn,
 )
@@ -145,6 +148,13 @@ class TestAttributionViewDdl:
         # time — it can never join back to the metrics row.
         assert "check_name IS NOT NULL" in svc.attribution_view_ddl()
 
+    def test_projects_tags_without_the_keys_studio_writes(self, svc):
+        ddl = svc.attribution_view_ddl()
+        assert "map_filter(user_metadata, (k, v) ->" in ddl
+        assert ") AS tags," in ddl
+        for key in STUDIO_CHECK_METADATA_KEYS:
+            assert f"'{key}'" in ddl
+
     def test_attribution_view_exposes_rule_name_from_metadata(self, svc):
         ddl = svc.attribution_view_ddl()
         assert "user_metadata['name'] AS rule_name" in ddl
@@ -217,6 +227,11 @@ class TestShapingViewDdl:
 
     def test_shaping_view_carries_rule_name(self, svc):
         assert "a.rule_name" in svc.shaping_view_ddl()
+
+    def test_shaping_view_carries_tags(self, svc):
+        ddl = svc.shaping_view_ddl()
+        assert "a.tags" in ddl
+        assert "  tags,\n" in ddl  # projected by the outer SELECT too
 
     def test_shaping_view_carries_frozen_pass_threshold(self, svc):
         # The per-run frozen threshold flows through so breach eval reads it
@@ -365,6 +380,7 @@ class TestAsofViewDdl:
             "c.severity",
             "c.dimension",
             "c.registry_rule_id",
+            "c.tags",
             "c.columns",
         ):
             assert column in ddl, column
@@ -808,7 +824,9 @@ class TestChecksJsonAttributionContract:
     attribution view's from_json schema addresses, with string-typed
     values so the MAP<STRING, STRING> cast holds."""
 
-    def _rendered_check(self) -> dict:
+    def _rendered_check(
+        self, rule_tags: dict[str, str] | None = None, per_application_tags: dict[str, str] | None = None
+    ) -> dict:
         from unittest.mock import create_autospec
 
         from databricks_labs_dqx_app.backend.registry_models import RuleDefinition, RuleVersion
@@ -829,14 +847,19 @@ class TestChecksJsonAttributionContract:
             version=1,
             definition=definition,
             polarity=None,
-            user_metadata={"name": "Not Null Check", "dimension": "Completeness", "severity": "High"},
+            user_metadata={
+                "name": "Not Null Check",
+                "dimension": "Completeness",
+                "severity": "High",
+                **(rule_tags or {}),
+            },
         )
         check, _ = render_check(
             mode="dqx_native",
             version=version,
             group={"column": "customer_id"},
             effective_severity="High",
-            per_application_tags={},
+            per_application_tags=per_application_tags or {},
             registry_rule_id="r1",
             registry_version=1,
             applied_rule_id="ar1",
@@ -855,6 +878,20 @@ class TestChecksJsonAttributionContract:
             "check_granularity": "row",
             "columns": ["customer_id"],
         }
+
+    def test_tags_are_the_author_keys_once_studio_keys_are_removed(self):
+        # The attribution view's *tags* drops STUDIO_CHECK_METADATA_KEYS from
+        # the frozen user_metadata. Over a real rendered check (rule tags +
+        # per-application tags + the run-assembly stamps), what remains must
+        # be exactly the author's free-text tags — a Studio key missing from
+        # the set would surface as a bogus tag.
+        check = self._rendered_check(
+            rule_tags={"domain": "finance"},
+            per_application_tags={"team": "payments", "column_pass_thresholds": "{}", "origin": "tag_auto"},
+        )
+        metadata = {**check["user_metadata"], RUN_MODE_TAG: "published", BINDING_VERSION_TAG: "3"}
+        tags = {k: v for k, v in metadata.items() if k not in STUDIO_CHECK_METADATA_KEYS}
+        assert tags == {"domain": "finance", "team": "payments"}
 
     def test_rendered_user_metadata_is_a_pure_string_map(self):
         # The view casts user_metadata to MAP<STRING, STRING>; a non-string

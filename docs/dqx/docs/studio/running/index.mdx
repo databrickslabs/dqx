@@ -25,6 +25,17 @@ average DQ score across its member tables. Below the score, breakdowns split the
 results by **dimension**, **severity**, **rule**, and **column**, so you can see
 where quality is slipping.
 
+On the Results page, **Score by tag** shows how checks with each value of a
+selected rule-label key performed over time. Choose the key above the chart or
+the **By tag** breakdown, then select a value to filter the results. **Untagged**
+selects checks without that key. The tag filter also narrows a selected table's
+column breakdown and failed records. Tags are saved with each run, so changing a
+rule's labels later does not rewrite earlier scores; values from older runs
+remain available in the filter. A check with multiple label keys contributes
+to each key's breakdown, so totals across different keys overlap. Saved Results
+views remember the selected tag key and tag filters. These charts use rule
+labels; Unity Catalog table and column tags are separate.
+
 A check is **flagged as failing** when its pass rate drops below its
 [pass threshold](/docs/studio/monitoring/assign-rules#quality-thresholds) (the
 `< 70%` badge) — that's separate from the numeric score, which always uses the

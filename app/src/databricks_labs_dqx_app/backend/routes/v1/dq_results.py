@@ -26,6 +26,7 @@ Permission model (unchanged from Phase 1):
 """
 
 import logging
+from collections import defaultdict
 from collections.abc import Callable, Iterable
 from typing import Annotated, Literal
 
@@ -219,7 +220,7 @@ def _fetch_check_rows(
         # As-of-run attribution baked into the view rows (frozen
         # checks_json payload — see score_view_service).
         f"severity, dimension, criticality, registry_rule_id, rule_name, pass_threshold, "
-        f"to_json(columns) AS columns_json "
+        f"to_json(columns) AS columns_json, to_json(tags) AS tags_json "
         f"FROM {view} "  # noqa: S608
         f"{where}"
         f"ORDER BY run_time"
@@ -264,7 +265,7 @@ def _fetch_asof_check_rows(
         f"check_name, error_count, warning_count, input_row_count, evaluated_row_count, "
         f"run_mode, check_granularity, "
         f"severity, dimension, criticality, registry_rule_id, rule_name, pass_threshold, "
-        f"to_json(columns) AS columns_json "
+        f"to_json(columns) AS columns_json, to_json(tags) AS tags_json "
         f"FROM {view} "  # noqa: S608
         f"WHERE {' AND '.join(conds)} "
         f"ORDER BY as_of_time"
@@ -396,6 +397,20 @@ def _facet_pushdown_predicate(facets: ResultFacets) -> str:
                 f"cast(from_json(variant_get(f, '$.user_metadata.mapped_columns', 'string'), "
                 f"'array<string>') as array<string>)), array({sql_string_in_list(facets.columns)})))"
             )
+        if facets.tags:
+            selected: dict[str, set[str | None]] = defaultdict(set)
+            for key, value in facets.tags:
+                selected[key].add(value)
+            for key, values in sorted(selected.items()):
+                metadata = "from_json(to_json(variant_get(f, '$.user_metadata')), 'map<string,string>')"
+                actual = f"element_at({metadata}, '{escape_sql_string_strict(key)}')"
+                matches = []
+                present = sorted(value for value in values if value is not None)
+                if present:
+                    matches.append(f"{actual} IN ({sql_string_in_list(present)})")
+                if None in values:
+                    matches.append(f"{actual} IS NULL")
+                parts.append(f"exists(cast({col} as array<variant>), f -> ({' OR '.join(matches)}))")
         return parts
 
     err = _exists("errors")
@@ -416,6 +431,7 @@ def _facets(
     catalog: list[str] | None = None,
     schema: list[str] | None = None,
     outcome: list[str] | None = None,
+    tag: list[str] | None = None,
 ) -> ResultFacets:
     return ResultFacets(
         dimensions=tuple(dimension or ()),
@@ -426,7 +442,23 @@ def _facets(
         catalogs=tuple(catalog or ()),
         schemas=tuple(schema or ()),
         outcomes=tuple(value for value in (outcome or ()) if value in ("passed", "failed")),
+        tags=_parse_tag_facet(tag),
     )
+
+
+def _parse_tag_facet(tag: list[str] | None) -> tuple[tuple[str, str | None], ...]:
+    """Parse repeatable ``tag=key=value`` params into (key, value) pairs.
+
+    The pair splits on the FIRST ``=`` (so a value may contain ``=``, a key may
+    not). An empty value selects checks missing that key. Entries without an
+    equals sign or with an empty key are ignored.
+    """
+    pairs: list[tuple[str, str | None]] = []
+    for raw in tag or ():
+        key, sep, value = raw.partition("=")
+        if sep and key:
+            pairs.append((key, value or None))
+    return tuple(pairs)
 
 
 ScoreBucket = Literal["75-100", "50-75", "25-50", "0-25", "none"]
@@ -943,6 +975,7 @@ def get_global_results(
     catalog: Annotated[list[str] | None, Query()] = None,
     schema: Annotated[list[str] | None, Query()] = None,
     outcome: Annotated[list[str] | None, Query()] = None,
+    tag: Annotated[list[str] | None, Query(max_length=200)] = None,
     collection: Annotated[list[str] | None, Query(max_length=200)] = None,
     owner: Annotated[list[str] | None, Query(max_length=200)] = None,
     score_bucket: Annotated[ScoreBucket | None, Query()] = None,
@@ -1027,7 +1060,7 @@ def get_global_results(
     )
     return compute_entity_results(
         rows,
-        _facets(dimension, severity, rule, column, table, catalog, schema, outcome),
+        _facets(dimension, severity, rule, column, table, catalog, schema, outcome, tag=tag),
         axes=axes,
         table_axis="by_table",
         failed_records_by_run=failed_records,
@@ -1064,6 +1097,7 @@ def get_rule_results(
     rule: Annotated[list[str] | None, Query()] = None,
     column: Annotated[list[str] | None, Query()] = None,
     table: Annotated[list[str] | None, Query()] = None,
+    tag: Annotated[list[str] | None, Query(max_length=200)] = None,
     run_id: str | None = Query(None),
     axes: str = Query("all"),
     include_drafts: bool = Query(False),
@@ -1140,7 +1174,7 @@ def get_rule_results(
     )
     return compute_entity_results(
         rows,
-        _facets(dimension, severity, rule, column, _scope_table_facet(table, table_fqns)),
+        _facets(dimension, severity, rule, column, _scope_table_facet(table, table_fqns), tag=tag),
         axes=axes,
         table_axis="by_table",
         binding_ids_by_table=binding_id_by_fqn,
@@ -1243,6 +1277,7 @@ def get_product_results(
     rule: Annotated[list[str] | None, Query()] = None,
     column: Annotated[list[str] | None, Query()] = None,
     table: Annotated[list[str] | None, Query()] = None,
+    tag: Annotated[list[str] | None, Query(max_length=200)] = None,
     run_id: str | None = Query(None),
     axes: str = Query("all"),
     include_drafts: bool = Query(False),
@@ -1298,7 +1333,7 @@ def get_product_results(
     )
     return compute_entity_results(
         rows,
-        _facets(dimension, severity, rule, column, _scope_table_facet(table, fqns)),
+        _facets(dimension, severity, rule, column, _scope_table_facet(table, fqns), tag=tag),
         axes=axes,
         table_axis="by_table",
         failed_records_by_run=failed_records,
@@ -1333,6 +1368,7 @@ def get_dq_results_failed_rows(
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
     column: Annotated[list[str] | None, Query()] = None,
+    tag: Annotated[list[str] | None, Query(max_length=200)] = None,
     run_id: str | None = Query(None),
     limit: int = Query(200, ge=1, le=100000),
     offset: int = Query(0, ge=0),
@@ -1385,7 +1421,7 @@ def get_dq_results_failed_rows(
     # Best-effort (never raises) and never affects this response.
     entitlements.record_entitlement(email, table_fqn)
 
-    facets = _facets(dimension, severity, rule, column)
+    facets = _facets(dimension, severity, rule, column, tag=tag)
     active = facets.any_active()
 
     # (4) SP-side fetch of the precomputed failing rows, with created_at
@@ -1558,6 +1594,7 @@ def get_table_results(
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
     column: Annotated[list[str] | None, Query()] = None,
+    tag: Annotated[list[str] | None, Query(max_length=200)] = None,
     run_id: str | None = Query(None),
     axes: str = Query("all"),
     include_drafts: bool = Query(False),
@@ -1606,7 +1643,7 @@ def get_table_results(
     )
     result = compute_entity_results(
         rows,
-        _facets(dimension, severity, rule, column),
+        _facets(dimension, severity, rule, column, tag=tag),
         axes=axes,
         table_axis="tables",
         failed_records_by_run=failed_records,

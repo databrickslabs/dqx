@@ -63,7 +63,9 @@
             "dqScore",
             "outcome",
             "dimension",
-            "severity"
+            "severity",
+            "tag",
+            "tagKey"
           ],
           "visibility": {
             "catalog": true,
@@ -75,7 +77,9 @@
             "dqScore": true,
             "outcome": true,
             "dimension": false,
-            "severity": false
+            "severity": false,
+            "tag": true,
+            "tagKey": false
           }
         },
         "values": {

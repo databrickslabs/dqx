@@ -3087,7 +3087,16 @@
     "filterLabelRule": "Règle",
     "filterLabelAlerts": "Alertes",
     "filterLabelDimension": "Dimension",
-    "filterLabelSeverity": "Criticité"
+    "filterLabelSeverity": "Criticité",
+    "chipTag": "Tag : {{value}}",
+    "filterLabelTag": "Tag",
+    "filterAllTags": "Tous les tags",
+    "filterSearchTags": "Rechercher des tags…",
+    "filterNoTags": "Aucun tag",
+    "scoreByTagTitle": "Score par tag : {{key}}",
+    "byTagTitle": "Par tag : {{key}}",
+    "untaggedSeries": "Sans tag",
+    "tagKeySelectAria": "Tag à afficher"
   },
   "genie": {
     "iconTitle": "Databricks Genie",

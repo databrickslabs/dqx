@@ -1,4 +1,5 @@
 from databricks_labs_dqx_app.backend.demo import manifest as m
+from databricks_labs_dqx_app.backend.registry_models import RESERVED_RULE_METADATA_KEYS
 
 
 def test_every_rule_has_contract_compliant_name_and_description():
@@ -47,6 +48,18 @@ def test_slot_tags_are_class_namespaced_and_reference_real_slots():
                 assert tag.startswith("class."), f"{r.key}: slot tag not class.*: {tag}"
     # The tag showcase needs at least two rules demonstrating governed slot tags.
     assert rules_with_tags >= 2, "expected >=2 rules with slot_tags for the tag showcase"
+
+
+def test_rule_tags_use_free_text_keys_and_cover_overlap_and_untagged_cases():
+    for r in m.RULES:
+        for key, value in r.tags.items():
+            assert key not in RESERVED_RULE_METADATA_KEYS, f"{r.key}: tag key {key!r} is reserved"
+            assert key and value, f"{r.key}: tag key and value must be non-empty"
+    bound_keys = {rule_key for b in m.BINDINGS for rule_key in b.mappings}
+    bound = [r for r in m.RULES if r.key in bound_keys]
+    # Results by tag must show a check counted under two tags and checks with no tag.
+    assert any(len(r.tags) >= 2 for r in bound), "expected a bound rule with two tags"
+    assert any(not r.tags for r in bound), "expected a bound rule with no tags"
 
 
 def test_no_email_validation_rule_is_seeded():

@@ -406,6 +406,7 @@ export function TrendTooltip({
   allSeries,
   colorMap,
   breachMarkers,
+  seriesLabel,
 }: {
   active?: boolean;
   payload?: TooltipPayloadEntry[];
@@ -421,6 +422,8 @@ export function TrendTooltip({
   colorMap?: Record<string, string>;
   /** Per-table breach markers: rows of tables that breached at the hovered run get a ⚠ prefix. */
   breachMarkers?: BreachMarker[];
+  /** Display label for an internal series key (tooltip only). */
+  seriesLabel?: (name: string) => string;
   /** Count mode: series name → marker shape, so the tooltip icon matches the
    *  line's marker instead of a generic round dot. */
   seriesShapes?: Record<string, Marker>;
@@ -525,7 +528,7 @@ export function TrendTooltip({
                 />
               )}
               <span>
-                {name}: {text}
+                {seriesLabel ? seriesLabel(name) : name}: {text}
               </span>
             </li>
           );
@@ -699,8 +702,10 @@ export function ScoreTrendChart({
   overall,
   overallLabel: overallLabelProp,
   onSeriesClick,
+  seriesLabel,
   title,
   info,
+  headerRight,
   collapsed,
   onToggleCollapse,
   animate = false,
@@ -729,10 +734,14 @@ export function ScoreTrendChart({
   /** Percent multi-series charts only: when provided, clicking a series line
    *  calls this with the series name (used to toggle a drilldown facet). */
   onSeriesClick?: (series: string) => void;
+  /** Display label for an internal series key (tooltip only). */
+  seriesLabel?: (name: string) => string;
   title?: string;
   /** When set, a muted help "?" icon follows the title; hovering it shows this
    *  content in a tooltip. */
   info?: React.ReactNode;
+  /** Rendered at the right of the title row (e.g. a selector for the series set). */
+  headerRight?: React.ReactNode;
   /** When `onToggleCollapse` is provided the title becomes a clickable row with
    *  a trailing chevron and the chart body animates open/closed by `collapsed`. */
   collapsed?: boolean;
@@ -1390,6 +1399,7 @@ export function ScoreTrendChart({
                     allSeries={series}
                     colorMap={colorMap}
                     breachMarkers={breachMarkers}
+                    seriesLabel={seriesLabel}
                   />
                 )}
               />
@@ -1783,7 +1793,14 @@ export function ScoreTrendChart({
 
   return (
     <div className="space-y-2">
-      {titleRow}
+      {headerRight ? (
+        <div className="flex items-center justify-between gap-2">
+          {titleRow}
+          {headerRight}
+        </div>
+      ) : (
+        titleRow
+      )}
       {collapsible ? (
         <CollapseRegion open={!collapsed}>{body}</CollapseRegion>
       ) : (

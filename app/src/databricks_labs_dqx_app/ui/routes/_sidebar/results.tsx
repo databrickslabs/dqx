@@ -174,15 +174,18 @@ function GlobalResultsContent() {
             showTopLevelFilters
             // Saved views own which bubbles show and every filter value
             // (Edit View is Filters-only here — no columns).
-            topFilterLayout={views.filterLayout.visibleKeys}
+            topFilterLayout={views.filterLayout.visibleKeys.filter((key) => key !== "tagKey")}
             topFilterValues={views.values}
             onTopFilterChange={views.setValue}
             topFilterOptions={topFilterOptions}
             editViewSlot={
               <EditColumnsDropdown
-                filters={filterLayoutMenuConfig(views.filterLayout, (key) =>
-                  t(GLOBAL_RESULTS_FILTERS[key].labelKey),
-                )}
+                filters={{
+                  ...filterLayoutMenuConfig(views.filterLayout, (key) =>
+                    key === "tagKey" ? t("resultsUi.tagKeySelectAria") : t(GLOBAL_RESULTS_FILTERS[key].labelKey),
+                  ),
+                  order: views.filterLayout.order.filter((key) => key !== "tagKey"),
+                }}
                 savedViews={views.menuConfig}
               />
             }

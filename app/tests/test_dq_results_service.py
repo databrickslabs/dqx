@@ -53,6 +53,7 @@ def make_row(
     criticality: str | None = None,
     pass_threshold: int | None = None,
     check_granularity: str = "row",
+    tags: dict[str, str] | None = None,
 ) -> CheckResultRow:
     return CheckResultRow(
         table_fqn=fqn,
@@ -71,6 +72,7 @@ def make_row(
         criticality=criticality,
         pass_threshold=pass_threshold,
         check_granularity=check_granularity,
+        tags=tags or {},
     )
 
 
@@ -103,6 +105,17 @@ def expand_asof(rows: list[CheckResultRow]) -> list[CheckResultRow]:
 
 
 class TestParseCheckRows:
+    def test_parses_tags_json_keeping_only_non_empty_string_entries(self):
+        base = {"input_location": FQN, "run_id": "r1", "run_date": "d", "input_row_count": "10"}
+        rows = parse_check_rows(
+            [
+                {**base, "check_name": "c1", "tags_json": json.dumps({"domain": "finance", "n": 1, "empty": ""})},
+                {**base, "check_name": "c2", "tags_json": "not json"},
+                {**base, "check_name": "c3", "tags_json": None},
+            ]
+        )
+        assert [r.tags for r in rows] == [{"domain": "finance"}, {}, {}]
+
     def test_parses_statement_shaped_strings_with_attribution(self):
         rows = parse_check_rows(
             [
@@ -643,6 +656,73 @@ class TestFacets:
         rows = [make_row("c1", failed=1, total=10)]
         out = compute_entity_results(rows, ResultFacets(dimensions=("Completeness",)))
         assert out.by_rule == []
+
+
+class TestTagResults:
+    def _rows(self):
+        return [
+            make_row("fin", failed=10, total=100, rule_id="r-fin", tags={"domain": "finance", "pii": "true"}),
+            make_row("cust", failed=40, total=100, rule_id="r-cust", tags={"domain": "customer"}),
+            make_row("plain", failed=0, total=100, rule_id="r-plain"),
+        ]
+
+    def test_by_tag_groups_each_key_with_an_untagged_group(self):
+        out = compute_entity_results(self._rows(), ResultFacets())
+        by_key: dict[str, dict[str | None, object]] = defaultdict(dict)
+        for g in out.by_tag:
+            by_key[g.tag_key][g.label] = g
+        assert set(by_key) == {"domain", "pii"}
+        assert set(by_key["domain"]) == {"finance", "customer", None}
+        assert by_key["domain"]["finance"].pass_rate == pytest.approx(0.9)
+        assert by_key["domain"]["customer"].pass_rate == pytest.approx(0.6)
+        # The None group holds the checks without the key.
+        assert by_key["domain"][None].rule_count == 1
+        assert set(by_key["pii"]) == {"true", None}
+        assert by_key["pii"][None].rule_count == 2
+
+    def test_by_tag_is_empty_when_no_check_is_tagged(self):
+        out = compute_entity_results([make_row("plain", failed=0, total=100)], ResultFacets())
+        assert out.by_tag == []
+        assert out.trend_by_tag == []
+        assert out.tag_options == {}
+
+    def test_tag_options_include_historical_values_and_missing_key(self):
+        rows = [
+            make_row("old", run_id="r1", run_date="2026-07-01", tags={"domain": "finance"}),
+            make_row("new", run_id="r2", run_date="2026-07-08", tags={"domain": "customer"}),
+            make_row("plain", run_id="r2", run_date="2026-07-08"),
+        ]
+        out = compute_entity_results(rows, ResultFacets(), table_axis="by_table", axes="breakdown")
+        assert out.tag_options == {"domain": ["customer", "finance", None]}
+        assert {g.label for g in out.by_tag} == {"customer", None}
+
+    def test_missing_tag_value_filters_checks_and_can_be_ored_with_a_value(self):
+        rows = self._rows()
+        missing = compute_entity_results(rows, ResultFacets(tags=(("domain", None),)))
+        assert [g.label for g in missing.by_rule] == ["plain"]
+        assert [(g.tag_key, g.label) for g in missing.by_tag] == [("domain", None), ("pii", None)]
+        assert ("domain", None) in {(p.tag_key, p.series) for p in missing.trend_by_tag}
+        mixed = compute_entity_results(rows, ResultFacets(tags=(("domain", None), ("domain", "finance"))))
+        assert {g.label for g in mixed.by_rule} == {"fin", "plain"}
+
+    def test_tag_facet_ors_values_of_one_key(self):
+        facets = ResultFacets(tags=(("domain", "finance"), ("domain", "customer")))
+        out = compute_entity_results(self._rows(), facets)
+        assert {g.label for g in out.by_rule} == {"fin", "cust"}
+
+    def test_tag_facet_ands_different_keys(self):
+        facets = ResultFacets(tags=(("domain", "finance"), ("pii", "true")))
+        assert [g.label for g in compute_entity_results(self._rows(), facets).by_rule] == ["fin"]
+        facets = ResultFacets(tags=(("domain", "customer"), ("pii", "true")))
+        assert compute_entity_results(self._rows(), facets).by_rule == []
+
+    def test_trend_by_tag_has_one_series_per_value_of_each_key(self):
+        out = compute_entity_results(self._rows(), ResultFacets())
+        series = {(p.tag_key, p.series): p.pass_rate for p in out.trend_by_tag}
+        assert series[("domain", "finance")] == pytest.approx(0.9)
+        assert series[("domain", "customer")] == pytest.approx(0.6)
+        assert ("domain", None) in series
+        assert set(series) >= {("pii", "true"), ("pii", None)}
 
 
 class TestTableFacet:

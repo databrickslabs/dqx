@@ -230,6 +230,7 @@ def check_row(
     pass_threshold: int | None = None,
     evaluated: int | None = None,
     granularity: str | None = None,
+    tags: dict[str, str] | None = None,
 ) -> dict[str, str | None]:
     """One v_dq_check_results row, Statement-Execution shaped (all strings).
 
@@ -255,6 +256,7 @@ def check_row(
         "columns_json": None if columns is None else json.dumps(columns),
         "pass_threshold": None if pass_threshold is None else str(pass_threshold),
         "check_granularity": granularity,
+        "tags_json": None if tags is None else json.dumps(tags),
         **({} if evaluated is None else {"evaluated_row_count": str(evaluated)}),
     }
 
@@ -916,6 +918,30 @@ class TestGlobalResults:
         bogus = client.get("/api/v1/dq-results/global", params={"outcome": ["bogus"]}).json()
         assert {g["label"] for g in bogus["by_rule"]} == {"c1", "c2"}
 
+    def test_global_tag_facet_filters_by_key_and_value(self, client, sql_mock):
+        sql_dispatch(
+            sql_mock,
+            check_rows=[
+                check_row("fin", errors=10, total=100, tags={"domain": "finance"}),
+                check_row("cust", errors=0, total=100, tags={"domain": "customer"}),
+                check_row("plain", errors=0, total=100),
+            ],
+        )
+        body = client.get("/api/v1/dq-results/global", params={"tag": ["domain=finance"]}).json()
+        assert [g["label"] for g in body["by_rule"]] == ["fin"]
+        missing = client.get("/api/v1/dq-results/global", params={"tag": ["domain="]}).json()
+        assert [g["label"] for g in missing["by_rule"]] == ["plain"]
+        # Malformed values (no "=" or empty key) are ignored, not an empty scope.
+        bogus = client.get("/api/v1/dq-results/global", params={"tag": ["domain", "=x"]}).json()
+        assert {g["label"] for g in bogus["by_rule"]} == {"fin", "cust", "plain"}
+
+    def test_global_returns_by_tag_rows_and_reads_the_tags_column(self, client, sql_mock):
+        sql_dispatch(sql_mock, check_rows=[check_row("fin", errors=10, total=100, tags={"domain": "finance"})])
+        body = client.get("/api/v1/dq-results/global").json()
+        assert {(g["tag_key"], g["label"]) for g in body["by_tag"]} == {("domain", "finance")}
+        stmt = sql_mock.query_dicts.call_args_list[0][0][0]
+        assert "to_json(tags) AS tags_json" in stmt
+
     def test_sql_failure_maps_to_500(self, client, sql_mock):
         sql_mock.query_dicts.side_effect = RuntimeError("warehouse down")
         assert client.get("/api/v1/dq-results/global").status_code == 500
@@ -1561,6 +1587,24 @@ class TestFailedRowsShapeAndFilters:
         assert "cast(variant_get(f, '$.columns') as array<string>)" in stmt
         assert "user_metadata.mapped_columns" in stmt
         assert "array('amount')" in stmt
+
+    def test_tag_filter_pushes_key_value_and_missing_predicates(self, client, sql_mock):
+        client.get(FAILED_ROWS_URL, params={"tag": ["domain=finance", "domain=", "pii=true"]})
+        stmt = _quarantine_stmt(sql_mock)
+        assert (
+            "element_at(from_json(to_json(variant_get(f, '$.user_metadata')), 'map<string,string>'), 'domain')" in stmt
+        )
+        assert "IN ('finance')" in stmt
+        assert "IS NULL" in stmt
+        assert "'pii'" in stmt
+        assert "cast(errors as array<variant>)" in stmt
+        assert "cast(warnings as array<variant>)" in stmt
+
+    def test_tag_key_and_value_are_sql_escaped(self, client, sql_mock):
+        client.get(FAILED_ROWS_URL, params={"tag": ["owner's=a'b"]})
+        stmt = _quarantine_stmt(sql_mock)
+        assert "'owner''s'" in stmt
+        assert "'a''b'" in stmt
 
     def test_repeatable_facets_are_ored_into_in_list(self, client, sql_mock):
         client.get(FAILED_ROWS_URL, params={"rule": ["c1", "c2"]})
