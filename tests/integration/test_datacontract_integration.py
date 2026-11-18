@@ -123,9 +123,12 @@ MULTI_SCHEMA_ODCS = {
 }
 
 
-@pytest.mark.parametrize("column_name", ["customer", "customer.info"])
-def test_required_object_rule_applies_on_spark(ws, spark, column_name):
-    """A missing required struct fails even when all child fields are optional."""
+@pytest.mark.parametrize(("column_name", "note_name"), [("customer", "note"), ("customer.info", "note.text")])
+@pytest.mark.parametrize("note_required", [False, True])
+def test_required_object_rule_applies_on_spark(
+    ws: WorkspaceClient, spark: SparkSession, column_name: str, note_name: str, note_required: bool
+) -> None:
+    """Check missing structs and child fields independently, including literal dots."""
     contract = {
         "kind": "DataContract",
         "apiVersion": "v3.0.2",
@@ -140,10 +143,17 @@ def test_required_object_rule_applies_on_spark(ws, spark, column_name):
                 "properties": [
                     {
                         "name": column_name,
-                        "physicalType": "STRUCT<note: STRING>",
+                        "physicalType": f"STRUCT<`{note_name}`: STRING>",
                         "logicalType": "object",
                         "required": True,
-                        "properties": [{"name": "note", "physicalType": "STRING", "logicalType": "string"}],
+                        "properties": [
+                            {
+                                "name": note_name,
+                                "physicalType": "STRING",
+                                "logicalType": "string",
+                                "required": note_required,
+                            }
+                        ],
                     }
                 ],
             }
@@ -153,13 +163,18 @@ def test_required_object_rule_applies_on_spark(ws, spark, column_name):
         ws, spark, contract, process_text_rules=False, generate_schema_validation=False
     )
     test_df = spark.createDataFrame(
-        [("missing", None), ("present", (None,))],
-        f"case: string, `{column_name}`: struct<note: string>",
+        [("missing_object", None), ("missing_note", (None,)), ("valid", ("hello",))],
+        f"case: string, `{column_name}`: struct<`{note_name}`: string>",
     )
 
     checked_df = DQEngine(ws, spark).apply_checks_by_metadata(test_df, rules)
     flagged = {row["case"]: _flagged_names(row) for row in checked_df.select("case", "_errors").collect()}
-    assert flagged == {"missing": {f"{column_name}_is_null"}, "present": set()}
+    note_errors = {f"{column_name}.{note_name}_is_null"} if note_required else set()
+    assert flagged == {
+        "missing_object": {f"{column_name}_is_null"} | note_errors,
+        "missing_note": note_errors,
+        "valid": set(),
+    }
 
 
 class TestDataContractIntegration:
