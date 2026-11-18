@@ -842,6 +842,22 @@ class DataContractGeneratorTestBase:
         assert "`123col` STRING" in ddl, "Identifiers starting with digit must be backtick-escaped"
         assert "normal_col STRING" in ddl
 
+    def _generate_range_rules(self, generator, prop: dict, api_version: str = "v3.0.2") -> list[dict]:
+        """Generate predefined rules for a single property and return those for its range bounds."""
+        contract_dict = self.create_basic_contract(properties=[prop])
+        contract_dict["apiVersion"] = api_version
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path,
+                generate_predefined_rules=True,
+                process_text_rules=False,
+                generate_schema_validation=False,
+            )
+        finally:
+            os.unlink(temp_path)
+        return [r for r in rules if r["name"].endswith(("_below_minimum", "_above_maximum", "_out_of_range"))]
+
 
 class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
     """Test basic data contract generator functionality."""
@@ -2332,22 +2348,6 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
     """Test constraint-specific predefined rule generation."""
 
-    def _generate_range_rules(self, generator, prop: dict, api_version: str = "v3.0.2") -> list[dict]:
-        """Generate predefined rules for a single property and return those for its range bounds."""
-        contract_dict = self.create_basic_contract(properties=[prop])
-        contract_dict["apiVersion"] = api_version
-        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
-        try:
-            rules = generator.generate_rules_from_contract(
-                contract_file=temp_path,
-                generate_predefined_rules=True,
-                process_text_rules=False,
-                generate_schema_validation=False,
-            )
-        finally:
-            os.unlink(temp_path)
-        return [r for r in rules if r["name"].endswith(("_below_minimum", "_above_maximum", "_out_of_range"))]
-
     def test_field_with_only_minimum_constraint(self, generator):
         """Test that a float minimum generates a row-level is_not_less_than rule."""
         rules = self._generate_range_rules(
@@ -2461,7 +2461,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 "TIMESTAMP",
                 {"minimum": datetime.datetime(2024, 1, 1, 10, 30)},
                 "is_not_less_than",
-                {"limit": datetime.datetime(2024, 1, 1, 10, 30)},
+                {"limit": datetime.datetime(2024, 1, 1, 10, 30, tzinfo=datetime.timezone.utc)},
                 "below_minimum",
             ),
             (
@@ -2494,7 +2494,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 "TIMESTAMP",
                 {"maximum": "2024-01-01 10:00"},
                 "is_not_greater_than",
-                {"limit": "2024-01-01 10:00"},
+                {"limit": "2024-01-01T10:00:00+00:00"},
                 "above_maximum",
             ),
             (
@@ -2502,7 +2502,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 "TIMESTAMP",
                 {"minimum": "2024-01-01T00:00:00", "maximum": "2024-12-31T00:00:00+00:00"},
                 "is_in_range",
-                {"min_limit": "2024-01-01T00:00:00", "max_limit": "2024-12-31T00:00:00+00:00"},
+                {"min_limit": "2024-01-01T00:00:00+00:00", "max_limit": "2024-12-31T00:00:00+00:00"},
                 "out_of_range",
             ),
         ],
@@ -2561,7 +2561,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 None,
                 "INT",
                 {"minimum": float("nan")},
-                "Skipping minimum on 'value': 'nan' is not a number, date or timestamp.",
+                "Skipping minimum on 'value': 'nan' is not a number.",
             ),
             (
                 None,
@@ -2677,29 +2677,95 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
         ]
 
     @pytest.mark.parametrize(
-        "name, logical_type, physical_type, options, column",
+        "name, logical_type, physical_type, options, column, function, limits",
         [
-            ("value", "date", "STRING", {"minimum": "2020-01-01"}, "try_cast(value AS DATE)"),
+            (
+                "value",
+                "date",
+                "STRING",
+                {"minimum": "2020-01-01"},
+                "try_cast(value AS DATE)",
+                "is_not_less_than",
+                {"limit": "2020-01-01"},
+            ),
             (
                 "value",
                 "date",
                 "VARCHAR(10)",
                 {"minimum": "2020-01-01", "maximum": "2030-12-31"},
                 "try_cast(value AS DATE)",
+                "is_in_range",
+                {"min_limit": "2020-01-01", "max_limit": "2030-12-31"},
             ),
-            ("value", "timestamp", "STRING", {"maximum": "2030-01-01"}, "try_cast(value AS TIMESTAMP)"),
-            ("value", "integer", "STRING", {"minimum": 0}, "try_cast(value AS DOUBLE)"),
-            ("value", "number", "string", {"maximum": 1.5}, "try_cast(value AS DOUBLE)"),
-            ("value", None, "CHAR(8)", {"minimum": "2020-01-01"}, "try_cast(value AS DATE)"),
-            ("value", None, "STRING", {"maximum": "2020-01-01T10:00:00"}, "try_cast(value AS TIMESTAMP)"),
-            ("value", None, "STRING", {"minimum": 0}, "try_cast(value AS DOUBLE)"),
-            ("value", "datetime", "STRING", {"minimum": "2020-01-01"}, "try_cast(value AS TIMESTAMP)"),
-            ("value", "date", "DATE", {"minimum": "2020-01-01"}, "value"),
-            ("Päivämäärä", "date", "STRING", {"minimum": "2020-01-01"}, "try_cast(`Päivämäärä` AS DATE)"),
+            (
+                "value",
+                "timestamp",
+                "STRING",
+                {"maximum": "2030-01-01"},
+                "try_cast(value AS TIMESTAMP_LTZ)",
+                "is_not_greater_than",
+                {"limit": "2030-01-01T00:00:00+00:00"},
+            ),
+            (
+                "value",
+                "integer",
+                "STRING",
+                {"minimum": 0},
+                "try_cast(value AS DOUBLE)",
+                "is_not_less_than",
+                {"limit": 0},
+            ),
+            (
+                "value",
+                "number",
+                "string",
+                {"maximum": 1.5},
+                "try_cast(value AS DOUBLE)",
+                "is_not_greater_than",
+                {"limit": 1.5},
+            ),
+            (
+                "value",
+                None,
+                "CHAR(8)",
+                {"minimum": "2020-01-01"},
+                "try_cast(value AS DATE)",
+                "is_not_less_than",
+                {"limit": "2020-01-01"},
+            ),
+            (
+                "value",
+                None,
+                "STRING",
+                {"maximum": "2020-01-01T10:00:00"},
+                "try_cast(value AS TIMESTAMP_LTZ)",
+                "is_not_greater_than",
+                {"limit": "2020-01-01T10:00:00+00:00"},
+            ),
+            ("value", None, "STRING", {"minimum": 0}, "try_cast(value AS DOUBLE)", "is_not_less_than", {"limit": 0}),
+            (
+                "value",
+                "datetime",
+                "STRING",
+                {"minimum": "2020-01-01"},
+                "try_cast(value AS TIMESTAMP_LTZ)",
+                "is_not_less_than",
+                {"limit": "2020-01-01T00:00:00+00:00"},
+            ),
+            ("value", "date", "DATE", {"minimum": "2020-01-01"}, "value", "is_not_less_than", {"limit": "2020-01-01"}),
+            (
+                "Päivämäärä",
+                "date",
+                "STRING",
+                {"minimum": "2020-01-01"},
+                "try_cast(`Päivämäärä` AS DATE)",
+                "is_not_less_than",
+                {"limit": "2020-01-01"},
+            ),
         ],
     )
     def test_range_check_on_text_column_compares_try_cast(
-        self, generator, name, logical_type, physical_type, options, column
+        self, generator, name, logical_type, physical_type, options, column, function, limits
     ):
         """Test that a column stored as text is compared through try_cast, so a malformed value can't fail the run."""
         prop = {"name": name, "physicalType": physical_type, "logicalTypeOptions": options}
@@ -2708,9 +2774,268 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
         rules = self._generate_range_rules(generator, prop)
 
-        assert len(rules) == 1
-        assert rules[0]["check"]["arguments"]["column"] == column
-        assert rules[0]["name"].startswith(f"{name}_")
+        name_suffix = {
+            "is_not_less_than": "below_minimum",
+            "is_not_greater_than": "above_maximum",
+            "is_in_range": "out_of_range",
+        }[function]
+        assert [(rule["check"], rule["name"]) for rule in rules] == [
+            ({"function": function, "arguments": {"column": column, **limits}}, f"{name}_{name_suffix}")
+        ]
+
+
+class TestDataContractGeneratorRangeBoundValues(DataContractGeneratorTestBase):
+    """Test how range bound values are read: integer limits, time zones and the kind a field takes."""
+
+    @pytest.mark.parametrize(
+        "value, warning",
+        [
+            (2**63, "Skipping maximum on 'value': '9223372036854775808' is outside the 64-bit integer range."),
+            (-(2**63) - 1, "Skipping maximum on 'value': '-9223372036854775809' is outside the 64-bit integer range."),
+            (
+                10**309,
+                "Skipping maximum on 'value': '10000000000000000000... (310 digits)' is outside the 64-bit integer range.",
+            ),
+        ],
+    )
+    def test_integer_bound_outside_64_bits_is_skipped_with_warning(self, generator, caplog, value, warning):
+        """Test that an integer bound Spark can't take as a literal generates no rule and logs why."""
+        prop = {
+            "name": "value",
+            "physicalType": "BIGINT",
+            "logicalType": "integer",
+            "logicalTypeOptions": {"maximum": value},
+        }
+
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate_range_rules(generator, prop)
+
+        assert not rules
+        assert warning in caplog.messages
+
+    def test_largest_64_bit_integer_bound_is_kept(self, generator):
+        """Test that the 64-bit integer limits themselves are valid bounds."""
+        prop = {
+            "name": "value",
+            "physicalType": "BIGINT",
+            "logicalType": "integer",
+            "logicalTypeOptions": {"minimum": -(2**63), "maximum": 2**63 - 1},
+        }
+
+        rules = self._generate_range_rules(generator, prop)
+
+        assert [rule["check"] for rule in rules] == [
+            {
+                "function": "is_in_range",
+                "arguments": {"column": "value", "min_limit": -(2**63), "max_limit": 2**63 - 1},
+            }
+        ]
+
+    @pytest.mark.parametrize(
+        "physical_type, options, limits",
+        [
+            (
+                "TIMESTAMP",
+                {"minimum": "2024-01-01T10:00:00", "maximum": datetime.datetime(2024, 6, 30, 18, 0)},
+                {
+                    "min_limit": "2024-01-01T10:00:00+00:00",
+                    "max_limit": datetime.datetime(2024, 6, 30, 18, 0, tzinfo=datetime.timezone.utc),
+                },
+            ),
+            (
+                "TIMESTAMP",
+                {
+                    "minimum": "2024-01-01T10:00:00",
+                    "maximum": "2024-07-01T10:00:00",
+                    "defaultTimezone": "Australia/Sydney",
+                },
+                {"min_limit": "2024-01-01T10:00:00+11:00", "max_limit": "2024-07-01T10:00:00+10:00"},
+            ),
+            (
+                "TIMESTAMP",
+                {"minimum": datetime.date(2024, 1, 1), "maximum": "2024-12-31"},
+                {
+                    "min_limit": datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+                    "max_limit": "2024-12-31T00:00:00+00:00",
+                },
+            ),
+            (
+                "TIMESTAMP",
+                {"minimum": "2024-01-01T10:00:00+05:00", "maximum": "2024-01-01T06:00:00+00:00"},
+                {"min_limit": "2024-01-01T10:00:00+05:00", "max_limit": "2024-01-01T06:00:00+00:00"},
+            ),
+            (
+                "STRING",
+                {"minimum": datetime.date(2024, 1, 1), "maximum": "2024-01-01T12:00:00"},
+                {
+                    "min_limit": datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+                    "max_limit": "2024-01-01T12:00:00+00:00",
+                },
+            ),
+        ],
+    )
+    def test_timestamp_bounds_get_the_default_timezone_offset(self, generator, caplog, physical_type, options, limits):
+        """Test that timestamp bounds without an offset are read in defaultTimezone (UTC by default), as ODCS says.
+
+        A date bound becomes midnight in that zone, and bounds with different offsets are ordered as instants.
+        """
+        prop = {
+            "name": "value",
+            "physicalType": physical_type,
+            "logicalType": "timestamp",
+            "logicalTypeOptions": options,
+        }
+
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate_range_rules(generator, prop)
+
+        column = "try_cast(value AS TIMESTAMP_LTZ)" if physical_type == "STRING" else "value"
+        assert [rule["check"] for rule in rules] == [
+            {"function": "is_in_range", "arguments": {"column": column, **limits}}
+        ]
+        assert not [r for r in caplog.records if r.name == contract_rules_generator_module.__name__]
+
+    @pytest.mark.parametrize(
+        "options, reason",
+        [
+            (
+                {"minimum": "2024-01-01T12:00:00", "maximum": datetime.date(2024, 1, 1)},
+                "no value is at least 2024-01-01T12:00:00+00:00 and at most 2024-01-01 00:00:00+00:00",
+            ),
+            (
+                {"minimum": "2024-01-01T10:00:00+00:00", "maximum": "2024-01-01T12:00:00+05:00"},
+                "no value is at least 2024-01-01T10:00:00+00:00 and at most 2024-01-01T12:00:00+05:00",
+            ),
+        ],
+    )
+    def test_reversed_timestamp_bounds_are_found_across_kinds_and_offsets(self, generator, caplog, options, reason):
+        """Test that a reversed range is found when it mixes a date with a timestamp, or two offsets."""
+        prop = {"name": "value", "physicalType": "TIMESTAMP", "logicalType": "timestamp", "logicalTypeOptions": options}
+
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate_range_rules(generator, prop)
+
+        assert not rules
+        assert f"Skipping range bounds on 'value': {reason}." in caplog.messages
+
+    def test_unknown_default_timezone_skips_bounds_with_warning(self, generator, caplog):
+        """Test that bounds whose defaultTimezone isn't a known time zone generate no rule and log why."""
+        prop = {
+            "name": "value",
+            "physicalType": "TIMESTAMP",
+            "logicalType": "timestamp",
+            "logicalTypeOptions": {"minimum": "2024-01-01T00:00:00", "defaultTimezone": "Mars/Olympus_Mons"},
+        }
+
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate_range_rules(generator, prop)
+
+        assert not rules
+        assert "Skipping range bounds on 'value': unknown defaultTimezone 'Mars/Olympus_Mons'." in caplog.messages
+
+    @pytest.mark.parametrize(
+        "physical_type, options, check, warning",
+        [
+            ("DATE", {"minimum": 0}, None, "Skipping minimum on 'value': '0' is not a date or timestamp."),
+            ("INT", {"minimum": "2024-01-01"}, None, "Skipping minimum on 'value': '2024-01-01' is not a number."),
+            (
+                "DECIMAL(10,2)",
+                {"maximum": 9.99},
+                {"function": "is_not_greater_than", "arguments": {"column": "value", "limit": 9.99}},
+                None,
+            ),
+            (
+                "TIMESTAMP_NTZ",
+                {"minimum": "2024-01-01"},
+                {
+                    "function": "is_not_less_than",
+                    "arguments": {"column": "value", "limit": "2024-01-01T00:00:00+00:00"},
+                },
+                None,
+            ),
+        ],
+    )
+    def test_field_without_logical_type_takes_bounds_of_its_physical_type(
+        self, generator, caplog, physical_type, options, check, warning
+    ):
+        """Test that without a logical type, a bound of the wrong kind for the physical type is skipped with a warning.
+
+        Spark can't compare a number with a DATE column (or a date with a numeric one), so such a rule would fail the run.
+        """
+        prop = {"name": "value", "physicalType": physical_type, "logicalTypeOptions": options}
+
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate_range_rules(generator, prop)
+
+        assert [rule["check"] for rule in rules] == ([check] if check else [])
+        if warning:
+            assert warning in caplog.messages
+
+    def test_unquoted_yaml_bounds_load_as_dates_timestamps_and_numbers(self, generator):
+        """Test bounds written unquoted in a YAML contract, as the loader types them: date, datetime and number."""
+        contract_yaml = """
+apiVersion: v3.1.0
+kind: DataContract
+id: unquoted-bounds
+name: Unquoted bounds
+version: 1.0.0
+status: active
+schema:
+  - name: events
+    physicalType: table
+    properties:
+      - name: event_date
+        logicalType: date
+        physicalType: DATE
+        logicalTypeOptions:
+          minimum: 2020-01-01
+      - name: event_ts
+        logicalType: timestamp
+        physicalType: TIMESTAMP
+        logicalTypeOptions:
+          minimum: 2020-01-01
+          maximum: 2030-01-01T00:00:00Z
+      - name: amount
+        logicalType: number
+        physicalType: DOUBLE
+        logicalTypeOptions:
+          minimum: 0
+          maximum: 1500.5
+"""
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as contract_file:
+            contract_file.write(contract_yaml)
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=contract_file.name, process_text_rules=False, generate_schema_validation=False
+            )
+        finally:
+            os.unlink(contract_file.name)
+
+        utc = datetime.timezone.utc
+        assert [(rule["name"], rule["check"]) for rule in rules] == [
+            (
+                "event_date_below_minimum",
+                {
+                    "function": "is_not_less_than",
+                    "arguments": {"column": "event_date", "limit": datetime.date(2020, 1, 1)},
+                },
+            ),
+            (
+                "event_ts_out_of_range",
+                {
+                    "function": "is_in_range",
+                    "arguments": {
+                        "column": "event_ts",
+                        "min_limit": datetime.datetime(2020, 1, 1, tzinfo=utc),
+                        "max_limit": datetime.datetime(2030, 1, 1, tzinfo=utc),
+                    },
+                },
+            ),
+            (
+                "amount_out_of_range",
+                {"function": "is_in_range", "arguments": {"column": "amount", "min_limit": 0, "max_limit": 1500.5}},
+            ),
+        ]
 
 
 class TestDataContractGeneratorQualityAndLengthConstraints(DataContractGeneratorTestBase):

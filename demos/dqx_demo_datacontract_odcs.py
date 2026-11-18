@@ -118,8 +118,8 @@ schema:
         description: Total order amount
         required: true
         logicalTypeOptions:
+          # A single bound: is_not_less_than flags only the rows below it
           minimum: 0.01
-          maximum: 100000.00
         quality:
           # Field-level quality check (explicit DQX rule)
           - type: custom

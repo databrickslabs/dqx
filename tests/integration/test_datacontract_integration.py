@@ -725,6 +725,70 @@ class TestDataContractRangeRulesIntegration:
             4: set(),
         }
 
+    def test_timestamp_bounds_are_read_in_the_default_timezone(self, ws, spark, set_utc_timezone):
+        """Timestamp bounds without an offset are read in defaultTimezone (UTC by default), as ODCS says, on Spark."""
+        properties = [
+            # 09:00 in Sydney (UTC+11 in January) is 22:00 UTC the day before
+            ("starts", "TIMESTAMP", {"minimum": "2024-01-01T09:00:00", "defaultTimezone": "Australia/Sydney"}),
+            # Text values with their own offset are compared as instants
+            ("ends_text", "STRING", {"maximum": "2024-06-30T00:00:00"}),
+            # A date bound on a timestamp is midnight at the start of that day
+            ("closed", "TIMESTAMP", {"maximum": "2024-12-31"}),
+        ]
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.1.0",
+            "id": "test:timestamp-bounds",
+            "name": "Timestamp bounds",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "events",
+                    "physicalType": "table",
+                    "properties": [
+                        {
+                            "name": name,
+                            "physicalType": physical,
+                            "logicalType": "timestamp",
+                            "logicalTypeOptions": options,
+                        }
+                        for name, physical, options in properties
+                    ],
+                },
+            ],
+        }
+        rules = _generate_rules_from_temp_contract(
+            ws, spark, contract, process_text_rules=False, generate_schema_validation=False
+        )
+        test_df = spark.createDataFrame(
+            [
+                # On the bounds
+                [
+                    1,
+                    datetime.datetime(2023, 12, 31, 22, 0),
+                    "2024-06-30T02:00:00+02:00",
+                    datetime.datetime(2024, 12, 31),
+                ],
+                # Just outside the bounds
+                [
+                    2,
+                    datetime.datetime(2023, 12, 31, 21, 59, 59),
+                    "2024-06-30T00:00:01Z",
+                    datetime.datetime(2024, 12, 31, 10, 0),
+                ],
+                [3, None, None, None],
+            ],
+            "row_id int, starts timestamp, ends_text string, closed timestamp",
+        )
+
+        flagged_by_row = _flagged_names_by_row_under_ansi(ws, spark, test_df, rules)
+        assert flagged_by_row == {
+            1: set(),
+            2: {"starts_below_minimum", "ends_text_above_maximum", "closed_above_maximum"},
+            3: set(),
+        }
+
 
 class TestDataContractIntegrationErrors:
     """Integration tests for data contract error paths and invalid inputs."""
