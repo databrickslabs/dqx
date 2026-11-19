@@ -57,6 +57,12 @@ _TEXT_PHYSICAL_TYPE = re.compile(r"^\s*(STRING|VARCHAR|CHAR)\b", re.IGNORECASE)
 _NUMERIC_PHYSICAL_TYPE = re.compile(r"^\s*(TINYINT|SMALLINT|INT|BIGINT|FLOAT|DOUBLE|DECIMAL)\b", re.IGNORECASE)
 _TEMPORAL_PHYSICAL_TYPE = re.compile(r"^\s*(DATE|TIMESTAMP|TIMESTAMP_NTZ)\b", re.IGNORECASE)
 _TIMESTAMP_PHYSICAL_TYPE = re.compile(r"^\s*(TIMESTAMP|TIMESTAMP_NTZ)\b", re.IGNORECASE)
+_NTZ_PHYSICAL_TYPE = re.compile(r"^\s*TIMESTAMP_NTZ\b", re.IGNORECASE)
+# Physical types Spark can't compare with a number, date or timestamp. Only these are skipped: physicalType can name
+# another platform's type (e.g. INTEGER or NUMBER(10,2)) when schema validation is off, and its bounds still work.
+_NON_ORDERABLE_PHYSICAL_TYPE = re.compile(
+    r"^\s*(BOOLEAN|BINARY|VARIANT|ARRAY|MAP|STRUCT|GEOMETRY|GEOGRAPHY)\b", re.IGNORECASE
+)
 # A date or timestamp string a range check reads as one on every supported Python version. get_limit_expr reads a
 # string without ':' as a date and a digit-only string as SQL, so a timestamp needs hours and minutes.
 _ISO_DATE_OR_TIMESTAMP = re.compile(
@@ -196,6 +202,11 @@ def _is_timestamp_field(logical_type: str | None, physical_type: str | None, bou
     return any(_has_time(bound.value) for bound in bounds)
 
 
+def _default_zone_name(opts: dict) -> str:
+    """Return the time zone ODCS reads a field's timestamps without an offset in."""
+    return str(opts.get("defaultTimezone") or _DEFAULT_TIMEZONE)
+
+
 def _timestamp_bounds_with_offsets(
     column_path: str, logical_type: str | None, physical_type: str | None, bounds: list[_RangeBound], opts: dict
 ) -> list[_RangeBound] | None:
@@ -209,7 +220,7 @@ def _timestamp_bounds_with_offsets(
         return bounds
     if not _is_timestamp_field(logical_type, physical_type, bounds):
         return bounds
-    zone_name = str(opts.get("defaultTimezone") or _DEFAULT_TIMEZONE)
+    zone_name = _default_zone_name(opts)
     try:
         zone = zoneinfo.ZoneInfo(zone_name)
     except (zoneinfo.ZoneInfoNotFoundError, ValueError):
@@ -219,6 +230,32 @@ def _timestamp_bounds_with_offsets(
         )
         return None
     return [bound._replace(value=_with_offset(bound.value, zone)) for bound in bounds]
+
+
+def _as_ntz_literal(value: _BoundValue, zone: zoneinfo.ZoneInfo) -> str:
+    """Return a timestamp bound as a TIMESTAMP_NTZ SQL literal of its wall-clock time in *zone*.
+
+    The literal is rendered from the parsed bound, never from contract text, so no contract value becomes SQL.
+    """
+    wall_clock = _as_datetime(_with_offset(value, zone)).astimezone(zone).replace(tzinfo=None)
+    return f"TIMESTAMP_NTZ '{wall_clock.isoformat(sep=' ')}'"
+
+
+def _bounds_for_ntz_column(
+    logical_type: str | None, physical_type: str | None, bounds: list[_RangeBound], opts: dict
+) -> list[_RangeBound]:
+    """Return the bounds of a TIMESTAMP_NTZ column as TIMESTAMP_NTZ literals; other bounds are returned unchanged.
+
+    A TIMESTAMP_NTZ column holds wall-clock time, which ODCS reads in defaultTimezone. Spark compares it with a
+    timestamp limit after reading the column in the session time zone, which can differ, but compares it with a
+    TIMESTAMP_NTZ limit as wall-clock time. So each bound is passed as its wall-clock time in defaultTimezone.
+    """
+    if not physical_type or not _NTZ_PHYSICAL_TYPE.match(physical_type):
+        return bounds
+    if not _is_timestamp_field(logical_type, physical_type, bounds):
+        return bounds
+    zone = zoneinfo.ZoneInfo(_default_zone_name(opts))  # already checked by _timestamp_bounds_with_offsets
+    return [bound._replace(value=_as_ntz_literal(bound.value, zone)) for bound in bounds]
 
 
 def _as_number(value: _BoundValue) -> int | float:
@@ -1077,6 +1114,12 @@ class DataContractRulesGenerator(DQEngineBase):
                 f"Skipping range bounds on '{sanitize_for_logging(column_path)}': {sanitize_for_logging(reason)}."
             )
             return []
+        if physical_type and _NON_ORDERABLE_PHYSICAL_TYPE.match(physical_type):
+            logger.warning(
+                f"Skipping range bounds on '{sanitize_for_logging(column_path)}': physical type "
+                f"'{sanitize_for_logging(physical_type)}' can't be compared with a range."
+            )
+            return []
 
         bounds = []
         for option, lower in (("minimum", True), ("maximum", False)):
@@ -1093,6 +1136,7 @@ class DataContractRulesGenerator(DQEngineBase):
                 f"Skipping range bounds on '{sanitize_for_logging(column_path)}': {sanitize_for_logging(empty_reason)}."
             )
             return []
+        bounds = _bounds_for_ntz_column(logical_type, physical_type, bounds, opts)
 
         lower_bound = next((bound for bound in bounds if bound.lower), None)
         upper_bound = next((bound for bound in bounds if not bound.lower), None)
