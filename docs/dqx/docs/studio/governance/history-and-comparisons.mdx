@@ -46,6 +46,6 @@ Approved versions remain the frozen artifacts used by version-pinned runs. Lifec
 
 Existing registry-rule history is moved into the unified lifecycle history when the app migrates to this design. Collections approved before collection versions were recorded are backfilled just before their first edit. If two older collection states were never recorded, Studio explains that they cannot be compared instead of inventing a diff.
 
-Lifecycle snapshots can be larger than other audit rows because they contain the object's full state. They are removed by Studio's daily retention sweep after the configured **Retention days** window (90 days by default). Approved version artifacts are stored separately and are not removed by that lifecycle-snapshot sweep.
+Lifecycle snapshots can be larger than other audit rows because they contain the object's full state. Lifecycle history is audit metadata, so Studio's retention sweep does not remove its event rows or snapshots. Approved version artifacts are stored separately and are not removed either.
 
 History and comparisons use the same read permissions as the object itself. For the review process, see [Approval workflow](/docs/studio/governance/approval-workflow). For collection versions and runs, see [Collections](/docs/studio/monitoring/collections).

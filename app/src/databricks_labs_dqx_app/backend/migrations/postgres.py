@@ -164,6 +164,9 @@ _LIFECYCLE_HISTORY_DDL = (
 # ``dq_lifecycle_history`` and drops it. Its action names are translated once
 # here: ``status:<new>`` becomes the step it was, and a ``status:approved`` that
 # left review is a rejection when it carries a note (a withdrawal never did).
+# Legacy reject() also allowed a NULL rationale, producing the same row shape as
+# revoke(). Those note-less rows cannot be distinguished reliably and migrate as
+# withdrawals; actor comparison would only be a heuristic, not an audit-safe rule.
 # The legacy table is created first (a no-op on an upgrade) so the copy also
 # runs on a fresh install, which never has it.
 _AUTO_SUFFIX_SQL = "' (auto)'"

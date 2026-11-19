@@ -1395,6 +1395,31 @@ class TestSubmitMonitoredTable:
         svc, _ = self._submit_approved_table(changed=False)
         svc.set_status.assert_called_once_with("b1", "approved", "alice@x", rationale=None, set_rationale=True)
 
+    @pytest.mark.parametrize("prior_status", ["rejected", "draft"])
+    def test_removal_only_resubmit_after_review_exit_returns_to_review(self, prior_status):
+        """Rejection and withdrawal must not turn into approval when only approved checks remain."""
+        svc = MagicMock()
+        svc.get.return_value = MonitoredTableDetail(
+            table=MonitoredTable(binding_id="b1", table_fqn="cat.schema.tbl", status=prior_status, version=3),
+            applied_rules=[],
+        )
+        svc.list_materialized_rule_statuses.return_value = [("r1", "approved")]
+        svc.set_status.return_value = _table(status="pending_approval")
+        extra = _submit_mt_extra()
+        extra["version_svc"].changed_since_version.return_value = True
+
+        result = submit_monitored_table(
+            "b1",
+            monitored_tables_svc=svc,
+            materializer=MagicMock(),
+            rules_catalog=MagicMock(),
+            obo_ws=_mock_obo_ws(),
+            **extra,
+        )
+
+        assert result.table.status == "pending_approval"
+        svc.set_status.assert_called_once_with("b1", "pending_approval", "alice@x", rationale=None, set_rationale=True)
+
     def test_a_failed_comparison_never_blocks_the_submit(self):
         svc = MagicMock()
         svc.get.return_value = MonitoredTableDetail(table=_approved_table(version=3), applied_rules=[])

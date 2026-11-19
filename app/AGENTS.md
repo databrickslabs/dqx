@@ -557,8 +557,12 @@ per `_RETENTION_INTERVAL_HOURS` (24h). Two knobs, both stored in
 
 | Setting key                  | Default | Tables affected |
 |------------------------------|--------:|-----------------|
-| `retention_days`             | 90      | `dq_validation_runs`, `dq_profiling_results`, `dq_metrics`, plus the OLTP history tables (`dq_resolved_rules_history`, `dq_schedule_configs_history`, `dq_lifecycle_history`). Lifecycle rows include full-object comparison snapshots; approved version artifacts are stored separately and are not swept. Picked to match what trend dashboards expect. |
+| `retention_days`             | 90      | `dq_validation_runs`, `dq_profiling_results`, `dq_metrics`, plus the OLTP history tables (`dq_resolved_rules_history`, `dq_schedule_configs_history`). Picked to match what trend dashboards expect. |
 | `quarantine_retention_days`  | 30      | `dq_quarantine_records` only. Tighter because that table holds the full source row payload (PII surface). |
+
+`dq_lifecycle_history` is audit metadata: its event rows and full-object comparison
+snapshots are excluded from retention sweeps. Approved version artifacts are stored
+separately and are not swept either.
 
 Both resolvers share a `_RETENTION_DAYS_MIN = 7` floor so a
 mis-typed setting can never wipe data inside the safety window. Reads

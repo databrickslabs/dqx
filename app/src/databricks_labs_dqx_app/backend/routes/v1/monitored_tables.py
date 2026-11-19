@@ -1661,9 +1661,12 @@ def submit_monitored_table(
             user_email=user_email,
         )
         status = _rollup_binding_status(monitored_tables_svc, binding_id)
-        if status == "approved" and _unapproved_rule_changes(version_svc, gate_detail):
-            # Only rules were removed (or added with no new check): nothing is
-            # pending, but the frozen version still runs the old set — review it.
+        if status == "approved" and (
+            gate_detail.table.status != "approved" or _unapproved_rule_changes(version_svc, gate_detail)
+        ):
+            # A rejected or withdrawn review must re-enter review even when its
+            # remaining checks are all approved. For an approved table, detect
+            # removal-only edits whose frozen version still runs the old set.
             status = "pending_approval"
         table = monitored_tables_svc.set_status(
             binding_id,
