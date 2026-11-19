@@ -50,9 +50,10 @@ _RETENTION_DAYS_MIN = 7
 _RETENTION_DAYS_MAX = 3650
 
 _LABEL_DEFS_SETTING_KEY = "label_definitions"
-# Keys must be safe for YAML round-tripping and stable as DataFrame columns:
-# letters, digits, underscore, leading with a letter.
-_LABEL_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+# Keys are JSON object keys in YAML and user_metadata. Allow human-readable
+# labels while excluding control characters and punctuation with special uses
+# elsewhere in the app. The first character must be alphanumeric.
+_LABEL_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _./-]*$")
 # Per-value badge colors: strict 6-digit hex so the UI can trust the value
 # without re-validating (e.g. drop straight into a CSS custom property).
 _HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
@@ -640,8 +641,8 @@ def save_label_definitions(
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Invalid label key '{key}'. Keys must start with a letter and "
-                    "contain only letters, digits, and underscores."
+                    f"Invalid label key '{key}'. Keys must start with a letter or digit and "
+                    "contain only letters, digits, spaces, dots, underscores, hyphens, and slashes."
                 ),
             )
         if key in seen_keys:

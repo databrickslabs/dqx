@@ -343,14 +343,14 @@
     "addLabelDefinition": "Add new key",
     "definitionsActive_one": "{{count}} definition active",
     "definitionsActive_other": "{{count}} definitions active",
-    "labelKeyInvalid": "Key \"{{key}}\" must start with a letter and contain only letters, digits, and underscores.",
+    "labelKeyInvalid": "Key \"{{key}}\" must start with a letter or digit and contain only letters, digits, spaces, dots, underscores, hyphens, and slashes.",
     "labelKeyDuplicate": "Duplicate key \"{{key}}\".",
     "clearedLabels": "Cleared rule labels.",
     "savedLabels_one": "Saved {{count}} rule label.",
     "savedLabels_other": "Saved {{count}} rule labels.",
     "failedSaveLabels": "Failed to save label definitions",
     "key": "Key",
-    "keyHint": "Letters, digits, underscore. Must start with a letter.",
+    "keyHint": "Start with a letter or digit. Then use letters, digits, spaces, dots, underscores, hyphens, or slashes.",
     "weightHint": "Drives the weight picker on rule authoring pages.",
     "builtinKeyLockedTooltip": "Built-in key — the name and description can't be changed.",
     "builtinCannotDelete": "Built-in keys can't be deleted.",
@@ -1545,8 +1545,7 @@
     "set": "Set",
     "currentNotInCatalog": "Current value {{value}} isn't in the catalog.",
     "clickToToggle": "click to toggle",
-    "requiredTag": "Required",
-    "requiredTagCannotRemove": "This tag is mandatory and can't be removed."
+    "requiredTag": "Required"
   },
   "labelFilter": {
     "allLabels": "All Labels",

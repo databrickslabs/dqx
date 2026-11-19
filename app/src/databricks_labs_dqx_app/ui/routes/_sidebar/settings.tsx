@@ -39,9 +39,11 @@ import {
 } from "@/lib/api-custom";
 import {
   HEX_COLOR_RE,
+  LABEL_KEY_RE,
   SELF_GATED_TAG_KEYS,
   defToDraft,
   draftToDef,
+  reconcileSavedLabelDrafts,
   type CriticalityValue,
   type DraftDefinition,
 } from "@/lib/label-definition-drafts";
@@ -308,7 +310,6 @@ function TimezoneSettings() {
 // reserved ``weight`` key (which controls the weight selector / row).
 // ─────────────────────────────────────────────────────────────────────────────
 
-const LABEL_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*$/;
 const RESERVED_WEIGHT_KEY = "weight";
 const RESERVED_SEVERITY_KEY = "severity";
 
@@ -384,9 +385,14 @@ function LabelDefinitionsSettings() {
 
   // Auto-save: debounced 600ms after any change, guarded by validation.
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Every edit increments this, including invalid/new blank drafts. Save
+  // responses may only reconcile the exact revision they were issued for.
+  const editRevisionRef = useRef(0);
 
   const triggerAutoSave = useCallback(
     (nextDrafts: DraftDefinition[]) => {
+      editRevisionRef.current += 1;
+      const saveRevision = editRevisionRef.current;
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       const errs: string[] = [];
       const seen = new Set<string>();
@@ -405,7 +411,14 @@ function LabelDefinitionsSettings() {
           {
             onSuccess: (resp) => {
               queryClient.invalidateQueries({ queryKey: getLabelDefinitionsQueryKey() });
-              setDrafts(resp.data.definitions.map(defToDraft));
+              setDrafts((current) =>
+                reconcileSavedLabelDrafts(
+                  current,
+                  resp.data.definitions,
+                  saveRevision,
+                  editRevisionRef.current,
+                ),
+              );
               toast.success(
                 definitions.length === 0
                   ? t("config.clearedLabels")
@@ -458,7 +471,9 @@ function LabelDefinitionsSettings() {
           is_builtin: false,
         },
       ];
-      // New draft has empty key — auto-save will be triggered once user fills it in.
+      // Empty keys don't save, but registering the edit prevents an older
+      // in-flight response from discarding this new blank card.
+      triggerAutoSave(next);
       return next;
     });
   };

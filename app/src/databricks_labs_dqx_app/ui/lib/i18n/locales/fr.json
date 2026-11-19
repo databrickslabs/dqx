@@ -343,14 +343,14 @@
     "addLabelDefinition": "Ajouter une définition d'étiquette",
     "definitionsActive_one": "{{count}} définition active",
     "definitionsActive_other": "{{count}} définitions actives",
-    "labelKeyInvalid": "La clé « {{key}} » doit commencer par une lettre et ne contenir que des lettres, des chiffres et des tirets bas.",
+    "labelKeyInvalid": "La clé « {{key}} » doit commencer par une lettre ou un chiffre et ne contenir que des lettres, chiffres, espaces, points, tirets bas, tirets et barres obliques.",
     "labelKeyDuplicate": "Clé « {{key}} » en double.",
     "clearedLabels": "Étiquettes de règles effacées.",
     "savedLabels_one": "{{count}} étiquette de règle enregistrée.",
     "savedLabels_other": "{{count}} étiquettes de règles enregistrées.",
     "failedSaveLabels": "Échec de l'enregistrement des définitions d'étiquettes",
     "key": "Clé",
-    "keyHint": "Lettres, chiffres, tiret bas. Doit commencer par une lettre.",
+    "keyHint": "Commence par une lettre ou un chiffre. Utilise ensuite des lettres, chiffres, espaces, points, tirets bas, tirets ou barres obliques.",
     "weightHint": "Alimente le sélecteur de poids sur les pages de rédaction de règles.",
     "builtinKeyLockedTooltip": "Clé intégrée — le nom et la description ne peuvent pas être modifiés.",
     "builtinCannotDelete": "Les clés intégrées ne peuvent pas être supprimées.",
@@ -1545,8 +1545,7 @@
     "set": "Définir",
     "currentNotInCatalog": "La valeur actuelle {{value}} n'est pas dans le catalogue.",
     "clickToToggle": "cliquez pour basculer",
-    "requiredTag": "Obligatoire",
-    "requiredTagCannotRemove": "Ce tag est obligatoire et ne peut pas être supprimé."
+    "requiredTag": "Obligatoire"
   },
   "labelFilter": {
     "allLabels": "Toutes les étiquettes",

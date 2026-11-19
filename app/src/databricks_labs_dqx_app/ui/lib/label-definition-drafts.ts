@@ -17,6 +17,8 @@
 import type { LabelDefinition } from "@/lib/api-custom";
 
 export const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
+/** Human-readable JSON/YAML tag key; first character must be alphanumeric. */
+export const LABEL_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9 _./-]*$/;
 
 /** The two DQX criticalities a severity value can map to — mirrors the
  * backend's `LabelDefinitionModel` validator (`"warn" | "error"` only). */
@@ -46,6 +48,24 @@ export function defToDraft(d: LabelDefinition): DraftDefinition {
 /** Reserved keys with their own submit-gated rule fields. The generic
  * "Mandatory" flag never applies to them. */
 export const SELF_GATED_TAG_KEYS: ReadonlySet<string> = new Set(["dimension", "severity"]);
+
+/** Apply a save response without remounting cards or overwriting newer edits.
+ * Matching responses keep each card's draftId stable. A response for an older
+ * edit revision returns the current drafts unchanged. */
+export function reconcileSavedLabelDrafts(
+  current: DraftDefinition[],
+  saved: LabelDefinition[],
+  saveRevision: number,
+  currentRevision: number,
+): DraftDefinition[] {
+  if (saveRevision !== currentRevision) return current;
+  const idsByKey = new Map(current.map((draft) => [draft.key.trim(), draft.draftId]));
+  return saved.map((definition) => {
+    const draft = defToDraft(definition);
+    const existingId = idsByKey.get(draft.key.trim());
+    return existingId ? { ...draft, draftId: existingId } : draft;
+  });
+}
 
 export function draftToDef(d: DraftDefinition): LabelDefinition {
   const values = d.values.map((v) => v.trim()).filter(Boolean);

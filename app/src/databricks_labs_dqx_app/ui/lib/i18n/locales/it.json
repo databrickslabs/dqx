@@ -343,14 +343,14 @@
     "addLabelDefinition": "Add new key",
     "definitionsActive_one": "{{count}} definizione attiva",
     "definitionsActive_other": "{{count}} definizioni attive",
-    "labelKeyInvalid": "La chiave \"{{key}}\" deve iniziare con una lettera e contenere solo lettere, cifre e underscore.",
+    "labelKeyInvalid": "La chiave \"{{key}}\" deve iniziare con una lettera o una cifra e contenere solo lettere, cifre, spazi, punti, underscore, trattini e barre.",
     "labelKeyDuplicate": "Chiave duplicata \"{{key}}\".",
     "clearedLabels": "Etichette regole cancellate.",
     "savedLabels_one": "Salvata {{count}} etichetta regola.",
     "savedLabels_other": "Salvate {{count}} etichette regole.",
     "failedSaveLabels": "Impossibile salvare le definizioni delle etichette",
     "key": "Chiave",
-    "keyHint": "Lettere, cifre, underscore. Deve iniziare con una lettera.",
+    "keyHint": "Inizia con una lettera o una cifra. Poi usa lettere, cifre, spazi, punti, underscore, trattini o barre.",
     "weightHint": "Controlla il selettore di peso nelle pagine di creazione regole.",
     "builtinKeyLockedTooltip": "Chiave predefinita — il nome e la descrizione non possono essere modificati.",
     "builtinCannotDelete": "Le chiavi predefinite non possono essere eliminate.",
@@ -1545,8 +1545,7 @@
     "set": "Imposta",
     "currentNotInCatalog": "Il valore corrente {{value}} non è nel catalogo.",
     "clickToToggle": "clicca per alternare",
-    "requiredTag": "Obbligatorio",
-    "requiredTagCannotRemove": "Questo tag è obbligatorio e non può essere rimosso."
+    "requiredTag": "Obbligatorio"
   },
   "labelFilter": {
     "allLabels": "Tutte le Etichette",

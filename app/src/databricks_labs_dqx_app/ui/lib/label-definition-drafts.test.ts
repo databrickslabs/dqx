@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { defToDraft, draftToDef } from "./label-definition-drafts";
+import { LABEL_KEY_RE, defToDraft, draftToDef, reconcileSavedLabelDrafts } from "./label-definition-drafts";
 import type { LabelDefinition } from "./api-custom";
 
 // Unit tests for the pure draft <-> API mapping helpers behind the admin
@@ -93,5 +93,46 @@ describe("defToDraft / draftToDef — required + default_value", () => {
     const out = draftToDef(defToDraft(team()));
     expect(out.required).toBe(false);
     expect(out.default_value).toBeNull();
+  });
+});
+
+describe("LABEL_KEY_RE", () => {
+  test("accepts a key that starts with a digit", () => {
+    expect(LABEL_KEY_RE.test("1pw_domain_security")).toBe(true);
+  });
+
+  test("accepts human-readable spaces and punctuation", () => {
+    expect(LABEL_KEY_RE.test("7-Eleven Merchandise/Pricing and Promotion")).toBe(true);
+  });
+
+  test("rejects unsupported punctuation", () => {
+    expect(LABEL_KEY_RE.test("1pw:domain")).toBe(false);
+    expect(LABEL_KEY_RE.test("1pw\\domain")).toBe(false);
+  });
+});
+
+describe("reconcileSavedLabelDrafts", () => {
+  const saved = def({
+    key: "team",
+    values: ["a", "b"],
+    required: true,
+    default_value: "b",
+    value_criticality: null,
+    is_builtin: false,
+  });
+
+  test("preserves card IDs while applying the latest saved values", () => {
+    const current = defToDraft(def({ key: "team", values: ["a"], is_builtin: false }));
+    current.draftId = "stable-team-id";
+    const out = reconcileSavedLabelDrafts([current], [saved], 4, 4);
+    expect(out[0].draftId).toBe("stable-team-id");
+    expect(out[0].values).toEqual(["a", "b"]);
+    expect(out[0].required).toBe(true);
+  });
+
+  test("ignores a stale save response instead of replacing newer edits", () => {
+    const current = defToDraft(def({ key: "team", values: ["a"], is_builtin: false }));
+    const drafts = [current];
+    expect(reconcileSavedLabelDrafts(drafts, [saved], 3, 4)).toBe(drafts);
   });
 });

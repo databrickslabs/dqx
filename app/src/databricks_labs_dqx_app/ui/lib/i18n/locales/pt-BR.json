@@ -343,14 +343,14 @@
     "addLabelDefinition": "Add new key",
     "definitionsActive_one": "{{count}} definição ativa",
     "definitionsActive_other": "{{count}} definições ativas",
-    "labelKeyInvalid": "A chave \"{{key}}\" deve começar com uma letra e conter apenas letras, dígitos e sublinhados.",
+    "labelKeyInvalid": "A chave \"{{key}}\" deve começar com uma letra ou dígito e conter apenas letras, dígitos, espaços, pontos, sublinhados, hífens e barras.",
     "labelKeyDuplicate": "Chave duplicada \"{{key}}\".",
     "clearedLabels": "Rótulos de regra limpos.",
     "savedLabels_one": "{{count}} rótulo de regra salvo.",
     "savedLabels_other": "{{count}} rótulos de regra salvos.",
     "failedSaveLabels": "Falha ao salvar definições de rótulo",
     "key": "Chave",
-    "keyHint": "Letras, dígitos, sublinhado. Deve começar com uma letra.",
+    "keyHint": "Comece com uma letra ou dígito. Depois, use letras, dígitos, espaços, pontos, sublinhados, hífens ou barras.",
     "weightHint": "Controla o seletor de peso nas páginas de criação de regras.",
     "builtinKeyLockedTooltip": "Chave interna — o nome e a descrição não podem ser alterados.",
     "builtinCannotDelete": "Chaves internas não podem ser excluídas.",
@@ -1545,8 +1545,7 @@
     "set": "Definir",
     "currentNotInCatalog": "O valor atual {{value}} não está no catálogo.",
     "clickToToggle": "clique para alternar",
-    "requiredTag": "Obrigatória",
-    "requiredTagCannotRemove": "Esta tag é obrigatória e não pode ser removida."
+    "requiredTag": "Obrigatória"
   },
   "labelFilter": {
     "allLabels": "Todos os Rótulos",

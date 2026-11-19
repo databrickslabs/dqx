@@ -453,6 +453,43 @@ class TestSaveLabelDefinitionsReservedGuard:
         sev = next(d for d in result.definitions if d.key == "severity")
         assert sev.value_criticality == {"Low": "warn", "High": "error"}
 
+    def test_key_may_start_with_a_digit(self, route_ctx):
+        save_label_definitions, LabelDefinition, LabelDefinitionsIn, svc, sql = route_ctx
+        body = LabelDefinitionsIn(
+            definitions=[
+                LabelDefinition(key="dimension", values=["Validity"], is_builtin=True),
+                LabelDefinition(key="severity", values=["Low"], is_builtin=True),
+                LabelDefinition(key="1pw_domain_security", values=["watchtower"]),
+            ]
+        )
+        result = save_label_definitions(body, svc, "admin@example.com")
+        assert "1pw_domain_security" in {d.key for d in result.definitions}
+
+    def test_key_allows_human_readable_spaces_and_punctuation(self, route_ctx):
+        save_label_definitions, LabelDefinition, LabelDefinitionsIn, svc, sql = route_ctx
+        body = LabelDefinitionsIn(
+            definitions=[
+                LabelDefinition(key="dimension", values=["Validity"], is_builtin=True),
+                LabelDefinition(key="severity", values=["Low"], is_builtin=True),
+                LabelDefinition(key="7-Eleven Merchandise/Pricing and Promotion", values=["watchtower"]),
+            ]
+        )
+        result = save_label_definitions(body, svc, "admin@example.com")
+        assert "7-Eleven Merchandise/Pricing and Promotion" in {d.key for d in result.definitions}
+
+    def test_key_rejects_unsupported_punctuation(self, route_ctx):
+        save_label_definitions, LabelDefinition, LabelDefinitionsIn, svc, sql = route_ctx
+        body = LabelDefinitionsIn(
+            definitions=[
+                LabelDefinition(key="dimension", values=["Validity"], is_builtin=True),
+                LabelDefinition(key="severity", values=["Low"], is_builtin=True),
+                LabelDefinition(key="1pw:domain", values=["watchtower"]),
+            ]
+        )
+        with pytest.raises(HTTPException) as exc:
+            save_label_definitions(body, svc, "admin@example.com")
+        assert exc.value.status_code == 400
+
 
 class TestSaveLabelDefinitionsMandatoryAndDefault:
     @pytest.fixture

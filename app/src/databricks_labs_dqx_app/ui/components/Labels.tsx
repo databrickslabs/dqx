@@ -79,6 +79,12 @@ function isFreeTextDefinition(def: LabelDefinition): boolean {
   return def.values.length === 0 && !!def.allow_custom_values;
 }
 
+/** Whether a key can be added without creating a blank or duplicate row. */
+export function canAddLabelKey(key: string, usedKeys: Set<string>): boolean {
+  const normalized = key.trim();
+  return normalized.length > 0 && !usedKeys.has(normalized);
+}
+
 function recordToRows(rec: Record<string, string>): Row[] {
   return Object.entries(rec).map(([key, value]) => ({
     id: crypto.randomUUID(),
@@ -183,6 +189,7 @@ export function LabelsEditor({
     commit([...rows, { id: crypto.randomUUID(), key: "", value: "" }]);
 
   const addDefinedRow = (key: string) => {
+    if (!canAddLabelKey(key, usedKeys)) return;
     const def = definitionsMap.get(key);
     // Boolean tag (empty catalog, custom values disallowed): prefill "true".
     // Free-text tags (empty catalog + allow_custom_values) and catalog picks
@@ -233,9 +240,7 @@ export function LabelsEditor({
               definitions={definitions ?? []}
               usedKeys={usedKeys}
               onPick={addDefinedRow}
-              onPickCustom={(key) =>
-                commit([...rows, { id: crypto.randomUUID(), key, value: "" }])
-              }
+              onPickCustom={addDefinedRow}
             />
           ) : (
             <Button
@@ -358,22 +363,19 @@ function LabelRow({
           className="h-7 text-xs flex-1 min-w-0 max-w-40"
         />
       )}
-      <span
-        className="inline-flex shrink-0"
-        title={required ? t("labelsEditor.requiredTagCannotRemove") : undefined}
-      >
+      {!required && (
         <Button
           type="button"
           variant="ghost"
           size="icon"
           className="h-7 w-7 shrink-0"
           onClick={onRemove}
-          disabled={disabled || required}
+          disabled={disabled}
           aria-label={t("labelsEditor.removeLabel")}
         >
           <X className="h-3.5 w-3.5" />
         </Button>
-      </span>
+      )}
     </div>
   );
 }
@@ -565,7 +567,9 @@ function KeyPickerButton({
           <CommandItem
             key={d.key}
             value={d.key}
+            disabled={used}
             onSelect={() => {
+              if (used) return;
               onPick(d.key);
               reset();
             }}

@@ -343,14 +343,14 @@
     "addLabelDefinition": "Add new key",
     "definitionsActive_one": "{{count}} definición activa",
     "definitionsActive_other": "{{count}} definiciones activas",
-    "labelKeyInvalid": "La clave \"{{key}}\" debe comenzar con una letra y contener solo letras, dígitos y guiones bajos.",
+    "labelKeyInvalid": "La clave \"{{key}}\" debe comenzar con una letra o un dígito y contener solo letras, dígitos, espacios, puntos, guiones bajos, guiones y barras.",
     "labelKeyDuplicate": "Clave duplicada \"{{key}}\".",
     "clearedLabels": "Etiquetas de reglas borradas.",
     "savedLabels_one": "Guardada {{count}} etiqueta de regla.",
     "savedLabels_other": "Guardadas {{count}} etiquetas de reglas.",
     "failedSaveLabels": "Error al guardar definiciones de etiqueta",
     "key": "Clave",
-    "keyHint": "Letras, dígitos, guion bajo. Debe comenzar con una letra.",
+    "keyHint": "Comienza con una letra o un dígito. Después, usa letras, dígitos, espacios, puntos, guiones bajos, guiones o barras.",
     "weightHint": "Controla el selector de peso en las páginas de creación de reglas.",
     "builtinKeyLockedTooltip": "Clave integrada — el nombre y la descripción no se pueden cambiar.",
     "builtinCannotDelete": "Las claves integradas no se pueden eliminar.",
@@ -1545,8 +1545,7 @@
     "set": "Establecer",
     "currentNotInCatalog": "El valor actual {{value}} no está en el catálogo.",
     "clickToToggle": "haz clic para alternar",
-    "requiredTag": "Obligatoria",
-    "requiredTagCannotRemove": "Esta etiqueta es obligatoria y no se puede quitar."
+    "requiredTag": "Obligatoria"
   },
   "labelFilter": {
     "allLabels": "Todas las Etiquetas",
