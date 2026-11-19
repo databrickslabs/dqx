@@ -21,7 +21,9 @@ from decimal import Decimal
 from typing import Any, cast
 
 from databricks.sdk import WorkspaceClient
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import Column, DataFrame, SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql.types import ArrayType, DataType, MapType, StructType
 
 from dqx_task_runner.evaluated_rows import (
     EVALUATED_ROWS_METRIC,
@@ -179,6 +181,58 @@ def _validate_run_id(run_id: str) -> str:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
+def _jsonable(c: Column, t: DataType) -> Column:
+    """Convert *c* of type *t* into a value that *to_json* can serialise; used for sample and quarantine rows.
+
+    GEOMETRY and GEOGRAPHY values become hex-encoded EWKB / WKB and TIME values become strings. Arrays,
+    maps and structs are converted element by element, so nested values are covered too. Everything else
+    is left to *to_json*, which already formats dates, timestamps and decimals.
+    """
+    if t.typeName() == "geometry":
+        return F.hex(F.call_function("st_asewkb", c))
+    if t.typeName() == "geography":
+        return F.hex(F.call_function("st_asbinary", c))
+    if t.typeName() == "time":
+        return c.cast("string")
+    if isinstance(t, ArrayType):
+        return F.transform(c, lambda x: _jsonable(x, t.elementType))
+    if isinstance(t, MapType):
+        return F.transform_values(c, lambda _, v: _jsonable(v, t.valueType))
+    if isinstance(t, StructType):
+        return F.when(c.isNotNull(), F.struct(*[_jsonable(c[f.name], f.dataType).alias(f.name) for f in t.fields]))
+    return c
+
+
+def _row_struct(df: DataFrame, columns: list[str]) -> Column:
+    """Build a struct of the top-level *columns* of *df*, converting each value with *_jsonable*.
+
+    Column names are quoted, so names containing dots or backticks resolve as one top-level column.
+    """
+    from databricks.labs.dqx.utils import quote_column_name
+
+    return F.struct(
+        *[
+            _jsonable(F.col(quote_column_name(f.name)), f.dataType).alias(f.name)
+            for f in df.schema.fields
+            if f.name in columns
+        ]
+    )
+
+
+def _row_json(df: DataFrame) -> Column:
+    """Serialise each row of *df* to a JSON object in Spark, keeping null fields."""
+    return F.to_json(_row_struct(df, df.schema.fieldNames()), {"ignoreNullFields": "false"})
+
+
+def _sample_rows(df: DataFrame, limit: int = 10) -> list[dict[str, Any]]:
+    """Collect up to *limit* rows of *df* as JSON-ready dicts.
+
+    The JSON is built in Spark rather than by converting collected Python objects, so column types the
+    Python *json* module cannot handle (GEOMETRY, GEOGRAPHY, BINARY, ...) do not fail the run.
+    """
+    return [json.loads(r[0]) for r in df.limit(limit).select(_row_json(df)).collect()]
+
+
 class DateTimeEncoder(json.JSONEncoder):
     """Custom JSON encoder that handles datetime objects."""
 
@@ -245,8 +299,6 @@ def _stamp_run_provenance(
     to the same instant — keeping both on the warehouse clock and making their
     difference exactly *duration_seconds*.
     """
-    from pyspark.sql import functions as F
-
     stamped = result_row.withColumn("updated_at", F.current_timestamp())
     if duration_seconds is not None and duration_seconds > 0:
         elapsed_ms = int(round(duration_seconds * 1000))
@@ -620,8 +672,7 @@ def _run_dryrun(
 
     sample_invalid: list[dict[str, Any]] = []
     if invalid_rows > 0:
-        sample_rows = invalid_df.limit(10).collect()
-        sample_invalid = [row.asDict(recursive=True) for row in sample_rows]
+        sample_invalid = _sample_rows(invalid_df)
 
     result_row = spark.createDataFrame(
         [
@@ -735,7 +786,7 @@ def _run_dryrun_sql_check(
 
     sample_invalid: list[dict[str, Any]] = []
     if invalid_rows > 0:
-        sample_rows = violation_df.limit(10).collect()
+        sample_rows = _sample_rows(violation_df)
         # Stamp a synthesised ``_errors`` payload that matches DQX's
         # ``dq_result_item_schema`` (list of ``{name, message, ...}``
         # structs) so the per-row Errors column renders the violation
@@ -743,7 +794,7 @@ def _run_dryrun_sql_check(
         # because the run was a preview (no quarantine written) or
         # because the caller lacks the role to read ``dq_quarantine_records``.
         err_payload = [{"name": str(check_name), "message": "SQL check violation"}]
-        sample_invalid = [{**row.asDict(recursive=True), "_errors": err_payload} for row in sample_rows]
+        sample_invalid = [{**row, "_errors": err_payload} for row in sample_rows]
 
     # SQL checks treat every violation as an error (no warning concept), so
     # ``error_rows == invalid_rows`` and ``warning_rows == 0``.
@@ -848,10 +899,9 @@ def _write_quarantine_records(
     ``row_data`` and ``errors`` columns are VARIANT in the baseline
     schema. We materialise them via ``parse_json(to_json(...))`` so the
     row payload becomes a typed JSON value (queryable with
-    ``variant_get``) rather than an opaque STRING.
+    ``variant_get``) rather than an opaque STRING. Row values are converted
+    with ``_jsonable``, as in the sample payload.
     """
-    from pyspark.sql import functions as F
-
     invalid_count = invalid_df.count()
     if invalid_count == 0:
         logger.info("No invalid rows to quarantine (run_id=%s)", run_id)
@@ -872,7 +922,7 @@ def _write_quarantine_records(
         .withColumn("run_id", F.lit(run_id))
         .withColumn("source_table_fqn", F.lit(source_table_fqn))
         .withColumn("requesting_user", F.lit(requesting_user))
-        .withColumn("row_data", F.parse_json(F.to_json(F.struct(*data_cols))))
+        .withColumn("row_data", F.parse_json(F.to_json(_row_struct(invalid_df, data_cols))))
         .withColumn("errors", F.parse_json(F.to_json(F.col("_errors"))))
         .withColumn("warnings", warnings_expr)
         .withColumn("created_at", F.current_timestamp())
@@ -925,8 +975,6 @@ def _write_sql_quarantine_records(
     Returns the number of rows actually persisted (``0`` if ``invalid_count``
     is zero, ``min(invalid_count, max_rows)`` otherwise).
     """
-    from pyspark.sql import functions as F
-
     if invalid_count <= 0:
         logger.info("No SQL violations to quarantine (run_id=%s)", run_id)
         return 0
@@ -942,7 +990,9 @@ def _write_sql_quarantine_records(
     # ``row_data``/``errors`` are VARIANT — wrap with parse_json so the
     # values land as typed JSON rather than opaque strings.
     data_cols = [c for c in capped_df.columns if c not in ("_warnings", "_errors", "_rule_name")]
-    row_data_expr = F.parse_json(F.to_json(F.struct(*data_cols))) if data_cols else F.parse_json(F.lit("{}"))
+    row_data_expr = (
+        F.parse_json(F.to_json(_row_struct(capped_df, data_cols))) if data_cols else F.parse_json(F.lit("{}"))
+    )
     # List of one struct, matching DQX's ``dq_result_item_schema`` so the
     # frontend's ``row.errors.map(formatError)`` and the Pydantic
     # ``QuarantineRecordOut.errors: list[Any]`` both work without
