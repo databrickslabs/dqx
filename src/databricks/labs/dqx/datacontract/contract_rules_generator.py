@@ -756,7 +756,7 @@ class DataContractRulesGenerator(DQEngineBase):
         if opts.get('minimum') is not None or opts.get('maximum') is not None:
             if prop.logicalType == 'time':
                 logger.warning(
-                    f"Time bounds aren't supported yet for field {field_metadata['field']!r}; skipping them."
+                    f"Time bounds aren't supported yet for field '{sanitize_for_logging(column)}'; skipping them."
                 )
             else:
                 rules.extend(self._generate_range_rules_from_options(column, field_metadata, default_criticality, opts))
