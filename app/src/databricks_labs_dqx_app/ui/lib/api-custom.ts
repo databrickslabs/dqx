@@ -923,6 +923,9 @@ export interface LabelDefinitionsIn {
   definitions: LabelDefinition[];
 }
 
+/** Serialize tag-settings writes so rapid edits persist in invocation order. */
+export const LABEL_DEFINITIONS_SAVE_SCOPE = { id: "label-definitions-settings" } as const;
+
 export const getLabelDefinitions = (
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<LabelDefinitionsOut>> =>
@@ -976,6 +979,7 @@ export const useSaveLabelDefinitions = <
 > => {
   const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
   return useMutation({
+    scope: LABEL_DEFINITIONS_SAVE_SCOPE,
     mutationFn: ({ data }: { data: LabelDefinitionsIn }) => saveLabelDefinitions(data, axiosOptions),
     ...mutationOptions,
   });

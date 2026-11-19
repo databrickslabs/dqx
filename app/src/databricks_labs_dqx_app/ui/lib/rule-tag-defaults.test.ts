@@ -64,3 +64,14 @@ describe("missingRequiredTags", () => {
     expect(missingRequiredTags({}, [def({ key: "severity", required: true })])).toEqual([]);
   });
 });
+
+describe("prototype-colliding tag keys", () => {
+  test.each(["constructor", "toString", "valueOf", "__proto__"])("seeds and validates %s", (key) => {
+    const definitions = [def({ key, required: true })];
+    const seeded = seedTagDefaults({}, definitions);
+    expect(Object.prototype.hasOwnProperty.call(seeded, key)).toBe(true);
+    expect(seeded[key]).toBe("");
+    expect(missingRequiredTags(seeded, definitions)).toEqual([key]);
+    expect(missingRequiredTags({ ...seeded, [key]: "value" }, definitions)).toEqual([]);
+  });
+});

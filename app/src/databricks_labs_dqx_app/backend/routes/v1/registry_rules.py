@@ -406,10 +406,9 @@ def batch_import_registry_rules(
             missing_tags = missing_required_labels(user_metadata, label_definitions)
             if missing_tags and (body.auto_approve or body.also_submit):
                 # Keep incomplete imports as drafts for the author to complete.
+                safe_missing = ", ".join(key.replace("\r", "\\r").replace("\n", "\\n") for key in missing_tags)
                 logger.warning(
-                    "Batch import created rule %s as a draft; missing required tags: %s",
-                    rule.rule_id,
-                    ", ".join(missing_tags),
+                    f"Batch import created rule {rule.rule_id} as a draft; missing required tags: {safe_missing}"
                 )
                 submit_failed += 1
             elif body.auto_approve:
@@ -421,7 +420,7 @@ def batch_import_registry_rules(
                 # rule enters the suggestion corpus and shows up in Apply Rules
                 # → Suggest rules. embed_and_store is best-effort / never raises.
                 try:
-                    svc.submit(rule.rule_id, user_email)
+                    svc.submit(rule.rule_id, user_email, label_definitions=label_definitions)
                     approved = svc.approve(rule.rule_id, user_email)
                     embeddings.embed_and_store(approved)
                     submitted += 1
@@ -434,7 +433,7 @@ def batch_import_registry_rules(
                     submit_failed += 1
             elif body.also_submit:
                 try:
-                    svc.submit(rule.rule_id, user_email)
+                    svc.submit(rule.rule_id, user_email, label_definitions=label_definitions)
                     submitted += 1
                 except Exception as submit_err:
                     logger.warning(
@@ -722,11 +721,6 @@ def submit_registry_rule(
     """
     rationale = body.rationale if body else None
     try:
-        current = svc.get_rule(rule_id)
-        if current is not None:
-            missing_tags = missing_required_labels(current.user_metadata, _read_label_definitions(app_settings))
-            if missing_tags:
-                raise ValueError(_missing_required_tags_message(missing_tags))
         rule = svc.submit(rule_id, user_email, rationale=rationale)
         # Only the auto-approving modes (``disabled`` / ``auto_bypass``) consult
         # the object-aware predicate; ``enabled`` never auto-approves, so skip

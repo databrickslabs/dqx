@@ -622,7 +622,7 @@ async def _ensure_metadata_dims(
         await refresh_metadata_dims(
             MetadataDimService(
                 sp_sql=delta_sql,
-                registry=RegistryService(sql=oltp),
+                registry=RegistryService(sql=oltp, app_settings=AppSettingsService(sql=oltp)),
                 monitored_tables=MonitoredTableService(sql=oltp, profiling_sql=delta_sql),
                 genie_schema=resources.genie_schema,
                 audience_groups=resources.audience.uc_principals,
@@ -698,7 +698,7 @@ async def _build_scheduler_data_product_service(
         perms=permissions,
         sp_ws=workspace,
     )
-    registry = await get_registry_service(sql=oltp, perms=permissions, sp_ws=workspace)
+    registry = await get_registry_service(sql=oltp, perms=permissions, sp_ws=workspace, app_settings=app_settings)
     rules_catalog = await get_rules_catalog_service(sql=oltp)
     materializer = await get_materializer(
         sql=oltp,
@@ -760,8 +760,8 @@ async def _start_scheduler(
             binding_runs = None
 
         monitored_tables = MonitoredTableService(sql=oltp, profiling_sql=delta_sql)
-        registry = RegistryService(sql=oltp)
         settings = AppSettingsService(sql=oltp)
+        registry = RegistryService(sql=oltp, app_settings=settings)
         tag_reconcile = TagReconcileService(
             registry=registry,
             monitored_tables=monitored_tables,
@@ -807,7 +807,7 @@ def _maybe_start_ai_bootstrap(
             return
         bootstrap = AiBootstrap(
             embeddings=RuleEmbeddingsService(sql=oltp, sp_ws=workspace, app_settings=app_settings),
-            registry=RegistryService(sql=oltp),
+            registry=RegistryService(sql=oltp, app_settings=app_settings),
         )
         app.state.ai_bootstrap_startup_task = asyncio.create_task(bootstrap.ensure_ai_ready())
     except Exception:

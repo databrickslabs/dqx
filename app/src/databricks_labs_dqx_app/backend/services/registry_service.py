@@ -39,7 +39,9 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RuleVersion,
     get_rule_dimension,
     get_rule_severity,
+    missing_required_labels,
 )
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import (
     DeferredTaskRunner,
@@ -51,6 +53,10 @@ from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, W
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, strip_sql_line_comments
 
 logger = logging.getLogger(__name__)
+
+
+class LabelDefinitionsUnavailableError(Exception):
+    """Raised when mandatory tag definitions cannot be loaded for submission."""
 
 
 class DuplicateRegistryRuleError(Exception):
@@ -123,10 +129,12 @@ class RegistryService:
         sql: OltpExecutorProtocol,
         permissions: PermissionsService | None = None,
         sp_ws: WorkspaceClient | None = None,
+        app_settings: AppSettingsService | None = None,
     ) -> None:
         self._sql = sql
         self._perms = permissions
         self._sp_ws = sp_ws
+        self._app_settings = app_settings
         self._table = sql.fqn("dq_rules")
         self._versions_table = sql.fqn("dq_rule_versions")
         self._history_table = sql.fqn("dq_rules_history")
@@ -871,7 +879,25 @@ class RegistryService:
     # Lifecycle transitions
     # ------------------------------------------------------------------
 
-    def submit(self, rule_id: str, user_email: str, rationale: str | None = None) -> RegistryRule:
+    def _get_label_definitions(self, supplied: list[dict] | None) -> list[dict]:
+        """Use a request's definitions snapshot, or read fresh settings once."""
+        if supplied is not None:
+            return supplied
+        if self._app_settings is None:
+            raise LabelDefinitionsUnavailableError("Cannot submit without tag definitions")
+        try:
+            return self._app_settings.get_label_definitions()
+        except Exception as error:
+            raise LabelDefinitionsUnavailableError("Could not load tag definitions; submission aborted") from error
+
+    def submit(
+        self,
+        rule_id: str,
+        user_email: str,
+        rationale: str | None = None,
+        *,
+        label_definitions: list[dict] | None = None,
+    ) -> RegistryRule:
         """Submit a rule for approval (-> pending_approval).
 
         Valid from ``draft`` (first publish) and from ``approved`` (an
@@ -884,6 +910,14 @@ class RegistryService:
         an identical, empty vN+1. An approved rule must therefore be modified
         (:meth:`_compute_modified`) before it can be resubmitted.
 
+        Args:
+            rule_id: Rule to submit.
+            user_email: Actor performing the submission.
+            rationale: Optional lifecycle rationale.
+            label_definitions: Optional per-request settings snapshot. Batch
+                callers share this across submissions to avoid per-rule reads;
+                long-lived callers omit it so each submission sees fresh settings.
+
         Raises:
             ValueError: an ``approved`` rule with no changes since publish is
                 submitted (mapped to HTTP 400 by the route).
@@ -891,6 +925,9 @@ class RegistryService:
         rule = self._get(rule_id)
         if rule is None:
             raise RuntimeError(f"Registry rule not found: {rule_id}")
+        missing_tags = missing_required_labels(rule.user_metadata, self._get_label_definitions(label_definitions))
+        if missing_tags:
+            raise ValueError(f"Missing required tag(s): {', '.join(missing_tags)}. Add a value before submitting.")
         if rule.status == "approved":
             snapshot = self._get_version(rule.rule_id, rule.version)
             if not self._compute_modified(rule, snapshot):

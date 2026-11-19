@@ -93,11 +93,11 @@ function recordToRows(rec: Record<string, string>): Row[] {
   }));
 }
 
-function rowsToRecord(
+export function rowsToRecord(
   rows: Row[],
   definitionsMap?: Map<string, LabelDefinition>,
 ): Record<string, string> {
-  const out: Record<string, string> = {};
+  const out = Object.create(null) as Record<string, string>;
   for (const r of rows) {
     const key = r.key.trim();
     const value = r.value.trim();

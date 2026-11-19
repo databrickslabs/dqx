@@ -3,7 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createInstance } from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
-import { canAddLabelKey, LabelsEditor, labelsMatchFilter, tagPairsMatchFilter, type LabelSelection } from "./Labels";
+import { canAddLabelKey, LabelsEditor, labelsMatchFilter, rowsToRecord, tagPairsMatchFilter, type LabelSelection } from "./Labels";
 
 // Unit tests for the key-first `labelsMatchFilter` semantics used by the
 // shared LabelFilter (Rules Registry overview + Drafts & Review list). A
@@ -139,5 +139,13 @@ describe("canAddLabelKey", () => {
   test("rejects used and empty keys", () => {
     expect(canAddLabelKey("domain", new Set(["domain"]))).toBe(false);
     expect(canAddLabelKey("  ", new Set())).toBe(false);
+  });
+});
+
+describe("rowsToRecord — prototype-colliding keys", () => {
+  test.each(["constructor", "toString", "valueOf", "__proto__"])("stores %s as an own property", (key) => {
+    const out = rowsToRecord([{ id: "row-1", key, value: "expected" }]);
+    expect(Object.prototype.hasOwnProperty.call(out, key)).toBe(true);
+    expect(out[key]).toBe("expected");
   });
 });

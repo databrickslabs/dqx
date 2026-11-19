@@ -12,6 +12,11 @@ function isBooleanTag(def: LabelDefinition): boolean {
   return def.values.length === 0 && !def.allow_custom_values;
 }
 
+/** Whether the record itself carries the key, ignoring Object.prototype members. */
+function hasOwnTag(tags: Record<string, string>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(tags, key);
+}
+
 /** The value a new rule starts with for this tag, or `null` when it starts without it. */
 export function initialTagValue(def: LabelDefinition): string | null {
   if (def.default_value && def.values.includes(def.default_value)) return def.default_value;
@@ -31,7 +36,7 @@ export function seedTagDefaults(
 ): Record<string, string> {
   let out = tags;
   for (const def of definitions) {
-    if (!def.key || def.key in out) continue;
+    if (!def.key || hasOwnTag(out, def.key)) continue;
     const value = initialTagValue(def);
     if (value !== null) out = { ...out, [def.key]: value };
   }
@@ -44,6 +49,11 @@ export function missingRequiredTags(
   definitions: LabelDefinition[],
 ): string[] {
   return definitions
-    .filter((d) => d.required && !SELF_GATED_TAG_KEYS.has(d.key) && !(tags[d.key] ?? "").trim())
+    .filter(
+      (d) =>
+        d.required &&
+        !SELF_GATED_TAG_KEYS.has(d.key) &&
+        (!hasOwnTag(tags, d.key) || !(tags[d.key] ?? "").trim()),
+    )
     .map((d) => d.key);
 }
