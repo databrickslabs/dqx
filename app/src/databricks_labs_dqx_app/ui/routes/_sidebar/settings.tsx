@@ -44,6 +44,7 @@ import {
   defToDraft,
   draftToDef,
   reconcileSavedLabelDrafts,
+  shouldCloseExpandedValue,
   type CriticalityValue,
   type DraftDefinition,
 } from "@/lib/label-definition-drafts";
@@ -110,7 +111,7 @@ import { toast } from "sonner";
 import { useCurrentUserRoleSuspense } from "@/hooks/use-suspense-queries";
 import { usePermissions } from "@/hooks/use-permissions";
 import { sampleValueForKind } from "@/lib/sampling";
-import { Fragment, Suspense, useMemo, useState, useRef, useEffect, useCallback, type ComponentType, type ReactNode } from "react";
+import { Fragment, Suspense, useMemo, useState, useRef, useEffect, useCallback, type ComponentType, type ReactNode, type RefObject } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
@@ -695,29 +696,27 @@ function nextAutoValueName(existing: string[]): string {
  * preview) that expands on click into name/color/description inputs.
  * Replaces the old "type a value + press Enter" text box.
  */
-function AllowedValuesEditor({
+export function AllowedValuesEditor({
   draft,
   onChange,
+  outsideClickRootRef,
 }: {
   draft: DraftDefinition;
   onChange: (patch: Partial<DraftDefinition>) => void;
+  outsideClickRootRef: RefObject<HTMLDivElement | null>;
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState<number | null>(null);
-  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (expanded === null) return;
     const handler = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null;
-      if (!target) return;
-      if (rootRef.current?.contains(target)) return;
-      if (target.closest("[data-radix-popper-content-wrapper]")) return;
-      setExpanded(null);
+      if (shouldCloseExpandedValue(target, outsideClickRootRef.current)) setExpanded(null);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [expanded]);
+  }, [expanded, outsideClickRootRef]);
 
   const values = draft.values;
   const colors = draft.value_colors ?? {};
@@ -826,7 +825,7 @@ function AllowedValuesEditor({
   };
 
   return (
-    <div ref={rootRef} className="space-y-1.5">
+    <div className="space-y-1.5">
       {displayIndices.map((i) => {
         const v = values[i];
         const isOpen = expanded === i;
@@ -850,13 +849,15 @@ function AllowedValuesEditor({
               )}
             >
               <ValueColorEditor value={v} color={color} onSetColor={(c) => patchValue(i, { color: c })} />
-              <span className="flex items-baseline gap-2 min-w-0">
+              <span className="flex items-center gap-2 min-w-0">
                 <span className="font-mono text-xs shrink-0">{v}</span>
-                {isDefault && (
-                  <Badge variant="secondary" className="h-4 px-1.5 text-[10px] font-normal shrink-0">
-                    {t("config.defaultValueBadge")}
-                  </Badge>
-                )}
+                <Badge
+                  variant="secondary"
+                  className={cn("h-4 px-1.5 text-[10px] font-normal shrink-0", !isDefault && "invisible")}
+                  aria-hidden={!isDefault}
+                >
+                  {t("config.defaultValueBadge")}
+                </Badge>
                 {description && !isOpen && (
                   <span className="truncate text-xs text-muted-foreground">{description}</span>
                 )}
@@ -1014,6 +1015,7 @@ function TagOptionsEditor({
 
 function DefinitionEditorCard({ draft, onChange, onRemove }: DefinitionEditorCardProps) {
   const { t } = useTranslation();
+  const cardRef = useRef<HTMLDivElement>(null);
   const keyValid = !draft.key || LABEL_KEY_RE.test(draft.key.trim());
   const isWeight = draft.key.trim() === RESERVED_WEIGHT_KEY;
   const isSeverityDef = draft.key.trim() === RESERVED_SEVERITY_KEY;
@@ -1027,7 +1029,7 @@ function DefinitionEditorCard({ draft, onChange, onRemove }: DefinitionEditorCar
       : t("config.descriptionPlaceholder");
 
   return (
-    <div className="rounded-md border bg-muted/30 p-3 space-y-3">
+    <div ref={cardRef} className="rounded-md border bg-muted/30 p-3 space-y-3">
       {/* Key + Description + delete on one row */}
       <div className="flex items-end gap-2">
         <div className="space-y-1 shrink-0">
@@ -1073,7 +1075,7 @@ function DefinitionEditorCard({ draft, onChange, onRemove }: DefinitionEditorCar
       {!keyValid && <p className="text-xs text-destructive">{t("config.keyHint")}</p>}
       <div className="space-y-1.5">
         <Label className="text-sm">{t("config.allowedValues")}</Label>
-        <AllowedValuesEditor draft={draft} onChange={onChange} />
+        <AllowedValuesEditor draft={draft} onChange={onChange} outsideClickRootRef={cardRef} />
       </div>
       <div className="space-y-1.5">
         <Label className="text-sm">{t("config.tagOptions")}</Label>

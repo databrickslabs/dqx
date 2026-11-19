@@ -20,6 +20,12 @@ export const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
 /** Human-readable JSON/YAML tag key; first character must be alphanumeric. */
 export const LABEL_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9 _./-]*$/;
 
+/** Whether a click outside the tag card should close its expanded value row. */
+export function shouldCloseExpandedValue(target: HTMLElement | null, card: HTMLDivElement | null): boolean {
+  if (!target || card?.contains(target)) return false;
+  return !target.closest("[data-radix-popper-content-wrapper]");
+}
+
 /** The two DQX criticalities a severity value can map to — mirrors the
  * backend's `LabelDefinitionModel` validator (`"warn" | "error"` only). */
 export const CRITICALITY_VALUES = ["warn", "error"] as const;

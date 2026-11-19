@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { LABEL_KEY_RE, defToDraft, draftToDef, reconcileSavedLabelDrafts } from "./label-definition-drafts";
+import {
+  LABEL_KEY_RE,
+  defToDraft,
+  draftToDef,
+  reconcileSavedLabelDrafts,
+  shouldCloseExpandedValue,
+} from "./label-definition-drafts";
 import type { LabelDefinition } from "./api-custom";
 
 // Unit tests for the pure draft <-> API mapping helpers behind the admin
@@ -134,5 +140,27 @@ describe("reconcileSavedLabelDrafts", () => {
     const current = defToDraft(def({ key: "team", values: ["a"], is_builtin: false }));
     const drafts = [current];
     expect(reconcileSavedLabelDrafts(drafts, [saved], 3, 4)).toBe(drafts);
+  });
+});
+
+describe("shouldCloseExpandedValue", () => {
+  test("keeps the expanded row open for clicks inside the tag card", () => {
+    const target = { closest: () => null } as unknown as HTMLElement;
+    const card = { contains: () => true } as unknown as HTMLDivElement;
+    expect(shouldCloseExpandedValue(target, card)).toBe(false);
+  });
+
+  test("closes the expanded row for an unrelated outside click", () => {
+    const target = { closest: () => null } as unknown as HTMLElement;
+    const card = { contains: () => false } as unknown as HTMLDivElement;
+    expect(shouldCloseExpandedValue(target, card)).toBe(true);
+  });
+
+  test("keeps the expanded row open for popover content", () => {
+    const target = {
+      closest: (selector: string) => (selector === "[data-radix-popper-content-wrapper]" ? {} : null),
+    } as unknown as HTMLElement;
+    const card = { contains: () => false } as unknown as HTMLDivElement;
+    expect(shouldCloseExpandedValue(target, card)).toBe(false);
   });
 });
