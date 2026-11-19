@@ -2996,7 +2996,7 @@ class TestDataContractGeneratorRangeBoundValues(DataContractGeneratorTestBase):
                 {"minimum": "2024-01-01"},
                 {
                     "function": "is_not_less_than",
-                    "arguments": {"column": "value", "limit": "2024-01-01T00:00:00+00:00"},
+                    "arguments": {"column": "value", "limit": "TIMESTAMP_NTZ '2024-01-01 00:00:00'"},
                 },
                 None,
             ),
@@ -3017,6 +3017,132 @@ class TestDataContractGeneratorRangeBoundValues(DataContractGeneratorTestBase):
         assert [rule["check"] for rule in rules] == ([check] if check else [])
         if warning:
             assert warning in caplog.messages
+
+    @pytest.mark.parametrize(
+        "logical_type, physical_type, options",
+        [
+            (None, "BOOLEAN", {"minimum": 0}),
+            (None, "BINARY", {"maximum": 10}),
+            (None, "VARIANT", {"maximum": 5}),
+            (None, "ARRAY<INT>", {"minimum": 0}),
+            (None, "MAP<STRING,INT>", {"maximum": 1}),
+            (None, "STRUCT<a:INT>", {"minimum": 0}),
+            ("integer", "GEOMETRY(4326)", {"minimum": 0}),
+        ],
+    )
+    def test_bounds_on_physical_type_without_order_are_skipped_with_warning(
+        self, generator, caplog, logical_type, physical_type, options
+    ):
+        """Test that bounds on a column Spark can't compare with a range generate no rule, which would fail the run."""
+        prop = {"name": "value", "physicalType": physical_type, "logicalTypeOptions": options}
+        if logical_type:
+            prop["logicalType"] = logical_type
+
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate_range_rules(generator, prop)
+
+        assert not rules
+        assert (
+            f"Skipping range bounds on 'value': physical type '{physical_type}' can't be compared with a range."
+            in caplog.messages
+        )
+
+    @pytest.mark.parametrize(
+        "physical_type, options, check",
+        [
+            ("INTEGER", {"minimum": 0}, {"function": "is_not_less_than", "arguments": {"column": "value", "limit": 0}}),
+            (
+                "NUMBER(10,2)",
+                {"maximum": 9.5},
+                {"function": "is_not_greater_than", "arguments": {"column": "value", "limit": 9.5}},
+            ),
+            (
+                "TIMESTAMPTZ",
+                {"minimum": "2024-01-01T00:00:00"},
+                {
+                    "function": "is_not_less_than",
+                    "arguments": {"column": "value", "limit": "2024-01-01T00:00:00+00:00"},
+                },
+            ),
+        ],
+    )
+    def test_bounds_on_another_platforms_physical_type_are_kept(self, generator, physical_type, options, check):
+        """Test that a physical type DQX doesn't know, such as another platform's type name, keeps its bounds."""
+        prop = {"name": "value", "physicalType": physical_type, "logicalTypeOptions": options}
+
+        rules = self._generate_range_rules(generator, prop)
+
+        assert [rule["check"] for rule in rules] == [check]
+
+    @pytest.mark.parametrize(
+        "options, function, limits",
+        [
+            ({"minimum": "2024-01-01T12:00:00"}, "is_not_less_than", {"limit": "TIMESTAMP_NTZ '2024-01-01 12:00:00'"}),
+            (
+                {"minimum": "2024-01-01T12:00:00+05:00"},
+                "is_not_less_than",
+                {"limit": "TIMESTAMP_NTZ '2024-01-01 07:00:00'"},
+            ),
+            (
+                {
+                    "minimum": "2024-01-01T09:00:00Z",
+                    "maximum": "2024-07-01T18:00:00",
+                    "defaultTimezone": "Australia/Sydney",
+                },
+                "is_in_range",
+                {
+                    "min_limit": "TIMESTAMP_NTZ '2024-01-01 20:00:00'",
+                    "max_limit": "TIMESTAMP_NTZ '2024-07-01 18:00:00'",
+                },
+            ),
+            (
+                {"maximum": datetime.date(2024, 12, 31)},
+                "is_not_greater_than",
+                {"limit": "TIMESTAMP_NTZ '2024-12-31 00:00:00'"},
+            ),
+            (
+                {"maximum": datetime.datetime(2024, 1, 1, 12, 0, 0, 123456)},
+                "is_not_greater_than",
+                {"limit": "TIMESTAMP_NTZ '2024-01-01 12:00:00.123456'"},
+            ),
+        ],
+    )
+    def test_timestamp_ntz_bounds_are_wall_clock_literals(self, generator, caplog, options, function, limits):
+        """Test that a TIMESTAMP_NTZ column's bounds are TIMESTAMP_NTZ literals of their wall-clock time in defaultTimezone.
+
+        Spark compares a TIMESTAMP_NTZ column with such a limit as wall-clock time, so the session time zone doesn't
+        change the result, as it does with a timestamp limit.
+        """
+        prop = {
+            "name": "value",
+            "physicalType": "TIMESTAMP_NTZ",
+            "logicalType": "timestamp",
+            "logicalTypeOptions": options,
+        }
+
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate_range_rules(generator, prop)
+
+        assert [rule["check"] for rule in rules] == [{"function": function, "arguments": {"column": "value", **limits}}]
+        assert not [r for r in caplog.records if r.name == contract_rules_generator_module.__name__]
+
+    def test_reversed_timestamp_ntz_bounds_are_skipped_with_warning(self, generator, caplog):
+        """Test that reversed bounds on a TIMESTAMP_NTZ column are found before they become literals."""
+        prop = {
+            "name": "value",
+            "physicalType": "TIMESTAMP_NTZ",
+            "logicalType": "timestamp",
+            "logicalTypeOptions": {"minimum": "2024-01-01T12:00:00", "maximum": "2024-01-01T10:00:00"},
+        }
+
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate_range_rules(generator, prop)
+
+        assert not rules
+        assert (
+            "Skipping range bounds on 'value': "
+            "no value is at least 2024-01-01T12:00:00+00:00 and at most 2024-01-01T10:00:00+00:00." in caplog.messages
+        )
 
     def test_unquoted_yaml_bounds_load_as_dates_timestamps_and_numbers(self, generator):
         """Test bounds written unquoted in a YAML contract, as the loader types them: date, datetime and number."""
@@ -3600,6 +3726,12 @@ class TestDataContractGeneratorExclusiveBounds(DataContractGeneratorTestBase):
                 "TIMESTAMP",
                 {"exclusiveMinimum": "2024-01-01T10:00:00+00:00"},
                 [("at_or_below_exclusive_minimum", "is_greater_than", "2024-01-01T10:00:00+00:00")],
+            ),
+            (
+                "timestamp",
+                "TIMESTAMP_NTZ",
+                {"exclusiveMaximum": "2024-01-01T18:00:00+02:00"},
+                [("at_or_above_exclusive_maximum", "is_less_than", "TIMESTAMP_NTZ '2024-01-01 16:00:00'")],
             ),
         ],
     )

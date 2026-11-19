@@ -848,6 +848,59 @@ class TestDataContractRangeRulesIntegration:
             3: set(),
         }
 
+    def test_timestamp_ntz_bounds_flag_the_same_rows_in_any_session_time_zone(self, ws, spark, set_utc_timezone):
+        """Bounds on a TIMESTAMP_NTZ column compare as wall-clock time, so the session time zone doesn't change the result."""
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.1.0",
+            "id": "test:timestamp-ntz-bounds",
+            "name": "Timestamp NTZ bounds",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "events",
+                    "physicalType": "table",
+                    "properties": [
+                        {
+                            "name": "seen",
+                            "physicalType": "TIMESTAMP_NTZ",
+                            "logicalType": "timestamp",
+                            # 18:00 at +02:00 is 16:00 in UTC, the default time zone
+                            "logicalTypeOptions": {
+                                "minimum": "2024-01-01T12:00:00",
+                                "maximum": "2024-01-01T18:00:00+02:00",
+                            },
+                        }
+                    ],
+                },
+            ],
+        }
+        rules = _generate_rules_from_temp_contract(
+            ws, spark, contract, process_text_rules=False, generate_schema_validation=False
+        )
+        test_df = spark.sql(
+            "SELECT * FROM VALUES "
+            "(1, TIMESTAMP_NTZ'2024-01-01 12:00:00'), (2, TIMESTAMP_NTZ'2024-01-01 16:00:00'), "
+            "(3, TIMESTAMP_NTZ'2024-01-01 11:59:59'), (4, TIMESTAMP_NTZ'2024-01-01 16:00:01'), "
+            "(5, CAST(NULL AS TIMESTAMP_NTZ)) AS t(row_id, seen)"
+        )
+
+        original_time_zone = spark.conf.get("spark.sql.session.timeZone")
+        try:
+            for time_zone in ("UTC", "America/New_York", "Asia/Tokyo"):
+                spark.conf.set("spark.sql.session.timeZone", time_zone)
+                flagged_by_row = _flagged_names_by_row_under_ansi(ws, spark, test_df, rules)
+                assert flagged_by_row == {
+                    1: set(),
+                    2: set(),
+                    3: {"seen_out_of_range"},
+                    4: {"seen_out_of_range"},
+                    5: set(),
+                }, time_zone
+        finally:
+            spark.conf.set("spark.sql.session.timeZone", original_time_zone)
+
 
 class TestDataContractIntegrationErrors:
     """Integration tests for data contract error paths and invalid inputs."""
