@@ -45,7 +45,12 @@ from databricks_labs_dqx_app.backend.models import (
     RegistryRuleVersionOut,
     UpdateRegistryRuleIn,
 )
-from databricks_labs_dqx_app.backend.registry_models import RegistryRule, canonicalize_reserved_label_values
+from databricks_labs_dqx_app.backend.registry_models import (
+    RegistryRule,
+    apply_label_defaults,
+    canonicalize_reserved_label_values,
+    missing_required_labels,
+)
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.materializer import Materializer
@@ -72,6 +77,10 @@ router = APIRouter()
 _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
 _AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR]
 _APPROVERS_ONLY = [UserRole.ADMIN, UserRole.RULE_APPROVER]
+
+
+def _missing_required_tags_message(missing: list[str]) -> str:
+    return f"Missing required tag(s): {', '.join(missing)}. Add a value before submitting."
 
 
 def _read_label_definitions(app_settings: AppSettingsService) -> list[dict]:
@@ -361,13 +370,19 @@ def batch_import_registry_rules(
                     if name:
                         user_metadata["name"] = name
 
+            # Imported rules receive defaults after optional slot generalization,
+            # preserving any metadata rewritten above and all existing tag values.
+            user_metadata = apply_label_defaults(
+                canonicalize_reserved_label_values(user_metadata, label_definitions),
+                label_definitions,
+            )
             rule, warning = svc.create_rule(
                 mode=rule_in.mode,
                 definition=definition,
                 user_email=user_email,
                 polarity=rule_in.polarity,
                 author_kind=rule_in.author_kind,
-                user_metadata=canonicalize_reserved_label_values(user_metadata, label_definitions),
+                user_metadata=user_metadata,
                 owner=rule_in.owner,
                 owner_display_name=rule_in.owner_display_name,
                 source=body.source,
@@ -388,7 +403,16 @@ def batch_import_registry_rules(
             if key is not None:
                 seen_in_batch[key] = rule_out
 
-            if body.auto_approve:
+            missing_tags = missing_required_labels(user_metadata, label_definitions)
+            if missing_tags and (body.auto_approve or body.also_submit):
+                # Keep incomplete imports as drafts for the author to complete.
+                logger.warning(
+                    "Batch import created rule %s as a draft; missing required tags: %s",
+                    rule.rule_id,
+                    ", ".join(missing_tags),
+                )
+                submit_failed += 1
+            elif body.auto_approve:
                 # Publish outright: submit to leave draft, then approve to
                 # bump v0 -> v1 and freeze the snapshot. A freshly-imported
                 # reusable rule has no applications yet, so no re-materialize
@@ -698,6 +722,11 @@ def submit_registry_rule(
     """
     rationale = body.rationale if body else None
     try:
+        current = svc.get_rule(rule_id)
+        if current is not None:
+            missing_tags = missing_required_labels(current.user_metadata, _read_label_definitions(app_settings))
+            if missing_tags:
+                raise ValueError(_missing_required_tags_message(missing_tags))
         rule = svc.submit(rule_id, user_email, rationale=rationale)
         # Only the auto-approving modes (``disabled`` / ``auto_bypass``) consult
         # the object-aware predicate; ``enabled`` never auto-approves, so skip

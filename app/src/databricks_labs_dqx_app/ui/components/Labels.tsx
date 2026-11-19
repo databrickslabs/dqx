@@ -59,6 +59,8 @@ interface LabelsEditorProps {
   showHeader?: boolean;
   /** Admin-managed catalog. Triggers constrained mode when non-empty. */
   definitions?: LabelDefinition[];
+  /** Mandatory tag keys: their rows are marked required and can't be removed. */
+  requiredKeys?: string[];
 }
 
 interface Row {
@@ -124,6 +126,7 @@ export function LabelsEditor({
   variant = "inline",
   showHeader = true,
   definitions,
+  requiredKeys,
 }: LabelsEditorProps) {
   const { t } = useTranslation();
   const editorTitle = title ?? t("labelsEditor.title");
@@ -167,6 +170,7 @@ export function LabelsEditor({
     return m;
   }, [definitions]);
   const constrained = definitionsMap.size > 0;
+  const requiredSet = useMemo(() => new Set(requiredKeys ?? []), [requiredKeys]);
 
   const commit = (next: Row[]) => {
     const record = rowsToRecord(next, definitionsMap);
@@ -211,6 +215,7 @@ export function LabelsEditor({
               definition={definitionsMap.get(r.key.trim())}
               constrained={constrained}
               disabled={disabled}
+              required={requiredSet.has(r.key.trim())}
               onChange={(patch) => updateRow(r.id, patch)}
               onRemove={() => removeRow(r.id)}
             />
@@ -293,6 +298,8 @@ interface LabelRowProps {
   definition: LabelDefinition | undefined;
   constrained: boolean;
   disabled?: boolean;
+  /** Mandatory tag (Settings → Tags): marked with an asterisk, not removable. */
+  required?: boolean;
   onChange: (patch: Partial<Row>) => void;
   onRemove: () => void;
 }
@@ -302,6 +309,7 @@ function LabelRow({
   definition,
   constrained,
   disabled,
+  required,
   onChange,
   onRemove,
 }: LabelRowProps) {
@@ -318,6 +326,11 @@ function LabelRow({
         >
           <Tag className="h-3 w-3 opacity-60" />
           <span className="truncate">{definition!.key}</span>
+          {required && (
+            <span className="text-destructive" aria-label={t("labelsEditor.requiredTag")}>
+              *
+            </span>
+          )}
         </Badge>
       ) : (
         <Input
@@ -345,17 +358,22 @@ function LabelRow({
           className="h-7 text-xs flex-1 min-w-0 max-w-40"
         />
       )}
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="h-7 w-7 shrink-0"
-        onClick={onRemove}
-        disabled={disabled}
-        aria-label={t("labelsEditor.removeLabel")}
+      <span
+        className="inline-flex shrink-0"
+        title={required ? t("labelsEditor.requiredTagCannotRemove") : undefined}
       >
-        <X className="h-3.5 w-3.5" />
-      </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 shrink-0"
+          onClick={onRemove}
+          disabled={disabled || required}
+          aria-label={t("labelsEditor.removeLabel")}
+        >
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      </span>
     </div>
   );
 }

@@ -452,3 +452,66 @@ class TestSaveLabelDefinitionsReservedGuard:
         result = save_label_definitions(body, svc, "admin@example.com")
         sev = next(d for d in result.definitions if d.key == "severity")
         assert sev.value_criticality == {"Low": "warn", "High": "error"}
+
+
+class TestSaveLabelDefinitionsMandatoryAndDefault:
+    @pytest.fixture
+    def route_ctx(self, sql_executor_mock):
+        from databricks_labs_dqx_app.backend.routes.v1.config import (
+            LabelDefinition,
+            LabelDefinitionsIn,
+            save_label_definitions,
+        )
+        from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+
+        svc = AppSettingsService(sql_executor_mock)
+        existing = [
+            LabelDefinition(key="dimension", values=["Validity"], is_builtin=True).model_dump(),
+            LabelDefinition(key="severity", values=["Low", "High"], is_builtin=True).model_dump(),
+        ]
+        sql_executor_mock.query.return_value = [(json.dumps(existing),)]
+        return save_label_definitions, LabelDefinition, LabelDefinitionsIn, svc
+
+    def test_model_defaults(self):
+        from databricks_labs_dqx_app.backend.routes.v1.config import LabelDefinition
+
+        d = LabelDefinition(key="team")
+        assert d.required is False
+        assert d.default_value is None
+
+    def test_required_and_default_round_trip(self, route_ctx):
+        save, LabelDefinition, LabelDefinitionsIn, svc = route_ctx
+        body = LabelDefinitionsIn(
+            definitions=[
+                LabelDefinition(key="dimension", values=["Validity"], is_builtin=True),
+                LabelDefinition(key="severity", values=["Low", "High"], is_builtin=True),
+                LabelDefinition(key="team", values=["a", "b"], required=True, default_value=" b "),
+            ]
+        )
+        team = next(d for d in save(body, svc, "admin@example.com").definitions if d.key == "team")
+        assert team.required is True
+        assert team.default_value == "b"
+
+    def test_default_not_in_values_is_dropped(self, route_ctx):
+        save, LabelDefinition, LabelDefinitionsIn, svc = route_ctx
+        body = LabelDefinitionsIn(
+            definitions=[
+                LabelDefinition(key="dimension", values=["Validity"], is_builtin=True),
+                LabelDefinition(key="severity", values=["Low", "High"], is_builtin=True),
+                LabelDefinition(key="team", values=["a"], default_value="removed"),
+            ]
+        )
+        team = next(d for d in save(body, svc, "admin@example.com").definitions if d.key == "team")
+        assert team.default_value is None
+
+    def test_dimension_and_severity_never_required_but_keep_default(self, route_ctx):
+        save, LabelDefinition, LabelDefinitionsIn, svc = route_ctx
+        body = LabelDefinitionsIn(
+            definitions=[
+                LabelDefinition(key="dimension", values=["Validity"], is_builtin=True, required=True),
+                LabelDefinition(key="severity", values=["Low", "High"], is_builtin=True, default_value="High"),
+            ]
+        )
+        by_key = {d.key: d for d in save(body, svc, "admin@example.com").definitions}
+        assert by_key["dimension"].required is False
+        assert by_key["severity"].default_value == "High"

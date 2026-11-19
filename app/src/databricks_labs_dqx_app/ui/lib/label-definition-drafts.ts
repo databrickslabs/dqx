@@ -6,8 +6,8 @@
  * `LabelDefinition` — same shape plus a client-only `draftId` used as the
  * stable React key while rows are added/removed. `draftToDef` is where all
  * save-time normalisation lives: values are trimmed, and the per-value maps
- * (`value_colors` / `value_descriptions` / `value_criticality`) are pruned to
- * surviving values and validated, mirroring the server-side pruning in
+ * (`value_colors` / `value_descriptions` / `value_criticality`) and the
+ * `default_value` are pruned to surviving values and validated, mirroring the server-side pruning in
  * `backend/routes/v1/config.py::save_label_definitions` so the optimistic
  * dirty-diff (`JSON.stringify` against the server copy) stays stable.
  *
@@ -37,9 +37,15 @@ export function defToDraft(d: LabelDefinition): DraftDefinition {
     value_colors: d.value_colors ? { ...d.value_colors } : null,
     value_descriptions: d.value_descriptions ? { ...d.value_descriptions } : null,
     value_criticality: d.value_criticality ? { ...d.value_criticality } : null,
+    required: !!d.required,
+    default_value: d.default_value ?? null,
     is_builtin: !!d.is_builtin,
   };
 }
+
+/** Reserved keys with their own submit-gated rule fields. The generic
+ * "Mandatory" flag never applies to them. */
+export const SELF_GATED_TAG_KEYS: ReadonlySet<string> = new Set(["dimension", "severity"]);
 
 export function draftToDef(d: DraftDefinition): LabelDefinition {
   const values = d.values.map((v) => v.trim()).filter(Boolean);
@@ -58,14 +64,18 @@ export function draftToDef(d: DraftDefinition): LabelDefinition {
       criticality[value] = crit;
     }
   }
+  const key = d.key.trim();
+  const defaultValue = (d.default_value ?? "").trim();
   return {
-    key: d.key.trim(),
+    key,
     description: (d.description ?? "").trim(),
     values,
     allow_custom_values: d.allow_custom_values,
     value_colors: Object.keys(colors).length > 0 ? colors : null,
     value_descriptions: Object.keys(descriptions).length > 0 ? descriptions : null,
     value_criticality: Object.keys(criticality).length > 0 ? criticality : null,
+    required: SELF_GATED_TAG_KEYS.has(key) ? false : !!d.required,
+    default_value: valueSet.has(defaultValue) ? defaultValue : null,
     is_builtin: !!d.is_builtin,
   };
 }

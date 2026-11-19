@@ -700,6 +700,66 @@ class TestBatchImport:
         assert svc.create_rule.call_args.kwargs["user_metadata"] == {"dimension": "completeness"}
 
 
+class TestBatchImportTagDefaults:
+    @staticmethod
+    def _settings(defs: list[dict]) -> MagicMock:
+        app_settings = MagicMock()
+        app_settings.get_label_definitions.return_value = defs
+        return app_settings
+
+    def test_imported_rules_get_default_tags(self):
+        svc = MagicMock()
+        svc.create_rule.return_value = (_rule("r1"), None)
+        body = BatchImportRegistryRulesIn(rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())])
+        batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=self._settings([{"key": "team", "values": ["a", "b"], "default_value": "b"}]),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert svc.create_rule.call_args.kwargs["user_metadata"] == {"team": "b"}
+
+    def test_also_submit_skipped_when_required_tag_has_no_default(self):
+        svc = MagicMock()
+        svc.create_rule.return_value = (_rule("r1"), None)
+        body = BatchImportRegistryRulesIn(
+            rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())], also_submit=True
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=self._settings([{"key": "team", "values": ["a"], "required": True}]),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert result.saved == 1
+        assert result.submit_failed == 1
+        assert svc.create_rule.call_args.kwargs["user_metadata"] == {"team": ""}
+        svc.submit.assert_not_called()
+
+    def test_auto_approve_skipped_when_required_tag_has_no_default(self):
+        svc = MagicMock()
+        svc.create_rule.return_value = (_rule("r1"), None)
+        body = BatchImportRegistryRulesIn(
+            rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())], auto_approve=True
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=self._settings([{"key": "team", "values": ["a"], "required": True}]),
+            user_email="alice@x",
+            role=UserRole.ADMIN,
+        )
+        assert result.saved == 1
+        assert result.submit_failed == 1
+        svc.submit.assert_not_called()
+        svc.approve.assert_not_called()
+
+
 class TestCreateAndUpdateContinued:
     def test_update_rejects_non_draft_with_400(self):
         svc = MagicMock()
@@ -905,6 +965,32 @@ class TestLifecycleRoutes:
         with pytest.raises(HTTPException) as excinfo:
             submit_registry_rule("r1", svc=svc, user_email="alice@x", **self._submit_deps())
         assert excinfo.value.status_code == 400
+
+    def test_submit_blocked_when_required_tag_missing(self):
+        svc = MagicMock()
+        svc.get_rule.return_value = _rule()
+        deps = self._submit_deps()
+        deps["app_settings"].get_label_definitions.return_value = [
+            {"key": "owner_group", "values": ["a"], "required": True}
+        ]
+        with pytest.raises(HTTPException) as excinfo:
+            submit_registry_rule("r1", svc=svc, user_email="alice@x", **deps)
+        assert excinfo.value.status_code == 400
+        assert "owner_group" in excinfo.value.detail
+        svc.submit.assert_not_called()
+
+    def test_submit_allowed_when_required_tag_present(self):
+        svc = MagicMock()
+        rule = _rule()
+        rule.user_metadata = {"owner_group": "a"}
+        svc.get_rule.return_value = rule
+        svc.submit.return_value = _rule(status="pending_approval")
+        deps = self._submit_deps()
+        deps["app_settings"].get_label_definitions.return_value = [
+            {"key": "owner_group", "values": ["a"], "required": True}
+        ]
+        result = submit_registry_rule("r1", svc=svc, user_email="alice@x", **deps)
+        assert result.status == "pending_approval"
 
     def test_approve_success(self):
         svc = MagicMock()

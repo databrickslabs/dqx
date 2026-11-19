@@ -897,6 +897,15 @@ export interface LabelDefinition {
    */
   value_criticality?: Record<string, string> | null;
   /**
+   * Mandatory tag: added to every new rule, cannot be removed in the rule
+   * editor, and must have a value before the rule can be submitted. Always
+   * false on the reserved ``dimension``/``severity`` keys (they have their own
+   * submit-gated fields).
+   */
+  required?: boolean;
+  /** One of ``values`` that new rules start with; ``null`` when unset. */
+  default_value?: string | null;
+  /**
    * True for reserved, pre-seeded keys (e.g. the Rules Registry
    * ``dimension``/``severity`` tags). Such keys cannot be deleted or
    * renamed via `saveLabelDefinitions`, though their values, colors, and

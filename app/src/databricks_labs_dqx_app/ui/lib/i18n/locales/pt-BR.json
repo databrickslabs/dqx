@@ -539,7 +539,15 @@
     "governedKeyEmpty": "Nenhuma chave de tag governada disponível.",
     "governedKeyValueCount_one": "{{count}} valor",
     "governedKeyValueCount_other": "{{count}} valores",
-    "demoDeployShort": "Implantar"
+    "demoDeployShort": "Implantar",
+    "tagOptions": "Opções",
+    "mandatoryTag": "Obrigatória",
+    "mandatoryTagHint": "Toda regra recebe esta tag e precisa de um valor antes de ser enviada.",
+    "mandatoryTagBuiltinHint": "Sempre obrigatória antes que uma regra possa ser enviada.",
+    "allowCustomValuesHint": "Os autores de regras podem inserir um valor que não está na lista.",
+    "defaultValueLabel": "Padrão",
+    "defaultValueBadge": "Padrão",
+    "defaultValueHint": "Preencha este valor em novas regras. Apenas um padrão por tag."
   },
   "discovery": {
     "breadcrumb": "Descoberta",
@@ -1536,7 +1544,9 @@
     "customKeyPlaceholder": "chave personalizada…",
     "set": "Definir",
     "currentNotInCatalog": "O valor atual {{value}} não está no catálogo.",
-    "clickToToggle": "clique para alternar"
+    "clickToToggle": "clique para alternar",
+    "requiredTag": "Obrigatória",
+    "requiredTagCannotRemove": "Esta tag é obrigatória e não pode ser removida."
   },
   "labelFilter": {
     "allLabels": "Todos os Rótulos",
@@ -2052,6 +2062,7 @@
     "joinPickSchemaPlaceholder": "Selecionar esquema…",
     "joinPickTablePlaceholder": "Selecionar tabela…",
     "sourceMarketplace": "Marketplace",
+    "requiredTagsMissing": "Valores de tags obrigatórias ({{tags}})",
     "groupUncategorized": "Sem categoria",
     "groupUnowned": "Sem responsável",
     "columnTypeGroup": {

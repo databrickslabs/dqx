@@ -539,7 +539,15 @@
     "governedKeyEmpty": "Aucune clé d'étiquette gouvernée disponible.",
     "governedKeyValueCount_one": "{{count}} valeur",
     "governedKeyValueCount_other": "{{count}} valeurs",
-    "demoDeployShort": "Déployer"
+    "demoDeployShort": "Déployer",
+    "tagOptions": "Options",
+    "mandatoryTag": "Obligatoire",
+    "mandatoryTagHint": "Chaque règle reçoit ce tag et doit lui attribuer une valeur avant d'être soumise.",
+    "mandatoryTagBuiltinHint": "Toujours requis avant qu'une règle puisse être soumise.",
+    "allowCustomValuesHint": "Les auteurs de règles peuvent saisir une valeur absente de la liste.",
+    "defaultValueLabel": "Par défaut",
+    "defaultValueBadge": "Par défaut",
+    "defaultValueHint": "Renseigne cette valeur dans les nouvelles règles. Une seule valeur par défaut par tag."
   },
   "discovery": {
     "breadcrumb": "Découverte",
@@ -1536,7 +1544,9 @@
     "customKeyPlaceholder": "clé personnalisée…",
     "set": "Définir",
     "currentNotInCatalog": "La valeur actuelle {{value}} n'est pas dans le catalogue.",
-    "clickToToggle": "cliquez pour basculer"
+    "clickToToggle": "cliquez pour basculer",
+    "requiredTag": "Obligatoire",
+    "requiredTagCannotRemove": "Ce tag est obligatoire et ne peut pas être supprimé."
   },
   "labelFilter": {
     "allLabels": "Toutes les étiquettes",
@@ -2052,6 +2062,7 @@
     "joinPickSchemaPlaceholder": "Sélectionner un schéma…",
     "joinPickTablePlaceholder": "Sélectionner une table…",
     "sourceMarketplace": "Marketplace",
+    "requiredTagsMissing": "Valeurs des tags obligatoires ({{tags}})",
     "groupUncategorized": "Non catégorisé",
     "groupUnowned": "Sans propriétaire",
     "columnTypeGroup": {

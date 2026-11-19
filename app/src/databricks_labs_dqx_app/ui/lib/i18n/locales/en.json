@@ -539,7 +539,15 @@
     "governedKeyEmpty": "No governed tag keys available.",
     "governedKeyValueCount_one": "{{count}} value",
     "governedKeyValueCount_other": "{{count}} values",
-    "demoDeployShort": "Deploy"
+    "demoDeployShort": "Deploy",
+    "tagOptions": "Options",
+    "mandatoryTag": "Mandatory",
+    "mandatoryTagHint": "Every rule gets this tag and needs a value before it can be submitted.",
+    "mandatoryTagBuiltinHint": "Always required before a rule can be submitted.",
+    "allowCustomValuesHint": "Rule authors can enter a value that isn't in the list.",
+    "defaultValueLabel": "Default",
+    "defaultValueBadge": "Default",
+    "defaultValueHint": "Pre-fill this value on new rules. One default per tag."
   },
   "discovery": {
     "breadcrumb": "Discovery",
@@ -1536,7 +1544,9 @@
     "customKeyPlaceholder": "custom key…",
     "set": "Set",
     "currentNotInCatalog": "Current value {{value}} isn't in the catalog.",
-    "clickToToggle": "click to toggle"
+    "clickToToggle": "click to toggle",
+    "requiredTag": "Required",
+    "requiredTagCannotRemove": "This tag is mandatory and can't be removed."
   },
   "labelFilter": {
     "allLabels": "All Labels",
@@ -2052,6 +2062,7 @@
     "joinPickSchemaPlaceholder": "Select schema…",
     "joinPickTablePlaceholder": "Select table…",
     "sourceMarketplace": "Marketplace",
+    "requiredTagsMissing": "Mandatory tag values ({{tags}})",
     "groupUncategorized": "Uncategorized",
     "groupUnowned": "No owner",
     "columnTypeGroup": {

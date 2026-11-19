@@ -2286,6 +2286,8 @@ export type LabelDefinitionValueCriticalityAnyOf = {[key: string]: string};
 
 export type LabelDefinitionValueCriticality = LabelDefinitionValueCriticalityAnyOf | null;
 
+export type LabelDefinitionDefaultValue = string | null;
+
 /**
  * An admin-managed label definition.
 
@@ -2320,6 +2322,16 @@ criticality a registry rule's effective severity renders as (see
 built-in defaults. Pruned to keys present in ``values`` on save, like the
 other per-value maps.
 
+``required`` marks a tag every rule must carry: the rule editor adds it to
+new rules, authors cannot remove it, and a rule missing it (or carrying it
+with an empty value) cannot be submitted for approval. Always ``False`` on
+the reserved ``dimension``/``severity`` keys — those already have their own
+dedicated, submit-gated fields on the rule form.
+
+``default_value`` optionally names one of ``values`` that new rules start
+with. A tag with a default but no ``required`` flag is pre-filled yet still
+removable. Pruned to ``None`` on save when it is not in ``values``.
+
 ``is_builtin`` flags a reserved, pre-seeded key (e.g. the Rules Registry
 ``dimension``/``severity`` tags) — such keys cannot be deleted or renamed
 via :func:`save_label_definitions`, though their values, colors, and
@@ -2335,6 +2347,8 @@ export interface LabelDefinition {
   value_colors?: LabelDefinitionValueColors;
   value_descriptions?: LabelDefinitionValueDescriptions;
   value_criticality?: LabelDefinitionValueCriticality;
+  required?: boolean;
+  default_value?: LabelDefinitionDefaultValue;
   is_builtin?: boolean;
 }
 
@@ -9866,8 +9880,10 @@ freely edited. ``is_builtin`` itself is authoritative from the stored
 state, not the client payload — a caller can't strip the flag off a
 reserved key by omitting/flipping it in the request. ``dimension`` and
 ``severity`` additionally always save with ``allow_custom_values=False``
-regardless of what the client sends — their value set is fixed/admin-
-curated, never author-extensible.
+and ``required=False`` regardless of what the client sends — their value
+set is fixed/admin-curated, never author-extensible, and they are
+submit-gated by their own form fields. ``default_value`` is dropped when it
+is not one of the definition's (cleaned) values.
  * @summary Save Label Definitions
  */
 export const saveLabelDefinitions = (

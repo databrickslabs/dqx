@@ -68,3 +68,30 @@ describe("defToDraft / draftToDef — existing color/description behavior (moved
     expect(out.value_descriptions).toEqual({ Low: "minor" });
   });
 });
+
+describe("defToDraft / draftToDef — required + default_value", () => {
+  const team = (over: Partial<LabelDefinition> = {}): LabelDefinition =>
+    def({ key: "team", values: ["a", "b"], value_criticality: null, is_builtin: false, ...over });
+
+  test("round-trips required and default_value", () => {
+    const out = draftToDef(defToDraft(team({ required: true, default_value: "b" })));
+    expect(out.required).toBe(true);
+    expect(out.default_value).toBe("b");
+  });
+
+  test("drops a default that is no longer an allowed value", () => {
+    const draft = defToDraft(team({ default_value: "b" }));
+    draft.values = ["a"];
+    expect(draftToDef(draft).default_value).toBeNull();
+  });
+
+  test("never marks dimension or severity as required", () => {
+    expect(draftToDef(defToDraft(def({ required: true }))).required).toBe(false);
+  });
+
+  test("defaults missing fields to not-required with no default", () => {
+    const out = draftToDef(defToDraft(team()));
+    expect(out.required).toBe(false);
+    expect(out.default_value).toBeNull();
+  });
+});
