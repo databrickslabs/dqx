@@ -18,6 +18,7 @@ from databricks_labs_dqx_app.backend.models import (
     BATCH_IMPORT_MAX_RULES,
     BatchImportRegistryRulesIn,
     CreateRegistryRuleIn,
+    PreviewBatchImportRegistryRulesIn,
     UpdateRegistryRuleIn,
 )
 from databricks_labs_dqx_app.backend.registry_models import RegistryRule, RuleDefinition
@@ -32,6 +33,7 @@ from databricks_labs_dqx_app.backend.routes.v1.registry_rules import (
     get_registry_rule,
     list_registry_rule_versions,
     list_registry_rules,
+    preview_batch_import_registry_rules,
     reject_registry_rule,
     submit_registry_rule,
     undeprecate_registry_rule,
@@ -608,6 +610,261 @@ class TestBatchImport:
         assert [r.rule.rule_id for r in result.created] == ["generic"]
         assert result.reused == []
 
+    def test_reuse_rule_ids_honor_per_input_choice(self):
+        # Two inputs that share similar_key (same check, different case)
+        # must reuse the candidate the importer picked for that index.
+        upper = _rule("upper", status="approved", version=1)
+        upper.definition = RuleDefinition.model_validate(
+            {
+                **_definition().model_dump(),
+                "parameters": [{"name": "case", "type": "string", "value": "upper"}],
+            }
+        )
+        lower = _rule("lower", status="approved", version=1)
+        lower.definition = RuleDefinition.model_validate(
+            {
+                **_definition().model_dump(),
+                "parameters": [{"name": "case", "type": "string", "value": "lower"}],
+            }
+        )
+        svc = MagicMock()
+        svc.get_rule.side_effect = lambda rule_id: {"upper": upper, "lower": lower}.get(rule_id)
+        body = BatchImportRegistryRulesIn(
+            rules=[
+                CreateRegistryRuleIn(mode="dqx_native", definition=lower.definition),
+                CreateRegistryRuleIn(mode="dqx_native", definition=upper.definition),
+            ],
+            reuse_rule_ids={0: "lower", 1: "upper"},
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert [r.rule.rule_id for r in result.reused] == ["lower", "upper"]
+        svc.create_rule.assert_not_called()
+
+    def test_reuse_rule_ids_reject_dissimilar_rule(self):
+        # A stale or wrong ID must not silently link the check to an unrelated rule.
+        other = _rule("other", status="approved", version=1)
+        other.definition = RuleDefinition.model_validate(
+            {
+                **_definition().model_dump(),
+                "body": {"function": "is_unique", "arguments": {"columns": ["{{column}}"]}},
+            }
+        )
+        svc = MagicMock()
+        svc.get_rule.return_value = other
+        svc.create_rule.return_value = (_rule("created"), None)
+        body = BatchImportRegistryRulesIn(
+            rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())],
+            reuse_rule_ids={0: "other"},
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert result.reused == []
+        assert len(result.failed) == 1
+        assert "same check" in result.failed[0].error
+        svc.create_rule.assert_not_called()
+
+    def test_reuse_rule_ids_do_not_enable_in_batch_dedup(self):
+        # Sending reuse_rule_ids for one row must not collapse later rows with
+        # the same shape when skip_duplicates is off.
+        existing = _rule("existing", status="approved", version=1)
+        created = _rule("created")
+        svc = MagicMock()
+        svc.get_rule.return_value = existing
+        svc.create_rule.return_value = (created, None)
+        body = BatchImportRegistryRulesIn(
+            rules=[
+                CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
+                CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
+            ],
+            reuse_rule_ids={0: "existing"},
+            skip_duplicates=False,
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert [r.rule.rule_id for r in result.reused] == ["existing"]
+        assert [r.rule.rule_id for r in result.created] == ["created"]
+        assert svc.create_rule.call_count == 1
+
+    def test_batch_import_strips_custom_tags(self):
+        svc = MagicMock()
+        svc.create_rule.return_value = (_rule("r1"), None)
+        body = BatchImportRegistryRulesIn(
+            rules=[
+                CreateRegistryRuleIn(
+                    mode="dqx_native",
+                    definition=_definition(),
+                    user_metadata={"name": "Amount present", "businessTerm": "GGR", "owner_team": "risk"},
+                )
+            ],
+        )
+        batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        md = svc.create_rule.call_args.kwargs["user_metadata"]
+        assert md == {"name": "Amount present"}
+        assert "businessTerm" not in md
+        assert "owner_team" not in md
+
+    def test_batch_import_rejects_missing_severity_when_configured(self):
+        svc = MagicMock()
+        body = BatchImportRegistryRulesIn(
+            rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition(), user_metadata={"name": "x"})],
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=_label_vocab(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert result.created == []
+        assert len(result.failed) == 1
+        assert "severity" in result.failed[0].error.lower()
+        svc.create_rule.assert_not_called()
+
+    def test_batch_import_rejects_missing_ref_table(self):
+        svc = MagicMock()
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {"function": "foreign_key", "arguments": {"columns": ["{{column}}"]}},
+                "slots": [{"name": "column", "family": "any", "position": 0, "cardinality": "one"}],
+                "parameters": [{"name": "ref_table", "type": "string", "value": None}],
+            }
+        )
+        body = BatchImportRegistryRulesIn(
+            rules=[CreateRegistryRuleIn(mode="dqx_native", definition=definition)],
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert result.created == []
+        assert len(result.failed) == 1
+        assert "ref_table" in result.failed[0].error
+        svc.create_rule.assert_not_called()
+
+    def test_preview_reports_exact_match(self):
+        exact = _rule("exact", status="approved", version=1)
+        svc = MagicMock()
+        svc.list_rules.return_value = [exact]
+        svc.get_active_rule_by_fingerprint.return_value = None
+        body = PreviewBatchImportRegistryRulesIn(
+            rules=[CreateRegistryRuleIn(mode="dqx_native", definition=exact.definition)],
+        )
+        result = preview_batch_import_registry_rules(body=body, svc=svc)
+        assert len(result.matches) == 1
+        assert result.matches[0].exact is not None
+        assert result.matches[0].exact.rule_id == "exact"
+        assert result.matches[0].similar == []
+
+    def test_preview_reports_similar_capped_at_three(self):
+        # Same check, different parameters → similar (not exact). Cap at 3.
+        candidates = []
+        for i in range(5):
+            rule = _rule(f"s{i}", status="approved", version=1)
+            rule.user_metadata = {"name": f"Candidate {i}"}
+            rule.definition = RuleDefinition.model_validate(
+                {
+                    **_definition().model_dump(),
+                    "parameters": [{"name": "limit", "type": "number", "value": i + 1}],
+                }
+            )
+            candidates.append(rule)
+        svc = MagicMock()
+        svc.list_rules.return_value = candidates
+        svc.get_active_rule_by_fingerprint.return_value = None
+        body = PreviewBatchImportRegistryRulesIn(
+            rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())],
+        )
+        result = preview_batch_import_registry_rules(body=body, svc=svc)
+        assert len(result.matches) == 1
+        assert result.matches[0].exact is None
+        assert len(result.matches[0].similar) == 3
+
+    def test_reuse_rule_ids_skip_unknown_or_inactive(self):
+        svc = MagicMock()
+        svc.get_rule.side_effect = lambda rule_id: (
+            None if rule_id == "missing" else _rule("rejected", status="rejected", version=1)
+        )
+        svc.create_rule.return_value = (_rule("created"), None)
+        body = BatchImportRegistryRulesIn(
+            rules=[
+                CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
+                CreateRegistryRuleIn(mode="dqx_native", definition=_definition()),
+            ],
+            reuse_rule_ids={0: "missing", 1: "rejected"},
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=MagicMock(),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert result.reused == []
+        assert [r.rule.rule_id for r in result.created] == ["created", "created"]
+        assert svc.create_rule.call_count == 2
+
+    def test_imported_builtin_severity_maps_onto_renamed_vocabulary(self):
+        svc = MagicMock()
+        svc.create_rule.return_value = (_rule("r1"), None)
+        app_settings = MagicMock()
+        app_settings.get_label_definitions.return_value = [
+            {
+                "key": "severity",
+                "values": ["P1", "P2", "P3", "P4"],
+                "value_criticality": {"P1": "error", "P2": "error", "P3": "warn", "P4": "warn"},
+            }
+        ]
+        body = BatchImportRegistryRulesIn(
+            rules=[
+                CreateRegistryRuleIn(
+                    mode="dqx_native",
+                    definition=_definition(),
+                    user_metadata={"severity": "High"},
+                )
+            ],
+        )
+        batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=app_settings,
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert svc.create_rule.call_args.kwargs["user_metadata"]["severity"] == "P1"
+
     def test_approved_rule_is_preferred_over_draft(self):
         svc = MagicMock()
         svc.list_rules.return_value = [_rule("draft"), _rule("approved", status="approved", version=1)]
@@ -660,7 +917,9 @@ class TestBatchImport:
         body = BatchImportRegistryRulesIn(
             rules=[
                 CreateRegistryRuleIn(
-                    mode="dqx_native", definition=_definition(), user_metadata={"dimension": "Punctuality"}
+                    mode="dqx_native",
+                    definition=_definition(),
+                    user_metadata={"dimension": "Punctuality", "severity": "high"},
                 )
             ],
         )
@@ -672,7 +931,10 @@ class TestBatchImport:
             user_email="alice@x",
             role=UserRole.RULE_AUTHOR,
         )
-        assert svc.create_rule.call_args.kwargs["user_metadata"] == {"dimension": "Punctuality"}
+        assert svc.create_rule.call_args.kwargs["user_metadata"] == {
+            "dimension": "Punctuality",
+            "severity": "High",
+        }
 
     def test_unreadable_label_definitions_do_not_fail_the_import(self):
         # Canonicalization is a nicety: a settings read failure imports the

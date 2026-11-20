@@ -92,9 +92,19 @@ def test_record_persists_row_filter_and_pass_threshold(svc, sql):
     assert "90" in insert
 
 
+def test_record_persists_tags(svc, sql):
+    sql.query.return_value = []
+
+    result = svc.record("b1", "r1", [{"column": "c"}], "alice@example.com", tags={"team": "risk"})
+
+    assert result.tags == {"team": "risk"}
+    insert = next(s for s in _executed_sql(sql) if s.strip().startswith("INSERT INTO"))
+    assert "parse_json('{\"team\": \"risk\"}')" in insert or "team" in insert
+
+
 def test_record_update_overwrites_row_filter_and_pass_threshold(svc, sql):
     sql.query.return_value = [
-        ["pa1", "b1", "r1", json.dumps([{"column": "c"}]), "bob@example.com", None, "old = 1", "50"],
+        ["pa1", "b1", "r1", json.dumps([{"column": "c"}]), "bob@example.com", None, "old = 1", "50", "{}"],
     ]
 
     result = svc.record("b1", "r1", [{"column": "c"}], "alice@example.com", row_filter=None, pass_threshold=None)
@@ -108,7 +118,7 @@ def test_record_update_overwrites_row_filter_and_pass_threshold(svc, sql):
 
 def test_list_parses_row_filter_and_pass_threshold(svc, sql):
     sql.query.return_value = [
-        ["pa1", "b1", "r1", None, None, None, "x > 0", "75"],
+        ["pa1", "b1", "r1", None, None, None, "x > 0", "75", json.dumps({"team": "risk"})],
         ["pa2", "b2", "r1", None, None, None],
     ]
 
@@ -116,8 +126,10 @@ def test_list_parses_row_filter_and_pass_threshold(svc, sql):
 
     assert rows[0].row_filter == "x > 0"
     assert rows[0].pass_threshold == 75
+    assert rows[0].tags == {"team": "risk"}
     assert rows[1].row_filter is None
     assert rows[1].pass_threshold is None
+    assert rows[1].tags == {}
 
 
 def test_list_for_rule_parses_rows(svc, sql):

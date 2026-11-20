@@ -368,8 +368,8 @@ class TestRenderCheckMessageExpr:
 
 
 class TestRenderCheckDefinitionFilter:
-    """Task 5: definition.filter is slot-substituted and set as check_dict['filter'].
-    The per-binding applied.row_filter is NO LONGER read."""
+    """definition.filter is the rule default; applied.row_filter overrides it.
+    Empty applied inherits the default. Slot placeholders are substituted."""
 
     def test_definition_filter_slot_substituted(self):
         """{{col_a}} in definition.filter with mapping {col_a: amount} -> 'amount > 0'."""
@@ -430,9 +430,8 @@ class TestRenderCheckDefinitionFilter:
         )
         assert "filter" not in check
 
-    def test_row_filter_param_not_read(self):
-        """render_check no longer reads the row_filter param — passing it
-        must not produce a 'filter' key when definition.filter is None."""
+    def test_row_filter_overrides_when_definition_filter_absent(self):
+        """Applied row_filter is used when the rule has no default filter."""
         definition = _is_not_null_definition()
         version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
         check, _ = render_check(
@@ -447,7 +446,43 @@ class TestRenderCheckDefinitionFilter:
             app_settings=_app_settings_stub(),
             row_filter="old_filter_value IS NOT NULL",
         )
-        assert "filter" not in check
+        assert check["filter"] == "old_filter_value IS NOT NULL"
+
+    def test_row_filter_overrides_definition_filter(self):
+        definition = _is_not_null_definition()
+        definition.filter = "region = 'US'"
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+            row_filter="status = 'active'",
+        )
+        assert check["filter"] == "status = 'active'"
+
+    def test_empty_row_filter_inherits_definition_filter(self):
+        definition = _is_not_null_definition()
+        definition.filter = "region = 'US'"
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "customer_id"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+            row_filter="  ",
+        )
+        assert check["filter"] == "region = 'US'"
 
     def test_definition_filter_plain_string_no_slots(self):
         """A filter with no slot placeholders is passed through unchanged."""

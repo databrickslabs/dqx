@@ -12,6 +12,8 @@ import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import { AlertTriangle, Check, ChevronDown, Loader2, MoreVertical, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -267,10 +269,17 @@ export function RuleLogicDisclosure({
   open,
   onToggle,
   registryRule,
+  filter,
 }: {
   open: boolean;
   onToggle: () => void;
   registryRule: RegistryRuleOut | undefined;
+  filter?: {
+    id: string;
+    value: string;
+    onChange: (value: string) => void;
+    disabled?: boolean;
+  };
 }) {
   const { t } = useTranslation();
   return (
@@ -294,11 +303,28 @@ export function RuleLogicDisclosure({
         )}
       >
         <div className="overflow-hidden">
-          <div className="px-3 pb-3 border-t pt-3">
+          <div className="px-3 pb-3 border-t pt-3 space-y-3">
             {registryRule ? (
               <RuleLogicBody registryRule={registryRule} />
             ) : (
               <p className="text-xs italic text-muted-foreground">{t("monitoredTables.ruleLogicUnavailable")}</p>
+            )}
+            {filter && (
+              <div className="space-y-1">
+                <Label htmlFor={filter.id} className="text-xs text-muted-foreground">
+                  {t("monitoredTables.applyRowFilterLabel")}
+                </Label>
+                <Input
+                  id={filter.id}
+                  value={filter.value}
+                  placeholder={
+                    registryRule?.definition?.filter?.trim() || t("monitoredTables.applyRowFilterPlaceholder")
+                  }
+                  disabled={filter.disabled}
+                  className="font-mono text-xs"
+                  onChange={(e) => filter.onChange(e.target.value)}
+                />
+              </div>
             )}
           </div>
         </div>
@@ -623,6 +649,8 @@ interface RuleConfigCardProps {
   columnTags?: Record<string, string[]>;
   /** When false, the ThresholdPill is hidden (feature disabled by admin). */
   thresholdEnabled?: boolean;
+  /** Per-table population override. Empty inherits the rule's default filter. */
+  onRowFilterChange?: (value: string) => void;
 }
 
 export function RuleConfigCard({
@@ -649,6 +677,7 @@ export function RuleConfigCard({
   mappingPrefillColumn = null,
   columnTags,
   thresholdEnabled = true,
+  onRowFilterChange,
 }: RuleConfigCardProps) {
   const { t } = useTranslation();
   const [logicOpen, setLogicOpen] = useState(false);
@@ -910,7 +939,21 @@ export function RuleConfigCard({
       >
         <div className="overflow-hidden">
           <div className="border-t px-4 py-4 space-y-3">
-            <RuleLogicDisclosure open={logicOpen} onToggle={() => setLogicOpen((p) => !p)} registryRule={registryRule} />
+            <RuleLogicDisclosure
+              open={logicOpen}
+              onToggle={() => setLogicOpen((p) => !p)}
+              registryRule={registryRule}
+              filter={
+                onRowFilterChange
+                  ? {
+                      id: `row-filter-${rule.rule_id}`,
+                      value: rule.row_filter ?? "",
+                      onChange: onRowFilterChange,
+                      disabled: !canEdit,
+                    }
+                  : undefined
+              }
+            />
             <MappingChips
               columnMapping={rule.column_mapping ?? []}
               slots={slots}

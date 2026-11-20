@@ -504,6 +504,11 @@ export interface BatchImportRegistryRulesFailure {
 }
 
 /**
+ * Existing active rules the importer chose to reuse (see ``previewBatchImportRegistryRules``), keyed by input index so two imported checks that share a similar_key can still pick different candidates (e.g. ``case: lower`` vs ``case: upper``).
+ */
+export type BatchImportRegistryRulesInReuseRuleIds = {[key: string]: string};
+
+/**
  * Bulk-create registry drafts from imported check dicts (YAML, data contract, …).
  */
 export interface BatchImportRegistryRulesIn {
@@ -522,6 +527,8 @@ export interface BatchImportRegistryRulesIn {
   source?: string;
   /** When true, rules whose slots are named after concrete columns (data contracts) are created as generic rules: slots renamed to 'column'/'column_N', a generic name, and no column-specific description. See ``slot_renames`` on each result. */
   generalize_slots?: boolean;
+  /** Existing active rules the importer chose to reuse (see ``previewBatchImportRegistryRules``), keyed by input index so two imported checks that share a similar_key can still pick different candidates (e.g. ``case: lower`` vs ``case: upper``). */
+  reuse_rule_ids?: BatchImportRegistryRulesInReuseRuleIds;
 }
 
 /**
@@ -529,12 +536,29 @@ export interface BatchImportRegistryRulesIn {
  */
 export interface BatchImportRegistryRulesOut {
   created?: CreateRegistryRuleOut[];
-  /** Rules matched to an existing active rule by fingerprint (skip_duplicates) — not created. */
+  /** Rules matched to an existing active rule by fingerprint (skip_duplicates) or chosen via ``reuse_rule_ids`` — not created. */
   reused?: CreateRegistryRuleOut[];
   saved?: number;
   submitted?: number;
   submit_failed?: number;
   failed?: BatchImportRegistryRulesFailure[];
+}
+
+/**
+ * Identical active rule the batch import reuses automatically
+ */
+export type BatchImportRuleMatchExact = RegistryRuleOut | null;
+
+/**
+ * Existing rules an imported rule would duplicate or nearly duplicate.
+ */
+export interface BatchImportRuleMatch {
+  /** Index of the input rule */
+  index: number;
+  /** Identical active rule the batch import reuses automatically */
+  exact?: BatchImportRuleMatchExact;
+  /** Active rules running the same check with different parameters, best candidate first */
+  similar?: RegistryRuleOut[];
 }
 
 /**
@@ -2921,6 +2945,24 @@ export interface PermissionsDefaultInheritOut {
   enabled: boolean;
 }
 
+/**
+ * Imported rules to look up against the registry before a batch import.
+ */
+export interface PreviewBatchImportRegistryRulesIn {
+  /**
+   * @minItems 1
+   * @maxItems 500
+   */
+  rules: CreateRegistryRuleIn[];
+  /** Same meaning as on the batch import. */
+  generalize_slots?: boolean;
+}
+
+export interface PreviewBatchImportRegistryRulesOut {
+  /** Only inputs that have an identical or similar rule */
+  matches?: BatchImportRuleMatch[];
+}
+
 export interface PrewarmIn {
   start?: boolean;
 }
@@ -3245,6 +3287,11 @@ export type RecordPendingApplicationInRowFilter = string | null;
 export type RecordPendingApplicationInPassThreshold = number | null;
 
 /**
+ * Custom tags from the import, carried to the applied rule on approval. Registry rules keep only reserved metadata keys; these belong on the application.
+ */
+export type RecordPendingApplicationInTags = {[key: string]: string};
+
+/**
  * One staged (binding, rule, mapping) application awaiting the rule's approval.
  */
 export interface RecordPendingApplicationIn {
@@ -3258,6 +3305,8 @@ export interface RecordPendingApplicationIn {
   row_filter?: RecordPendingApplicationInRowFilter;
   /** Per-rule minimum % of rows that must pass, carried to the application on approval. */
   pass_threshold?: RecordPendingApplicationInPassThreshold;
+  /** Custom tags from the import, carried to the applied rule on approval. Registry rules keep only reserved metadata keys; these belong on the application. */
+  tags?: RecordPendingApplicationInTags;
 }
 
 /**
@@ -3694,7 +3743,7 @@ export type RuleDefinitionBody = { [key: string]: unknown };
 export type RuleDefinitionErrorMessage = string | null;
 
 /**
- * Optional rule-level row filter (a SQL WHERE predicate), mirroring DQRule.filter. Supports {{slot}} placeholders substituted at materialize time. Validated for SQL safety on create/update. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'filter' key on the rendered dq_resolved_rules check when set; omitted entirely when None or empty.
+ * Default row filter (a SQL WHERE predicate) for tables this rule is applied to. Applied rules may override it with ``row_filter``; an empty applied filter inherits this default. Supports {{slot}} placeholders substituted at materialize time. Validated for SQL safety on create/update. Part of the rule fingerprint — two rules that differ only by filter are different checks.
  */
 export type RuleDefinitionFilter = string | null;
 
@@ -3715,7 +3764,7 @@ export interface RuleDefinition {
   parameters?: RuleParameter[];
   /** Optional custom failure message (a Spark SQL expression string), mirroring DQRule.message_expr. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'message_expr' key on the rendered dq_resolved_rules check when set; omitted entirely when None or empty. */
   error_message?: RuleDefinitionErrorMessage;
-  /** Optional rule-level row filter (a SQL WHERE predicate), mirroring DQRule.filter. Supports {{slot}} placeholders substituted at materialize time. Validated for SQL safety on create/update. Threaded through create/update and frozen into each dq_rule_versions snapshot as part of the definition. Materialized as a top-level 'filter' key on the rendered dq_resolved_rules check when set; omitted entirely when None or empty. */
+  /** Default row filter (a SQL WHERE predicate) for tables this rule is applied to. Applied rules may override it with ``row_filter``; an empty applied filter inherits this default. Supports {{slot}} placeholders substituted at materialize time. Validated for SQL safety on create/update. Part of the rule fingerprint — two rules that differ only by filter are different checks. */
   filter?: RuleDefinitionFilter;
 }
 
@@ -17116,6 +17165,73 @@ export function useListRegistryRuleVersionsSuspense<TData = Awaited<ReturnType<t
 
 
 /**
+ * Report, per imported rule, the identical rule a batch import would reuse or similar existing rules.
+
+"Similar" rules run the same check on the same slots but with different
+parameters (e.g. ``trim_strings``); the importer decides whether to reuse
+one by passing it in ``reuse_rule_ids`` (input index -> rule id) on the batch import.
+ * @summary Preview Batch Import Registry Rules
+ */
+export const previewBatchImportRegistryRules = (
+    previewBatchImportRegistryRulesIn: PreviewBatchImportRegistryRulesIn, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<PreviewBatchImportRegistryRulesOut>> => {
+    
+    
+    return axios.default.post(
+      `/api/v1/registry-rules/batch-import/preview`,
+      previewBatchImportRegistryRulesIn,options
+    );
+  }
+
+
+
+export const getPreviewBatchImportRegistryRulesMutationOptions = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewBatchImportRegistryRules>>, TError,{data: PreviewBatchImportRegistryRulesIn}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof previewBatchImportRegistryRules>>, TError,{data: PreviewBatchImportRegistryRulesIn}, TContext> => {
+
+const mutationKey = ['previewBatchImportRegistryRules'];
+const {mutation: mutationOptions, axios: axiosOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, axios: undefined};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof previewBatchImportRegistryRules>>, {data: PreviewBatchImportRegistryRulesIn}> = (props) => {
+          const {data} = props ?? {};
+
+          return  previewBatchImportRegistryRules(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PreviewBatchImportRegistryRulesMutationResult = NonNullable<Awaited<ReturnType<typeof previewBatchImportRegistryRules>>>
+    export type PreviewBatchImportRegistryRulesMutationBody = PreviewBatchImportRegistryRulesIn
+    export type PreviewBatchImportRegistryRulesMutationError = AxiosError<HTTPValidationError>
+
+    /**
+ * @summary Preview Batch Import Registry Rules
+ */
+export const usePreviewBatchImportRegistryRules = <TError = AxiosError<HTTPValidationError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof previewBatchImportRegistryRules>>, TError,{data: PreviewBatchImportRegistryRulesIn}, TContext>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof previewBatchImportRegistryRules>>,
+        TError,
+        {data: PreviewBatchImportRegistryRulesIn},
+        TContext
+      > => {
+
+      const mutationOptions = getPreviewBatchImportRegistryRulesMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    
+/**
  * Bulk-create registry drafts from imported checks in a single request.
 
 Avoids N sequential round-trips (each of which re-resolves Databricks
@@ -17131,6 +17247,13 @@ the batch.
 Imported ``dimension``/``severity`` tags are folded onto the configured
 label vocabulary first (an ODCS contract spells them lowercase), so they
 match the values the rest of the app filters and colours by.
+
+When the workspace has a configured severity vocabulary, every imported
+rule must carry a ``severity`` tag that maps onto that vocabulary —
+missing or unknown values fail that row (Marketplace and direct API
+callers included). Custom tags beyond the reserved keys are dropped from
+the registry rule; callers that apply the rule should pass them as
+applied-rule ``tags``.
  * @summary Batch Import Registry Rules
  */
 export const batchImportRegistryRules = (

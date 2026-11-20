@@ -483,6 +483,7 @@ PG_MIGRATIONS: list[PgMigration] = [
             "  created_at     TIMESTAMPTZ,"
             "  row_filter     TEXT,"
             "  pass_threshold INT,"
+            "  tags           JSONB NOT NULL DEFAULT '{{}}'::jsonb,"
             "  CONSTRAINT uq_dq_pending_applications_binding_rule "
             "    UNIQUE (binding_id, rule_id)"
             ");"
@@ -862,6 +863,14 @@ PG_MIGRATIONS: list[PgMigration] = [
             "('builtin:schedules','schedules','Default','org',NULL,NULL,TRUE,FALSE,'system','system'),"
             "('builtin:global_results','global_results','Default','org',NULL,NULL,TRUE,FALSE,'system','system') "
             "ON CONFLICT (id) DO NOTHING;"
+        ),
+    ),
+    PgMigration(
+        version=6,
+        description="Custom tags on pending applications (carried to apply on approval)",
+        sql=(
+            f"ALTER TABLE {_S}.dq_pending_applications "
+            "ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '{{}}'::jsonb;"
         ),
     ),
 ]

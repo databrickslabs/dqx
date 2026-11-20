@@ -8,7 +8,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { IMPORT_EXAMPLES, ImportExampleLinks } from "@/components/imports/ImportExampleLinks";
 
 const CONTRACT_DOCS_URL =
-  "https://databrickslabs.github.io/dqx/docs/guide/data_contract_quality_rules_generation/";
+  "https://databrickslabs.github.io/dqx/docs/studio/authoring/import-rules/#from-a-data-contract";
 
 export const Route = createFileRoute("/_sidebar/monitored-tables/import")({
   component: MonitoredTablesImportPage,
