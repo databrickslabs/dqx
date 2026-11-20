@@ -49,6 +49,52 @@ export interface ColumnRefValue {
   $col: string;
 }
 
+/**
+ * A condition value that references a declared Variable PARAMETER instead of
+ * holding a literal. Compiles to a bare `{{name}}`, which the apply-time
+ * substitution replaces with a SQL literal of the parameter's type (a list
+ * parameter expands to `'a', 'b'`, so it fits an `in` list). Distinct from
+ * {@link ColumnRefValue}: a parameter is never qualified with `{{input_view}}`
+ * and never counts as a declared column.
+ */
+export interface ParamRefValue {
+  $param: string;
+}
+
+/** True when a condition value (or a `between` bound / `in` entry) is a
+ *  parameter reference. */
+export function isParamRef(v: unknown): v is ParamRefValue {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    typeof (v as Record<string, unknown>).$param === "string" &&
+    (v as ParamRefValue).$param.length > 0
+  );
+}
+
+/** Every parameter name the AST's row values reference (at any depth). */
+export function collectAstParamRefs(ast: LowcodeAstV2): Set<string> {
+  const refs = new Set<string>();
+  const walk = (value: unknown): void => {
+    if (isParamRef(value)) refs.add(value.$param);
+    else if (Array.isArray(value)) value.forEach(walk);
+  };
+  for (const row of ast.rows ?? []) walk(row.value);
+  return refs;
+}
+
+/** A NEW ast with every `{ $param: oldName }` value rewritten to *newName*, so
+ *  renaming a Variable Parameter keeps visual-builder references in sync. */
+export function renameParamInAst(ast: LowcodeAstV2, oldName: string, newName: string): LowcodeAstV2 {
+  if (oldName === newName) return ast;
+  const rename = (value: unknown): unknown => {
+    if (isParamRef(value)) return value.$param === oldName ? { $param: newName } : value;
+    if (Array.isArray(value)) return value.map(rename);
+    return value;
+  };
+  return { ...ast, rows: ast.rows.map((row) => ({ ...row, value: rename(row.value) }) as AnyRow) };
+}
+
 /** True when a condition value (or a `between` bound / `in` entry) is a column
  *  reference rather than a literal. */
 export function isColumnRef(v: unknown): v is ColumnRefValue {
