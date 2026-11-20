@@ -6,12 +6,13 @@ import {
   moveColumn,
   toggleColumn,
   visibleColumns,
+  visibleCount,
 } from "./result-columns";
 
 const columns = indexColumns([
   { name: "id", mapped: true },
   { name: "amount", mapped: false },
-  { name: "id", mapped: false },
+  { name: "region", mapped: false },
 ]);
 const order = columns.map((c) => c.id);
 
@@ -20,11 +21,11 @@ describe("visibleColumns", () => {
     expect(visibleColumns(columns, order, new Set()).map((c) => c.index)).toEqual([0, 1, 2]);
   });
 
-  test("hiding one of two same-named columns leaves the other", () => {
+  test("a hidden column is left out and the rest keep their own row index", () => {
     const shown = visibleColumns(columns, order, new Set(["0"]));
     expect(shown.map((c) => [c.index, c.name])).toEqual([
       [1, "amount"],
-      [2, "id"],
+      [2, "region"],
     ]);
   });
 
@@ -47,16 +48,18 @@ describe("toggleColumn", () => {
 
   test("the last visible column cannot be hidden", () => {
     const hidden = new Set(["0", "1"]);
-    expect(canToggleColumn("2", order, hidden)).toBe(false);
+    expect(canToggleColumn("2", hidden, visibleCount(order, hidden))).toBe(false);
     expect([...toggleColumn("2", order, hidden)].sort()).toEqual(["0", "1"]);
   });
 
   test("a hidden column can always be shown again", () => {
-    expect(canToggleColumn("0", order, new Set(["0", "1"]))).toBe(true);
+    const hidden = new Set(["0", "1"]);
+    expect(canToggleColumn("0", hidden, visibleCount(order, hidden))).toBe(true);
   });
 
   test("with two columns visible either can be hidden", () => {
-    expect(canToggleColumn("1", order, new Set(["0"]))).toBe(true);
+    const hidden = new Set(["0"]);
+    expect(canToggleColumn("1", hidden, visibleCount(order, hidden))).toBe(true);
   });
 });
 

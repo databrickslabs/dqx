@@ -31,9 +31,10 @@ interface ResultGridProps {
 
 /** The results table with the app's Edit View menu to hide and reorder its columns. */
 export function ResultGrid(props: ResultGridProps) {
-  // Hidden columns and their order belong to one result. Remounting on a new
-  // column list drops them, so a re-run against another table or sample never
-  // starts with columns silently hidden.
+  // Hidden columns and their order belong to one column list. Remounting when
+  // the column names change drops them, so a result with different columns
+  // never starts with some silently hidden. A re-run that returns the same
+  // columns (another sample of the same table) keeps the user's choices.
   return <ResultGridView key={columnsSignature(props.columns)} {...props} />;
 }
 
@@ -52,7 +53,7 @@ function ResultGridView({ columns, rows, verdicts, maxHeightClassName }: ResultG
         <EditColumnsDropdown
           order={order}
           labelOf={(id) => indexed[Number(id)]?.name ?? id}
-          toggleableOf={(id) => canToggleColumn(id, order, hidden)}
+          toggleableOf={(id) => canToggleColumn(id, hidden, shown.length)}
           isChecked={(id) => !hidden.has(id)}
           onToggle={(id) => setHidden((prev) => toggleColumn(id, order, prev))}
           onDragEnd={onDragEnd}

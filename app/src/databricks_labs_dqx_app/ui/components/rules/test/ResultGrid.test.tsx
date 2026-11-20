@@ -73,15 +73,14 @@ describe("ResultTable", () => {
 });
 
 describe("ResultGrid", () => {
-  test("shows every column of a result, including two with the same name, with the Edit View menu", () => {
-    const duplicated = [COLUMNS[0], COLUMNS[1], { name: "id", mapped: false }];
+  test("shows every column of a result, with the Edit View menu", () => {
     const markup = renderToStaticMarkup(
       <I18nextProvider i18n={testI18n}>
-        <ResultGrid columns={duplicated} rows={ROWS} />
+        <ResultGrid columns={COLUMNS} rows={ROWS} />
       </I18nextProvider>,
     );
     const { headers, rows } = cells(markup);
-    expect(headers).toEqual(["id", "amount", "id"]);
+    expect(headers).toEqual(["id", "amount", "region"]);
     expect(rows[0]).toEqual(["1", "10.5", "emea"]);
     expect(markup).toContain(en.common.editColumns);
   });

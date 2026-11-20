@@ -1,7 +1,8 @@
+import { arrayMove } from "@dnd-kit/sortable";
+
 // Column bookkeeping for the Rule Test result grid: which columns show, and in
-// what order. Columns are identified by their position in the result, never by
-// name, because a query-shaped result can return the same name twice
-// (`SELECT a.id, b.id ...`).
+// what order. Columns are identified by their position in the result, so menu
+// entries and React keys stay unique and each cell is read from its own index.
 
 export interface ResultColumn {
   name: string;
@@ -31,16 +32,20 @@ export function visibleColumns(
   });
 }
 
+/** How many of `order` are not hidden. */
+export function visibleCount(order: readonly string[], hidden: ReadonlySet<string>): number {
+  return order.reduce((count, id) => (hidden.has(id) ? count : count + 1), 0);
+}
+
 /** Whether `id` may be toggled: the last visible column can't be hidden, or the grid would be empty. */
-export function canToggleColumn(id: string, order: readonly string[], hidden: ReadonlySet<string>): boolean {
-  if (hidden.has(id)) return true;
-  return order.filter((other) => !hidden.has(other)).length > 1;
+export function canToggleColumn(id: string, hidden: ReadonlySet<string>, shownCount: number): boolean {
+  return hidden.has(id) || shownCount > 1;
 }
 
 /** Hides or shows `id`; hiding the last visible column is a no-op. */
 export function toggleColumn(id: string, order: readonly string[], hidden: ReadonlySet<string>): Set<string> {
   const next = new Set(hidden);
-  if (!canToggleColumn(id, order, hidden)) return next;
+  if (!canToggleColumn(id, hidden, visibleCount(order, hidden))) return next;
   if (next.has(id)) next.delete(id);
   else next.add(id);
   return next;
@@ -50,10 +55,8 @@ export function toggleColumn(id: string, order: readonly string[], hidden: Reado
 export function moveColumn(order: readonly string[], id: string, overId: string): string[] {
   const from = order.indexOf(id);
   const to = order.indexOf(overId);
-  const next = [...order];
-  if (from < 0 || to < 0 || from === to) return next;
-  next.splice(to, 0, ...next.splice(from, 1));
-  return next;
+  if (from < 0 || to < 0 || from === to) return [...order];
+  return arrayMove([...order], from, to);
 }
 
 /** Identifies a result's column list, so per-result choices (hidden columns, order) reset when it changes. */
