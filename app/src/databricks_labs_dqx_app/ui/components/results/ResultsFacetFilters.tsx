@@ -13,7 +13,13 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TruncatedLabel } from "@/components/data-table/TruncatedLabel";
-import { FILTER_TRIGGER_CLASS } from "@/components/data-table/filter-bar";
+import { FILTER_TRIGGER_CLASS, FILTER_TRIGGER_PICKED_CLASS } from "@/components/data-table/filter-bar";
+
+/** Trigger styling of the multi-select filter bubbles (this one and the shared TagFilter). */
+export const FACET_TRIGGER_CLASS = cn(
+  "border-input dark:bg-input/30 dark:hover:bg-input/50 focus-visible:border-ring focus-visible:ring-ring/50 flex items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-1 whitespace-nowrap shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50",
+  FILTER_TRIGGER_CLASS,
+);
 
 export interface FacetFilterOption {
   value: string;
@@ -40,10 +46,13 @@ export function ResultsFacetFilter({
   searchPlaceholder,
   emptyText,
   ariaLabel,
+  label,
   className,
 }: {
   /** Trigger text + first (reset) row label when nothing is selected. */
   allLabel: string;
+  /** What the bubble filters ("Schema"); once values are picked the trigger reads "Schema: sales". */
+  label?: string;
   options: FacetFilterOption[];
   selected: string[];
   onChange: (values: string[]) => void;
@@ -60,11 +69,12 @@ export function ResultsFacetFilter({
 
   const triggerLabel = useMemo(() => {
     if (selected.length === 0) return allLabel;
-    if (selected.length === 1) {
-      return options.find((o) => o.value === selected[0])?.label ?? selected[0];
-    }
-    return t("resultsUi.filterSelectedCount", { count: selected.length });
-  }, [selected, options, allLabel, t]);
+    const picked =
+      selected.length === 1
+        ? (options.find((o) => o.value === selected[0])?.label ?? selected[0])
+        : t("resultsUi.filterSelectedCount", { count: selected.length });
+    return label ? `${label}: ${picked}` : picked;
+  }, [selected, options, allLabel, label, t]);
 
   // Own substring match on the label (`shouldFilter={false}`) so cmdk's fuzzy
   // scoring doesn't reorder the already-sorted option list.
@@ -91,9 +101,8 @@ export function ResultsFacetFilter({
           aria-expanded={open}
           aria-label={ariaLabel}
           className={cn(
-            "border-input dark:bg-input/30 dark:hover:bg-input/50 focus-visible:border-ring focus-visible:ring-ring/50 flex items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-1 whitespace-nowrap shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50",
-            FILTER_TRIGGER_CLASS,
-            selected.length > 0 && "border-ring/60 text-foreground",
+            FACET_TRIGGER_CLASS,
+            selected.length > 0 && cn(FILTER_TRIGGER_PICKED_CLASS, "border-ring/60 text-foreground"),
             className,
           )}
         >

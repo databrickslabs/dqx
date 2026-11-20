@@ -2,6 +2,7 @@ import type { ColumnLayoutDef } from "@/components/data-table/column-layout";
 import type { FilterLayoutDef } from "@/components/data-table/filter-layout";
 import { optionsSanitizer, type ViewDefs, type ViewValue } from "@/components/data-table/saved-views";
 import type { LabelSelection } from "@/components/Labels";
+import { splitTagId, tagId, type TagSelection } from "@/components/tags/tag-filter";
 import { labelToken, tokenToLabel } from "@/lib/format-utils";
 
 /** "No filter" value of the dimension, severity and owner pills. */
@@ -79,6 +80,22 @@ export function labelSelectionFromValue(value: readonly string[]): LabelSelectio
     selection.set(key, values);
   }
   return selection;
+}
+
+/** A stored label selection (see {@link labelSelectionToValue}) as a tag filter selection over rule tags. */
+export function ruleTagSelectionFromValue(value: readonly string[]): TagSelection {
+  return new Map([...labelSelectionFromValue(value)].map(([key, values]) => [tagId("rule", key), values]));
+}
+
+/** Inverse of {@link ruleTagSelectionFromValue}. Only rule tags are kept; Rules offers no "Untagged" pick. */
+export function ruleTagSelectionToValue(selection: TagSelection): string[] {
+  const labels: LabelSelection = new Map();
+  for (const [id, values] of selection) {
+    const parsed = splitTagId(id);
+    if (parsed?.source !== "rule") continue;
+    labels.set(parsed.key, new Set([...values].filter((v): v is string => v !== null)));
+  }
+  return labelSelectionToValue(labels);
 }
 
 /** Label definition values of the Rules Registry filters; null while they are still loading. */

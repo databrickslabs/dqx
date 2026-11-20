@@ -30,6 +30,29 @@ A check is **flagged as failing** when its pass rate drops below its
 `< 70%` badge) — that's separate from the numeric score, which always uses the
 raw pass rate.
 
+### Filter and score by tag
+
+The **Tags** filter on the Results, Tables, Collections and Rules pages lists
+the tags that apply there: rule tags, and the Unity Catalog tags of your
+catalogs, schemas and tables, grouped by where each tag comes from. Click a
+tag key to see its values, or tick its checkbox to match any of them. Values
+of one key match if any of them does; picks under different keys must all
+match. A picked filter names its source, such as **Table tag · layer: gold**. On Results, **Untagged** matches
+checks without the tag. Results also lists **column tags**: the Unity Catalog
+tags a rule ties to the columns it checks, not the columns' own tags.
+
+On Results, the **By tag** breakdown shows every tag value, or only the values
+picked in the Tags filter. The **Score by tag** chart draws a line, with a
+legend, for each picked value. Click a row or line to add or remove it from
+the filter. Rule tags are saved with each run, so editing a rule's tags later
+does not change earlier scores. Unity Catalog and column tags are read as they
+are today, so past runs are grouped by the current tags. A check counts toward every tag it
+carries, so totals across tags overlap.
+
+The Tags filter and the tag charts are hidden by default. Use **Edit View** to
+show them, or to hide any chart or breakdown on the Results page, and save the
+layout as a view.
+
 ## Investigate and act on a failure {#investigate-and-act-on-a-failure}
 
 The breakdowns are interactive: select a **dimension**, **severity**, **rule**,

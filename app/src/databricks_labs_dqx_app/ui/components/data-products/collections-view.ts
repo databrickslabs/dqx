@@ -6,28 +6,32 @@ import { optionsSanitizer, type ViewDefs, type ViewValue } from "@/components/da
 /** "No filter" value of the owner pill. */
 export const COLLECTIONS_FILTER_ALL = "all";
 
-export type CollectionsFilterKey = "search" | "owner" | "dqScore";
+export type CollectionsFilterKey = "search" | "owner" | "dqScore" | "tags";
 
-export const COLLECTIONS_FILTER_ORDER: readonly CollectionsFilterKey[] = ["search", "owner", "dqScore"];
+export const COLLECTIONS_FILTER_ORDER: readonly CollectionsFilterKey[] = ["search", "owner", "dqScore", "tags"];
 
 export const COLLECTIONS_FILTERS: Record<CollectionsFilterKey, FilterLayoutDef> = {
   search: { labelKey: "dataProducts.filterSearch", defaultVisible: true },
   owner: { labelKey: "dataProducts.colOwner", defaultVisible: true },
   dqScore: { labelKey: "dataProducts.colDqScore", defaultVisible: true },
+  tags: { labelKey: "dataProducts.filterTags", defaultVisible: true },
 };
 
 export const COLLECTIONS_EMPTY_VALUES: Record<CollectionsFilterKey, ViewValue> = {
   search: "",
   owner: COLLECTIONS_FILTER_ALL,
   dqScore: DQ_SCORE_FILTER_ALL,
+  tags: [],
 };
 
 /** Browser-only layouts from before saved views; removed on first load. */
 export const COLLECTIONS_LEGACY_STORAGE_KEYS = ["dqx.collections.filters", "dqx.products.layout.v3"];
 
-/** Owner options of the Collections filter bar; null while the collections are still loading. */
+/** Options of the Collections filter bar; null while they are still loading. */
 export interface CollectionsFilterOptions {
   owners: readonly string[] | null;
+  /** Every storable tag filter token (see tag-filter.ts). */
+  tags: readonly string[] | null;
 }
 
 /** Saved-view definitions of the Collections overview. Memoise on *options*. */
@@ -40,7 +44,7 @@ export function buildCollectionsViewDefs<C extends string>(
     filters: { defaultOrder: COLLECTIONS_FILTER_ORDER, filters: COLLECTIONS_FILTERS },
     emptyValues: COLLECTIONS_EMPTY_VALUES,
     sanitizeValue: optionsSanitizer<CollectionsFilterKey>(
-      { owner: options.owners, dqScore: DQ_SCORE_BUCKETS.map((b) => b.value) },
+      { owner: options.owners, dqScore: DQ_SCORE_BUCKETS.map((b) => b.value), tags: options.tags },
       COLLECTIONS_EMPTY_VALUES,
     ),
     legacyStorageKeys: COLLECTIONS_LEGACY_STORAGE_KEYS,

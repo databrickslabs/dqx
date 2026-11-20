@@ -68,7 +68,7 @@ import { computeSchemaDriftSummary } from "@/components/apply-rules/schemaDrift"
  *  surfaces (product/global/rule — see MultiTableResults); this single-table
  *  tab never toggles it (a table facet is meaningless on a one-table scope),
  *  so its `filters.table` stays empty and the param is never sent. */
-export type Facet = "dimension" | "severity" | "rule" | "column" | "table" | "catalog" | "schema" | "outcome";
+export type Facet = "dimension" | "severity" | "rule" | "column" | "table" | "catalog" | "schema" | "outcome" | "tag";
 
 /** Help text shown behind the "?" icon on the two count charts. The rule /
  *  check / test terms are bold so the distinction reads at a glance. */
@@ -99,6 +99,9 @@ export type MultiFilters = {
   schema: string[];
   /** "passed" / "failed" check outcome (Global Results only). */
   outcome: string[];
+  /** Tag filter tokens (the API's `tag` param, see components/tags/tag-filter.ts) — the
+   *  multi-table surfaces only. Same tag ORs, different tags AND. */
+  tag: string[];
   /** Table owners (monitoredTableOwner identity) — Global Results only. */
   owner: string[];
   /** Collection (data product) ids — Global Results only. */
@@ -117,6 +120,7 @@ export const EMPTY_FILTERS: MultiFilters = {
   catalog: [],
   schema: [],
   outcome: [],
+  tag: [],
   owner: [],
   collection: [],
   scoreBucket: "all",
@@ -386,6 +390,7 @@ const CHIP_LABEL_KEYS: Record<Facet, string> = {
   catalog: "resultsUi.chipCatalog",
   schema: "resultsUi.chipSchema",
   outcome: "resultsUi.chipOutcome",
+  tag: "resultsUi.chipTag",
 };
 
 function ResultsBody({

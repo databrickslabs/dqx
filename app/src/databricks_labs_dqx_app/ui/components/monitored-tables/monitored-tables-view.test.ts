@@ -9,12 +9,25 @@ const columns = {
     table: { toggleable: false, defaultVisible: true, defaultWidth: 200 },
   },
 };
-const loading = { catalogs: null, schemas: null, owners: null };
-const loaded = { catalogs: ["main", "sales"], schemas: ["bronze", "gold"], owners: ["ana@x.com"] };
+const loading = { catalogs: null, schemas: null, owners: null, tags: null };
+const loaded = {
+  catalogs: ["main", "sales"],
+  schemas: ["bronze", "gold"],
+  owners: ["ana@x.com"],
+  tags: ["table:tier", "table:tier=gold"],
+};
 const stored = {
   v: 1,
   filters: { order: [], visibility: { groupBy: true } },
-  values: { catalog: "sales", schema: "gold", owner: "ana@x.com", dqScore: "50-75", groupBy: "catalog", search: "orders" },
+  values: {
+    catalog: "sales",
+    schema: "gold",
+    owner: "ana@x.com",
+    dqScore: "50-75",
+    groupBy: "catalog",
+    search: "orders",
+    tags: ["table:tier=gold"],
+  },
 };
 
 describe("buildMonitoredTablesViewDefs", () => {
@@ -27,6 +40,7 @@ describe("buildMonitoredTablesViewDefs", () => {
       schema: "all",
       owner: "all",
       dqScore: "all",
+      tags: [],
     });
     expect(state.filters.order[0]).toBe("groupBy");
     expect(state.filters.visibility.groupBy).toBe(false);
@@ -45,10 +59,20 @@ describe("buildMonitoredTablesViewDefs", () => {
 
   it("drops values whose option is gone and unknown Group by / DQ score values", () => {
     const state = reconcileView(
-      { ...stored, values: { catalog: "gone", schema: "gone", owner: "bob", dqScore: "1-2", groupBy: "owner" } },
+      {
+        ...stored,
+        values: { catalog: "gone", schema: "gone", owner: "bob", dqScore: "1-2", groupBy: "owner", tags: ["rule:x=y"] },
+      },
       buildMonitoredTablesViewDefs(columns, loaded),
     );
-    expect(state.values).toMatchObject({ catalog: "all", schema: "all", owner: "all", dqScore: "all", groupBy: "none" });
+    expect(state.values).toMatchObject({
+      catalog: "all",
+      schema: "all",
+      owner: "all",
+      dqScore: "all",
+      groupBy: "none",
+      tags: [],
+    });
   });
 
   it("cleans up the browser-only layouts", () => {

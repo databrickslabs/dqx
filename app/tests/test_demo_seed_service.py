@@ -103,6 +103,75 @@ def test_run_creates_all_rules_and_writes_terminal_status():
     assert last.state in {"succeeded", "failed"}
 
 
+def test_run_stamps_rule_tags_into_created_rule_metadata():
+    svc, deps = _svc()
+    _use_create_path(deps)
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    created = {
+        call.kwargs["user_metadata"]["name"]: call.kwargs["user_metadata"]
+        for call in deps["registry"].create_rule.call_args_list
+    }
+    tagged = [spec for spec in manifest.RULES if spec.tags]
+    assert tagged, "expected tagged demo rules"
+    for spec in tagged:
+        metadata = created[spec.name]
+        for key, value in spec.tags.items():
+            assert metadata[key] == value, f"{spec.key}: tag {key!r} missing from user_metadata"
+        assert metadata["dimension"] == spec.dimension
+        assert metadata["severity"] == spec.severity
+
+
+def _run_minimal_seed(deps_override=None):
+    svc, deps = _svc()
+    deps["svc"] = svc
+    _use_create_path(deps)
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
+    if deps_override:
+        deps_override(deps)
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+    return deps
+
+
+def _object_tag_ddls(sql_mock) -> list[str]:
+    return [c.args[0] for c in sql_mock.execute.call_args_list if c.args and " SET TAGS (" in c.args[0]]
+
+
+def test_run_tags_every_demo_object_as_the_sp_without_a_caller():
+    ddls = _object_tag_ddls(_run_minimal_seed()["demo_sql"])
+    assert len(ddls) == len(manifest.OBJECT_TAGS)
+    assert "ALTER CATALOG `dqx` SET TAGS ('environment' = 'dev')" in ddls
+    assert any(d.startswith("ALTER SCHEMA `dqx`.`dqx_studio_demo` SET TAGS ('owner_team'") for d in ddls)
+    assert any(d.endswith(".customers SET TAGS ('layer' = 'gold')") for d in ddls)
+    assert any(".customers ALTER COLUMN `phone` SET TAGS ('personal_data' = 'phone')" in d for d in ddls)
+
+
+def test_run_tags_the_catalog_as_the_caller_when_set():
+    from databricks_labs_dqx_app.backend.sql_executor import SqlExecutor
+
+    obo_sql = create_autospec(SqlExecutor, instance=True)
+    deps = _run_minimal_seed(lambda deps: deps["svc"].set_tagging_sql(obo_sql))
+    assert [d for d in _object_tag_ddls(obo_sql) if d.startswith("ALTER CATALOG")] == [
+        "ALTER CATALOG `dqx` SET TAGS ('environment' = 'dev')"
+    ]
+    assert not any(d.startswith("ALTER CATALOG") for d in _object_tag_ddls(deps["demo_sql"]))
+
+
+def test_run_continues_when_an_object_tag_cannot_be_set():
+    def fail_object_tags(deps):
+        def execute(sql, *_a, **_k):
+            if " SET TAGS (" in sql:
+                raise RuntimeError("tag policy rejects the value")
+
+        deps["demo_sql"].execute.side_effect = execute
+
+    deps = _run_minimal_seed(fail_object_tags)
+    assert deps["registry"].create_rule.called
+
+
 def test_build_source_data_tags_demo_schema_and_tables():
     # Ownership tagging must run through the service-principal reconciler after
     # the Studio-owned demo objects exist; it is separate from governed column

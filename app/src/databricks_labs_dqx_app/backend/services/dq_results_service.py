@@ -44,6 +44,7 @@ from databricks_labs_dqx_app.backend.models import (
     TrendPointOut,
 )
 from databricks_labs_dqx_app.backend.services.score_view_service import RUN_MODE_DRAFT
+from databricks_labs_dqx_app.backend.tag_ids import COLUMN_TAG_SOURCE, RULE_TAG_SOURCE, tag_id
 
 VALID_AXES = ("all", "trend", "breakdown")
 
@@ -154,6 +155,13 @@ class CheckResultRow:
     # admin/rule/registry setting change can never re-judge it. None for legacy
     # runs predating the stamp, which fall back to the live resolver chain.
     pass_threshold: int | None = None
+    # Tags by tag id (see tag_ids): the free-text rule tags frozen with the run
+    # (``rule:<key>``, minus the keys Studio writes itself, see
+    # score_view_service.STUDIO_CHECK_METADATA_KEYS), plus, on Global Results,
+    # the table's current Unity Catalog catalog, schema and table tags and the
+    # column tags its rule currently maps (merged by with_current_tags). One
+    # value per tag id; "" for a key-only tag.
+    tags: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -173,6 +181,11 @@ class ResultFacets:
     catalogs stays distinct.
 
     *outcomes* keeps only ``passed`` (no failing rows) or ``failed`` checks.
+
+    *tags* holds (tag id, value) pairs, with None selecting checks missing that
+    tag; *tags_any* holds tag ids where any value matches. Selections of the
+    SAME tag id are ORed; different tag ids are ANDed, like the other facets
+    (rule:domain=finance OR rule:domain=customer, AND table:pii=true).
     """
 
     dimensions: tuple[str, ...] = ()
@@ -183,6 +196,8 @@ class ResultFacets:
     catalogs: tuple[str, ...] = ()
     schemas: tuple[str, ...] = ()
     outcomes: tuple[str, ...] = ()
+    tags: tuple[tuple[str, str | None], ...] = ()
+    tags_any: tuple[str, ...] = ()
 
     def any_active(self) -> bool:
         return bool(
@@ -194,6 +209,8 @@ class ResultFacets:
             or self.catalogs
             or self.schemas
             or self.outcomes
+            or self.tags
+            or self.tags_any
         )
 
 
@@ -208,6 +225,64 @@ def _parse_columns_json(raw: str | None) -> tuple[str, ...]:
     if not isinstance(parsed, list):
         return ()
     return tuple(str(c) for c in parsed if c is not None)
+
+
+def _parse_tags_json(raw: str | None) -> dict[str, str]:
+    """Parse the view's ``to_json(tags)`` rule-tag object into ``rule:<key>`` ids.
+
+    Empty on absent or corrupt JSON; non-string or empty entries are dropped.
+    """
+    if not raw or raw == "null":
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {
+        tag_id(RULE_TAG_SOURCE, k): v
+        for k, v in parsed.items()
+        if isinstance(k, str) and k and isinstance(v, str) and v
+    }
+
+
+def rule_column_tags(slot_tags: dict[str, list[str]]) -> dict[str, str]:
+    """The ``column:<key>`` tags a rule maps onto the columns it checks, from its slot tags.
+
+    Each slot tag is ``key`` or ``key=value`` (a governed Unity Catalog tag);
+    a key-only tag has the value ``""``. When two slots map the same key, the
+    first value in slot order wins.
+    """
+    out: dict[str, str] = {}
+    for tags in slot_tags.values():
+        for tag in tags:
+            key, _, value = tag.partition("=")
+            if key:
+                out.setdefault(tag_id(COLUMN_TAG_SOURCE, key), value)
+    return out
+
+
+def with_current_tags(
+    rows: list[CheckResultRow],
+    tags_by_table: dict[str, dict[str, str]],
+    tags_by_rule: dict[str, dict[str, str]] | None = None,
+) -> list[CheckResultRow]:
+    """Add the tags that are not frozen with each run to its rows.
+
+    *tags_by_table* holds each table's Unity Catalog catalog, schema and table
+    tags; *tags_by_rule* the column tags each registry rule maps (see
+    :func:`rule_column_tags`). Both are read as they are today, so history is
+    attributed to the CURRENT tags. Rows with nothing to add are returned as is.
+    """
+    by_rule = tags_by_rule or {}
+    if not tags_by_table and not by_rule:
+        return rows
+    out: list[CheckResultRow] = []
+    for row in rows:
+        extra = {**tags_by_table.get(row.table_fqn, {}), **(by_rule.get(row.rule_id, {}) if row.rule_id else {})}
+        out.append(replace(row, tags={**extra, **row.tags}) if extra else row)
+    return out
 
 
 def parse_check_rows(raw_rows: list[dict[str, str | None]]) -> list[CheckResultRow]:
@@ -246,6 +321,7 @@ def parse_check_rows(raw_rows: list[dict[str, str | None]]) -> list[CheckResultR
                 warning_count=warning_count,
                 criticality=row.get("criticality"),
                 pass_threshold=safe_int(row.get("pass_threshold")),
+                tags=_parse_tags_json(row.get("tags_json")),
             )
         )
     return out
@@ -287,7 +363,24 @@ def row_matches_facets(row: CheckResultRow, facets: ResultFacets) -> bool:
         return False
     if facets.outcomes and ("failed" if row.failed > 0 else "passed") not in facets.outcomes:
         return False
+    if (facets.tags or facets.tags_any) and not _matches_tag_facet(row.tags, facets.tags, facets.tags_any):
+        return False
     return True
+
+
+def _matches_tag_facet(
+    tags: dict[str, str],
+    selected: tuple[tuple[str, str | None], ...],
+    any_value: tuple[str, ...] = (),
+) -> bool:
+    """True when, for every selected tag id, the check has any value (*any_value*) or a selected value."""
+    wanted: dict[str, set[str | None]] = defaultdict(set)
+    for key, value in selected:
+        wanted[key].add(value)
+    present = set(any_value)
+    return all(
+        (key in present and key in tags) or tags.get(key) in wanted.get(key, ()) for key in present | set(wanted)
+    )
 
 
 @dataclass
@@ -627,6 +720,59 @@ def _trend_grouped(
     ]
 
 
+def _tag_keys(rows: list[CheckResultRow]) -> list[str]:
+    """Distinct tag keys carried by *rows*, sorted."""
+    return sorted({key for row in rows for key in row.tags})
+
+
+def _tag_options(rows: list[CheckResultRow]) -> dict[str, list[str | None]]:
+    """All tag values in the run history, including missing values per key."""
+    return {
+        key: sorted({row.tags[key] for row in rows if key in row.tags})
+        + ([None] if any(key not in row.tags for row in rows) else [])
+        for key in _tag_keys(rows)
+    }
+
+
+def _tag_value_of(key: str) -> Callable[[CheckResultRow], str | None]:
+    """Grouping key for one tag key: the check's value, or None (untagged) when it lacks the key."""
+    return lambda row: row.tags.get(key)
+
+
+def _by_tag_rows(
+    rows: list[CheckResultRow],
+    keys: list[str],
+    resolve_threshold: ThresholdResolver | None = None,
+) -> list[GroupRowOut]:
+    """By-tag breakdown: for EACH tag key in scope, one group per value.
+
+    Every group carries its *tag_key*; *label* is the value, and the None
+    group holds the checks without that key. A check has one value per key,
+    so the groups of one key partition the scope like the dimension groups
+    do. A check tagged under two keys appears once under each key.
+    """
+    out: list[GroupRowOut] = []
+    for key in keys:
+        for group in _group_rows(rows, _tag_value_of(key), resolve_threshold=resolve_threshold):
+            group.tag_key = key
+            out.append(group)
+    return out
+
+
+def _trend_by_tag(
+    rows: list[CheckResultRow],
+    keys: list[str],
+    resolve_threshold: ThresholdResolver | None = None,
+) -> list[TrendPointOut]:
+    """Per-instant series per tag value, for EACH tag key (see :func:`_by_tag_rows`)."""
+    out: list[TrendPointOut] = []
+    for key in keys:
+        for point in _trend_grouped(rows, _tag_value_of(key), resolve_threshold=resolve_threshold):
+            point.tag_key = key
+            out.append(point)
+    return out
+
+
 def _trend_counts(rows: list[CheckResultRow]) -> list[TrendCountPointOut]:
     groups: dict[str | None, _GroupAcc] = defaultdict(_GroupAcc)
     for row in rows:
@@ -822,7 +968,7 @@ def compute_entity_results(
     matched = [row for row in capped_rows if row_matches_facets(row, facets)]
     failure_rows = capped_rows if failures_ignore_facets else matched
 
-    result = EntityResultsOut()
+    result = EntityResultsOut(tag_options=_tag_options(capped_rows))
     records_by_run = failed_records_by_run or {}
     if axes in ("all", "breakdown"):
         # Multi-table scopes (product/global/rule): the breakdown TABLES
@@ -860,6 +1006,7 @@ def compute_entity_results(
         result.by_severity = _group_rows(breakdown_rows, lambda row: row.severity, resolve_threshold=resolve_threshold)
         result.by_rule = _by_rule_rows(breakdown_rows, resolve_threshold)
         result.by_column = _by_column_rows(breakdown_rows, resolve_threshold)
+        result.by_tag = _by_tag_rows(breakdown_rows, list(result.tag_options), resolve_threshold)
         table_groups = _group_rows(table_box_rows, lambda row: row.table_fqn, resolve_threshold=resolve_threshold)
         if table_axis == "by_table":
             if binding_ids_by_table:
@@ -899,6 +1046,7 @@ def compute_entity_results(
         result.trend_by_severity = _trend_grouped(
             expansion, lambda row: row.severity, resolve_threshold=resolve_threshold
         )
+        result.trend_by_tag = _trend_by_tag(expansion, list(result.tag_options), resolve_threshold)
         if table_axis == "by_table":
             # Per-table markers plotted at their RUN-BATCH instant so every
             # member of one Table-Space run shares the Average point's x —

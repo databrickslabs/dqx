@@ -61,8 +61,10 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { useLabelDefinitions } from "@/lib/api-custom";
 import {
   DQ_SCORE_BUCKETS,
+  dqScoreTriggerText,
   DQ_SCORE_FILTER_ALL,
   FILTER_TRIGGER_CLASS,
+  FILTER_TRIGGER_PICKED_CLASS,
   matchesDqScoreBucket,
 } from "@/components/data-table/filter-bar";
 import { SearchableSelect } from "@/components/data-table/SearchableSelect";
@@ -76,7 +78,16 @@ import {
   type TableGroupBy,
 } from "@/components/monitored-tables/table-grouping";
 import { filterLayoutMenuConfig } from "@/components/data-table/filter-layout";
-import { MAX_VIEW_STRING_LENGTH, oneOf, stringValue } from "@/components/data-table/saved-views";
+import { MAX_VIEW_STRING_LENGTH, oneOf, stringArrayValue, stringValue } from "@/components/data-table/saved-views";
+import { TagFilter } from "@/components/tags/TagFilter";
+import { monitoredTableTags, useMonitoredTableUcTags } from "@/components/tags/table-tags";
+import {
+  selectionFromTokens,
+  selectionToTokens,
+  tagOptionsOf,
+  tagsMatchSelection,
+  tokensOfOptions,
+} from "@/components/tags/tag-filter";
 import { useSavedViews } from "@/components/data-table/useSavedViews";
 import { usePageResetOn } from "@/components/data-table/usePageResetOn";
 import {
@@ -200,6 +211,15 @@ function MonitoredTablesPage() {
     [tables],
   );
 
+  // Each table's tags for the tag filter: its Unity Catalog catalog, schema
+  // and table tags plus the tags of its applied rules (custom_tags).
+  const ucTags = useMonitoredTableUcTags();
+  const tagsByBinding = useMemo(
+    () => new Map(tables.map((r) => [r.table.binding_id, monitoredTableTags(ucTags?.[r.table.table_fqn], r.custom_tags)])),
+    [tables, ucTags],
+  );
+  const tagOptions = useMemo(() => tagOptionsOf(tagsByBinding.values()), [tagsByBinding]);
+
   // Saved views own the column layout, filter layout and every filter value
   // (search and Group by included). Saved values whose option has gone are
   // dropped once the tables load; until then they are kept.
@@ -210,8 +230,9 @@ function MonitoredTablesPage() {
         catalogs: loaded ? catalogOptions : null,
         schemas: loaded ? allSchemaOptions : null,
         owners: loaded ? ownerOptions : null,
+        tags: loaded && ucTags !== null ? tokensOfOptions(tagOptions) : null,
       }),
-    [loaded, catalogOptions, allSchemaOptions, ownerOptions],
+    [loaded, catalogOptions, allSchemaOptions, ownerOptions, ucTags, tagOptions],
   );
   const views = useSavedViews(SavedViewPage.monitored_tables, viewDefs);
   const { values, setValue } = views;
@@ -221,6 +242,7 @@ function MonitoredTablesPage() {
   const scoreFilter = stringValue(values.dqScore, DQ_SCORE_FILTER_ALL);
   const nameSearch = stringValue(values.search, "");
   const groupBy: TableGroupBy = oneOf(values.groupBy, TABLE_GROUP_BY_VALUES, "none");
+  const tagFilter = useMemo(() => selectionFromTokens(stringArrayValue(values.tags)), [values.tags]);
   // Any filter edit (or switching view) starts the list from page 1.
   const [page, setPage] = usePageResetOn(values);
 
@@ -237,10 +259,11 @@ function MonitoredTablesPage() {
         (fqnSearch || schemaFilter === ALL || schema === schemaFilter) &&
         matchesTableFqnSearch(r.table.table_fqn, nameSearch) &&
         (ownerFilter === ALL || monitoredTableOwner(r) === ownerFilter) &&
-        matchesDqScoreBucket(r.score, scoreFilter)
+        matchesDqScoreBucket(r.score, scoreFilter) &&
+        tagsMatchSelection(tagsByBinding.get(r.table.binding_id) ?? new Map(), tagFilter)
       );
     });
-  }, [tables, catalogFilter, schemaFilter, nameSearch, ownerFilter, scoreFilter]);
+  }, [tables, catalogFilter, schemaFilter, nameSearch, ownerFilter, scoreFilter, tagsByBinding, tagFilter]);
 
   const schemaOptions = useMemo(() => {
     const rows = catalogFilter === ALL ? tables : tables.filter((r) => splitFqn(r.table.table_fqn).catalog === catalogFilter);
@@ -304,6 +327,7 @@ function MonitoredTablesPage() {
     catalogFilter !== ALL ||
     schemaFilter !== ALL ||
     scoreFilter !== DQ_SCORE_FILTER_ALL ||
+    tagFilter.size > 0 ||
     nameSearch.trim() !== "";
 
   const applyFilter = useCallback(
@@ -644,6 +668,7 @@ function MonitoredTablesPage() {
         searchPlaceholder={t("common.search")}
         emptyText={t("common.noMatches")}
         ariaLabel={t("monitoredTables.colCatalog")}
+        label={t("monitoredTables.colCatalog")}
       />
     ),
     schema: (
@@ -656,6 +681,7 @@ function MonitoredTablesPage() {
         searchPlaceholder={t("common.search")}
         emptyText={t("common.noMatches")}
         ariaLabel={t("monitoredTables.colSchema")}
+        label={t("monitoredTables.colSchema")}
       />
     ),
     owner: (
@@ -668,12 +694,13 @@ function MonitoredTablesPage() {
         searchPlaceholder={t("common.search")}
         emptyText={t("common.noMatches")}
         ariaLabel={t("monitoredTables.colOwner")}
+        label={t("monitoredTables.colOwner")}
       />
     ),
     dqScore: (
       <Select value={scoreFilter} onValueChange={applyFilter("dqScore")}>
-        <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("monitoredTables.colDqScore")}>
-          <SelectValue />
+        <SelectTrigger className={cn(FILTER_TRIGGER_CLASS, scoreFilter !== DQ_SCORE_FILTER_ALL && FILTER_TRIGGER_PICKED_CLASS)} aria-label={t("monitoredTables.colDqScore")}>
+          <SelectValue>{dqScoreTriggerText(t, scoreFilter, t("monitoredTables.colDqScore"))}</SelectValue>
         </SelectTrigger>
         <SelectContent>
           {DQ_SCORE_BUCKETS.map((b) => (
@@ -683,6 +710,13 @@ function MonitoredTablesPage() {
           ))}
         </SelectContent>
       </Select>
+    ),
+    tags: (
+      <TagFilter
+        options={tagOptions}
+        selected={tagFilter}
+        onChange={(next) => setValue("tags", selectionToTokens(next))}
+      />
     ),
   };
 

@@ -7,7 +7,7 @@ import type { TableGroupBy } from "./table-grouping";
 /** "No filter" value of the catalog, schema and owner pills. */
 export const TABLES_FILTER_ALL = "all";
 
-export type TablesFilterKey = "groupBy" | "search" | "catalog" | "schema" | "owner" | "dqScore";
+export type TablesFilterKey = "groupBy" | "search" | "catalog" | "schema" | "owner" | "dqScore" | "tags";
 
 // Group by is pinned: always first, divided from the other pills, not reorderable.
 export const TABLES_FILTER_ORDER: readonly TablesFilterKey[] = [
@@ -17,6 +17,7 @@ export const TABLES_FILTER_ORDER: readonly TablesFilterKey[] = [
   "schema",
   "owner",
   "dqScore",
+  "tags",
 ];
 
 export const TABLES_FILTERS: Record<TablesFilterKey, FilterLayoutDef> = {
@@ -26,6 +27,7 @@ export const TABLES_FILTERS: Record<TablesFilterKey, FilterLayoutDef> = {
   schema: { labelKey: "monitoredTables.colSchema", defaultVisible: true },
   owner: { labelKey: "monitoredTables.colOwner", defaultVisible: true },
   dqScore: { labelKey: "monitoredTables.colDqScore", defaultVisible: true },
+  tags: { labelKey: "monitoredTables.filterTags", defaultVisible: true },
 };
 
 export const TABLE_GROUP_BY_VALUES: readonly TableGroupBy[] = ["none", "dqScore", "catalog", "schema"];
@@ -37,6 +39,7 @@ export const TABLES_EMPTY_VALUES: Record<TablesFilterKey, ViewValue> = {
   schema: TABLES_FILTER_ALL,
   owner: TABLES_FILTER_ALL,
   dqScore: DQ_SCORE_FILTER_ALL,
+  tags: [],
 };
 
 /** Browser-only layouts from before saved views; removed on first load. */
@@ -48,6 +51,8 @@ export interface TablesFilterOptions {
   /** Every schema across all catalogs, so changing the catalog never clears the schema. */
   schemas: readonly string[] | null;
   owners: readonly string[] | null;
+  /** Every storable tag filter token (see tag-filter.ts). */
+  tags: readonly string[] | null;
 }
 
 /** Saved-view definitions of the Tables overview. Memoise on *options*. */
@@ -66,6 +71,7 @@ export function buildMonitoredTablesViewDefs<C extends string>(
         schema: options.schemas,
         owner: options.owners,
         dqScore: DQ_SCORE_BUCKETS.map((b) => b.value),
+        tags: options.tags,
       },
       TABLES_EMPTY_VALUES,
     ),

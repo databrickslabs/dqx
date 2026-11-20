@@ -1604,6 +1604,10 @@ export interface EffectivePermissionsOut {
   is_owner?: boolean;
 }
 
+export type EntityResultsOutTagOptionsItem = string | null;
+
+export type EntityResultsOutTagOptions = {[key: string]: EntityResultsOutTagOptionsItem[]};
+
 /**
  * Breakdowns + trends for one results entity (table / product / rule / global).
 
@@ -1617,10 +1621,13 @@ export interface EntityResultsOut {
   by_column?: GroupRowOut[];
   by_table?: GroupRowOut[];
   by_rule?: GroupRowOut[];
+  by_tag?: GroupRowOut[];
+  tag_options?: EntityResultsOutTagOptions;
   trend?: TrendPointOut[];
   trend_by_dimension?: TrendPointOut[];
   trend_by_severity?: TrendPointOut[];
   trend_by_table?: TrendPointOut[];
+  trend_by_tag?: TrendPointOut[];
   trend_counts?: TrendCountPointOut[];
   trend_failures?: TrendFailurePointOut[];
   tables?: GroupRowOut[];
@@ -2032,6 +2039,8 @@ export type GroupRowOutBindingId = string | null;
 
 export type GroupRowOutRuleId = string | null;
 
+export type GroupRowOutTagKey = string | null;
+
 export type GroupRowOutPassRate = number | null;
 
 /**
@@ -2075,7 +2084,9 @@ monitored or on every other axis). *rule_id* is filled on the
 by_rule axis only (additive — the frozen registry rule id the group
 is keyed on, so the UI can facet-filter by rule IDENTITY across
 renames; None for legacy/untagged name-keyed groups and on every
-other axis).
+other axis). *tag_key* is filled on the by_tag axis only — the tag key
+the group belongs to; *label* is then the tag value (None = the checks
+without that key).
 
 *pass_threshold* is the frozen per-run pass threshold (%) in effect for
 the group — the value stamped on the NEWEST run pooled into the group
@@ -2087,6 +2098,7 @@ export interface GroupRowOut {
   label?: GroupRowOutLabel;
   binding_id?: GroupRowOutBindingId;
   rule_id?: GroupRowOutRuleId;
+  tag_key?: GroupRowOutTagKey;
   pass_rate?: GroupRowOutPassRate;
   /** Failed row-level tests */
   failed_tests?: GroupRowOutFailedTests;
@@ -2737,6 +2749,19 @@ export interface MonitoredTableSummaryOut {
   severities?: string[];
   /** Distinct free-text custom tags (key=value) across applied registry rules, excluding reserved metadata keys. Used by the Table Spaces Add-tables picker. */
   custom_tags?: TagPairOut[];
+}
+
+export type MonitoredTableUcTagsOutTagsByTable = {[key: string]: {[key: string]: string}};
+
+/**
+ * Unity Catalog tags of the monitored tables, for the Studio tag filters.
+
+*tags_by_table* maps a table FQN to its tags: each tag id (``catalog:<key>``,
+``schema:<key>`` or ``table:<key>``) maps to the tag value, ``""`` for a
+key-only tag. Column tags are not included.
+ */
+export interface MonitoredTableUcTagsOut {
+  tags_by_table?: MonitoredTableUcTagsOutTagsByTable;
 }
 
 export type MonitoredTableVersionChecksOutChecksItem = { [key: string]: unknown };
@@ -5400,6 +5425,8 @@ export type TrendPointOutRunDate = string | null;
 
 export type TrendPointOutSeries = string | null;
 
+export type TrendPointOutTagKey = string | null;
+
 export type TrendPointOutPassRate = number | null;
 
 export type TrendPointOutRuleCount = number | null;
@@ -5439,10 +5466,14 @@ collapses several runs onto one instant (multi-table pooling, or the
 as-of carry-forward), it is draft if ANY contributing run was a draft —
 the conservative choice so a mixed instant is never silently shown as
 fully published.
+
+*tag_key* is set on the by-tag trend only: the tag key of the point's
+series (*series* is the tag value; None = checks without that key).
  */
 export interface TrendPointOut {
   run_date?: TrendPointOutRunDate;
   series?: TrendPointOutSeries;
+  tag_key?: TrendPointOutTagKey;
   pass_rate?: TrendPointOutPassRate;
   rule_count?: TrendPointOutRuleCount;
   /** Row-level tests (evaluated rows x row checks) */
@@ -6112,6 +6143,7 @@ table?: string[] | null;
 catalog?: string[] | null;
 schema?: string[] | null;
 outcome?: string[] | null;
+tag?: string[] | null;
 collection?: string[] | null;
 owner?: string[] | null;
 score_bucket?: '75-100' | '50-75' | '25-50' | '0-25' | 'none' | null;
@@ -6127,6 +6159,7 @@ severity?: string[] | null;
 rule?: string[] | null;
 column?: string[] | null;
 table?: string[] | null;
+tag?: string[] | null;
 run_id?: string | null;
 axes?: string;
 include_drafts?: boolean;
@@ -6143,6 +6176,7 @@ severity?: string[] | null;
 rule?: string[] | null;
 column?: string[] | null;
 table?: string[] | null;
+tag?: string[] | null;
 run_id?: string | null;
 axes?: string;
 include_drafts?: boolean;
@@ -6154,6 +6188,7 @@ dimension?: string[] | null;
 severity?: string[] | null;
 rule?: string[] | null;
 column?: string[] | null;
+tag?: string[] | null;
 run_id?: string | null;
 /**
  * @minimum 1
@@ -6176,6 +6211,7 @@ dimension?: string[] | null;
 severity?: string[] | null;
 rule?: string[] | null;
 column?: string[] | null;
+tag?: string[] | null;
 run_id?: string | null;
 axes?: string;
 include_drafts?: boolean;
@@ -17892,6 +17928,157 @@ export const useRegisterMonitoredTable = <TError = AxiosError<HTTPValidationErro
     }
     
 /**
+ * Unity Catalog catalog, schema and table tags of every monitored table.
+
+Feeds the tag filters of the Tables and Collections pages. Read as the
+caller, so tags on objects they cannot see are absent. Best-effort: a read
+failure returns no tags rather than an error.
+ * @summary List Monitored Table Uc Tags
+ */
+export const listMonitoredTableUcTags = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<MonitoredTableUcTagsOut>> => {
+    
+    
+    return axios.default.get(
+      `/api/v1/monitored-tables/uc-tags`,options
+    );
+  }
+
+
+
+
+export const getListMonitoredTableUcTagsQueryKey = () => {
+    return [
+    `/api/v1/monitored-tables/uc-tags`
+    ] as const;
+    }
+
+    
+export const getListMonitoredTableUcTagsQueryOptions = <TData = Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListMonitoredTableUcTagsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMonitoredTableUcTags>>> = ({ signal }) => listMonitoredTableUcTags({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListMonitoredTableUcTagsQueryResult = NonNullable<Awaited<ReturnType<typeof listMonitoredTableUcTags>>>
+export type ListMonitoredTableUcTagsQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListMonitoredTableUcTags<TData = Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listMonitoredTableUcTags>>,
+          TError,
+          Awaited<ReturnType<typeof listMonitoredTableUcTags>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMonitoredTableUcTags<TData = Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listMonitoredTableUcTags>>,
+          TError,
+          Awaited<ReturnType<typeof listMonitoredTableUcTags>>
+        > , 'initialData'
+      >, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMonitoredTableUcTags<TData = Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Monitored Table Uc Tags
+ */
+
+export function useListMonitoredTableUcTags<TData = Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListMonitoredTableUcTagsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+export const getListMonitoredTableUcTagsSuspenseQueryOptions = <TData = Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError = AxiosError<HTTPValidationError>>( options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListMonitoredTableUcTagsQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMonitoredTableUcTags>>> = ({ signal }) => listMonitoredTableUcTags({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListMonitoredTableUcTagsSuspenseQueryResult = NonNullable<Awaited<ReturnType<typeof listMonitoredTableUcTags>>>
+export type ListMonitoredTableUcTagsSuspenseQueryError = AxiosError<HTTPValidationError>
+
+
+export function useListMonitoredTableUcTagsSuspense<TData = Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError = AxiosError<HTTPValidationError>>(
+  options: { query:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMonitoredTableUcTagsSuspense<TData = Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMonitoredTableUcTagsSuspense<TData = Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List Monitored Table Uc Tags
+ */
+
+export function useListMonitoredTableUcTagsSuspense<TData = Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError = AxiosError<HTTPValidationError>>(
+  options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof listMonitoredTableUcTags>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient 
+ ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListMonitoredTableUcTagsSuspenseQueryOptions(options)
+
+  const query = useSuspenseQuery(queryOptions, queryClient) as  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+
+/**
  * List rule applications, enriched with each monitored table's FQN and the rule's tags.
 
 Scoped reads power the lazy row expansions on the overviews: *binding_id*
@@ -24794,6 +24981,11 @@ the By-table cross-filter: a repeatable list of member FQNs, applied
 app-side like the other four facets (the rows it filters are already
 catalog-gated, so an inaccessible value simply matches nothing).
 *outcome* keeps only ``passed`` or ``failed`` checks.
+
+*tag* filters by tag id (see :func:`_parse_tag_facet`). Besides the rule
+tags frozen with each run, every check carries its table's CURRENT Unity
+Catalog catalog, schema and table tags and the column tags its rule
+currently maps, so those filter and group history by today's tags.
 
 *collection* (data-product ids), *owner* (owner_display_name -> owner ->
 created_by) and *score_bucket* (cached DQ score) narrow the TABLE

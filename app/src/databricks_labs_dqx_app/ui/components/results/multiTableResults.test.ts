@@ -164,6 +164,12 @@ describe("topFilterOptionLists / baseFilterOptionValues (Global Results bubbles)
     by_rule: [{ label: "Not null", rule_id: "r1" }, { label: "Legacy" }],
     by_dimension: [{ label: "Validity" }, { label: "Completeness" }],
     by_severity: [{ label: "High" }],
+    by_tag: [
+      { tag_key: "rule:domain", label: "finance" },
+      { tag_key: "rule:domain", label: null },
+      { tag_key: "table:pii", label: "true" },
+    ],
+    tag_options: { "rule:domain": ["finance", "historical", null], "table:pii": ["true"] },
   } as unknown as EntityResultsOut;
 
   it("narrows table options to the selected collections' members", () => {
@@ -189,6 +195,24 @@ describe("topFilterOptionLists / baseFilterOptionValues (Global Results bubbles)
     expect(lists.severity.map((o) => o.value)).toEqual(["High"]);
   });
 
+  it("offers historical and missing tag values, and sanitises against their tokens", () => {
+    expect(topFilterOptionLists(base, { catalog: [], schema: [] }).tag).toEqual([
+      { id: "rule:domain", value: "finance" },
+      { id: "rule:domain", value: "historical" },
+      { id: "rule:domain", value: null },
+      { id: "table:pii", value: "true" },
+    ]);
+    expect(baseFilterOptionValues(undefined).tag).toBeNull();
+    expect([...(baseFilterOptionValues(base).tag ?? [])].sort()).toEqual([
+      "!rule:domain",
+      "rule:domain",
+      "rule:domain=finance",
+      "rule:domain=historical",
+      "table:pii",
+      "table:pii=true",
+    ]);
+  });
+
   it("is all-null while the base rows load, else the full option universe", () => {
     expect(baseFilterOptionValues(undefined).table).toBeNull();
     const values = baseFilterOptionValues(base);
@@ -204,6 +228,11 @@ describe("breakdownParams carries the Global Results universe filters", () => {
     expect(params.score_bucket).toBe("none");
     expect("collection" in params).toBe(false);
     expect("score_bucket" in breakdownParams(EMPTY_FILTERS)).toBe(false);
+  });
+
+  it("adds the tag facet only when set", () => {
+    expect(breakdownParams({ ...EMPTY_FILTERS, tag: ["domain=finance"] }).tag).toEqual(["domain=finance"]);
+    expect("tag" in breakdownParams(EMPTY_FILTERS)).toBe(false);
   });
 });
 

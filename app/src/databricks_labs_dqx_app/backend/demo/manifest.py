@@ -110,6 +110,9 @@ class RuleSpec:
             describes a passing (``pass``) or failing (``fail``) row. The demo's
             SQL and low-code predicates all describe a VALID row, so they are
             ``pass``. ``dqx_native`` rules leave this ``None``.
+        tags: optional free-text rule tags (key -> value) stamped into the rule's
+            ``user_metadata`` so the demo has tagged rules and results. Keys must
+            not be reserved ``user_metadata`` keys (name, severity, ...).
     """
 
     key: str
@@ -124,6 +127,7 @@ class RuleSpec:
     parameters: tuple[ParamSpec, ...] = ()
     slot_tags: dict[str, tuple[str, ...]] = field(default_factory=dict)
     polarity: str | None = None
+    tags: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -207,6 +211,26 @@ class ColumnTagSpec:
     table: str
     column: str
     tag: str
+
+
+@dataclass(frozen=True)
+class ObjectTagSpec:
+    """A plain (non-governed) Unity Catalog tag applied to a demo object.
+
+    Args:
+        level: what the tag is on: the demo catalog, the demo schema, a demo
+            table, or a column of one.
+        key: the tag key.
+        value: the tag value.
+        table: the tagged table (table and column levels only).
+        column: the tagged column (column level only).
+    """
+
+    level: Literal["catalog", "schema", "table", "column"]
+    key: str
+    value: str
+    table: str = ""
+    column: str = ""
 
 
 # --------------------------------------------------------------------------- #
@@ -306,6 +330,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("number", "numeric"),),
         author_kind="human",
         polarity="pass",
+        tags={"domain": "finance"},
     ),
     RuleSpec(
         key="pct_range",
@@ -325,6 +350,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("pct", "numeric"),),
         author_kind="ai_assisted",
         polarity="pass",
+        tags={"domain": "finance"},
     ),
     RuleSpec(
         key="country_set",
@@ -344,6 +370,7 @@ RULES: tuple[RuleSpec, ...] = (
         ),
         author_kind="ai_generated",
         slot_tags={"country": ("class.location",)},
+        tags={"domain": "customer"},
     ),
     RuleSpec(
         key="tier_set",
@@ -356,6 +383,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("tier", "text", arg_key="column"),),
         parameters=(ParamSpec("allowed", "list", ["'Free'", "'Pro'", "'Enterprise'"]),),
         author_kind="ai_generated",
+        tags={"domain": "customer"},
     ),
     RuleSpec(
         key="status_set",
@@ -381,6 +409,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("status", "text"),),
         author_kind="ai_assisted",
         polarity="pass",
+        tags={"domain": "fulfillment"},
     ),
     RuleSpec(
         key="method_set",
@@ -393,6 +422,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("method", "text", arg_key="column"),),
         parameters=(ParamSpec("allowed", "list", ["'card'", "'paypal'", "'transfer'"]),),
         author_kind="ai_generated",
+        tags={"domain": "finance"},
     ),
     RuleSpec(
         key="category_set",
@@ -418,6 +448,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("category", "text"),),
         author_kind="ai_assisted",
         polarity="pass",
+        tags={"domain": "fulfillment"},
     ),
     RuleSpec(
         key="not_future",
@@ -469,6 +500,7 @@ RULES: tuple[RuleSpec, ...] = (
         parameters=(ParamSpec("regex", "regex", "^[0-9]{4}$"),),
         author_kind="ai_assisted",
         slot_tags={"code": ("class.credit_card",)},
+        tags={"domain": "finance", "pii": "true"},
     ),
     RuleSpec(
         key="min_len",
@@ -481,6 +513,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("text", "text"),),
         author_kind="human",
         polarity="pass",
+        tags={"domain": "fulfillment"},
     ),
     RuleSpec(
         key="end_after_start",
@@ -493,6 +526,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("start_ts", "temporal"), SlotSpec("end_ts", "temporal")),
         author_kind="ai_generated",
         polarity="pass",
+        tags={"domain": "fulfillment"},
     ),
     RuleSpec(
         key="card_when_card",
@@ -505,6 +539,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("method", "text"), SlotSpec("card_last4", "text")),
         author_kind="ai_generated",
         polarity="pass",
+        tags={"domain": "finance", "pii": "true"},
     ),
     RuleSpec(
         key="amount_and_discount",
@@ -519,6 +554,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("amount", "numeric"), SlotSpec("discount_pct", "numeric")),
         author_kind="ai_assisted",
         polarity="pass",
+        tags={"domain": "finance"},
     ),
     # ----------------------------------------------------------------------- #
     # Governed-tag SHOWCASE rules — carry a class.* slot tag but are NOT
@@ -541,6 +577,7 @@ RULES: tuple[RuleSpec, ...] = (
         parameters=(ParamSpec("regex", "regex", "^[A-Z]{2}$"),),
         author_kind="ai_generated",
         slot_tags={"country": ("class.location",)},
+        tags={"domain": "customer"},
     ),
     RuleSpec(
         key="card_not_null",
@@ -553,6 +590,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("code", "any", arg_key="column"),),
         author_kind="ai_assisted",
         slot_tags={"code": ("class.credit_card",)},
+        tags={"domain": "finance", "pii": "true"},
     ),
     # ----------------------------------------------------------------------- #
     # Submitted-but-not-approved SHOWCASE rule — seeded via create -> submit
@@ -572,6 +610,7 @@ RULES: tuple[RuleSpec, ...] = (
         slots=(SlotSpec("ssn", "text", arg_key="column"),),
         parameters=(ParamSpec("regex", "regex", r"^\d{3}-\d{2}-\d{4}$"),),
         author_kind="human",
+        tags={"domain": "customer", "pii": "true"},
     ),
 )
 
@@ -704,6 +743,27 @@ SCHEDULES: tuple[ScheduleSpec, ...] = (
 COLUMN_TAGS: tuple[ColumnTagSpec, ...] = (
     ColumnTagSpec(table="customers", column="country_code", tag="class.location"),
     ColumnTagSpec(table="payments", column="card_last4", tag="class.credit_card"),
+)
+
+# --------------------------------------------------------------------------- #
+# Plain Unity Catalog tags on the demo catalog, schema, tables and columns, so
+# the Tables, Collections and Results tag filters have every level to show.
+# Every demo table gets a `layer` value, and the values split the tables into
+# groups. The column tags sit next to the governed column tags above. Keys and
+# values are ones common tag policies allow (a workspace may restrict a key to a
+# value list); a tag a workspace rejects is skipped and logged by the seeder.
+# --------------------------------------------------------------------------- #
+OBJECT_TAGS: tuple[ObjectTagSpec, ...] = (
+    ObjectTagSpec(level="catalog", key="environment", value="dev"),
+    ObjectTagSpec(level="schema", key="owner_team", value="analytics"),
+    ObjectTagSpec(level="table", table="customers", key="layer", value="gold"),
+    ObjectTagSpec(level="table", table="orders", key="layer", value="gold"),
+    ObjectTagSpec(level="table", table="payments", key="layer", value="silver"),
+    ObjectTagSpec(level="table", table="shipments", key="layer", value="silver"),
+    ObjectTagSpec(level="table", table="products", key="layer", value="bronze"),
+    ObjectTagSpec(level="column", table="customers", column="first_name", key="personal_data", value="name"),
+    ObjectTagSpec(level="column", table="customers", column="last_name", key="personal_data", value="name"),
+    ObjectTagSpec(level="column", table="customers", column="phone", key="personal_data", value="phone"),
 )
 
 

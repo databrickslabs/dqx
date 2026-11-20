@@ -26,6 +26,7 @@ Permission model (unchanged from Phase 1):
 """
 
 import logging
+from collections import defaultdict
 from collections.abc import Callable, Iterable
 from typing import Annotated, Literal
 
@@ -42,6 +43,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_data_product_service,
     get_entitlement_service,
     get_monitored_table_service,
+    get_monitored_table_uc_tags,
     get_obo_ws,
     get_preview_sql_executor,
     get_registry_service,
@@ -56,6 +58,7 @@ from databricks_labs_dqx_app.backend.metrics_utils import catalog_of, safe_float
 from databricks_labs_dqx_app.backend.registry_models import (
     AppliedRule,
     get_applied_column_pass_thresholds,
+    get_slot_tags,
     get_rule_pass_threshold,
     resolve_pass_threshold,
 )
@@ -83,6 +86,8 @@ from databricks_labs_dqx_app.backend.services.dq_results_service import (
     breach_criticality_by_run,
     compute_entity_results,
     parse_check_rows,
+    rule_column_tags,
+    with_current_tags,
 )
 from databricks_labs_dqx_app.backend.services.entitlement_service import EntitlementService
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
@@ -110,6 +115,7 @@ from databricks_labs_dqx_app.backend.sql_utils import (
     validate_fqn,
     validate_run_id,
 )
+from databricks_labs_dqx_app.backend.tag_ids import COLUMN_TAG_SOURCE, RULE_TAG_SOURCE, split_tag_id
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -219,7 +225,7 @@ def _fetch_check_rows(
         # As-of-run attribution baked into the view rows (frozen
         # checks_json payload — see score_view_service).
         f"severity, dimension, criticality, registry_rule_id, rule_name, pass_threshold, "
-        f"to_json(columns) AS columns_json "
+        f"to_json(columns) AS columns_json, to_json(tags) AS tags_json "
         f"FROM {view} "  # noqa: S608
         f"{where}"
         f"ORDER BY run_time"
@@ -264,7 +270,7 @@ def _fetch_asof_check_rows(
         f"check_name, error_count, warning_count, input_row_count, evaluated_row_count, "
         f"run_mode, check_granularity, "
         f"severity, dimension, criticality, registry_rule_id, rule_name, pass_threshold, "
-        f"to_json(columns) AS columns_json "
+        f"to_json(columns) AS columns_json, to_json(tags) AS tags_json "
         f"FROM {view} "  # noqa: S608
         f"WHERE {' AND '.join(conds)} "
         f"ORDER BY as_of_time"
@@ -396,6 +402,29 @@ def _facet_pushdown_predicate(facets: ResultFacets) -> str:
                 f"cast(from_json(variant_get(f, '$.user_metadata.mapped_columns', 'string'), "
                 f"'array<string>') as array<string>)), array({sql_string_in_list(facets.columns)})))"
             )
+        # Rule tags live on the failing rows' checks as plain user_metadata keys
+        # (the route drops Unity Catalog picks, see _rule_tag_param).
+        selected: dict[str, set[str | None]] = defaultdict(set)
+        any_value: set[str] = set()
+        for tag, value in facets.tags:
+            if (parsed := split_tag_id(tag)) is not None and parsed[0] == RULE_TAG_SOURCE:
+                selected[parsed[1]].add(value)
+        for tag in facets.tags_any:
+            if (parsed := split_tag_id(tag)) is not None and parsed[0] == RULE_TAG_SOURCE:
+                any_value.add(parsed[1])
+        for key in sorted(set(selected) | any_value):
+            metadata = "from_json(to_json(variant_get(f, '$.user_metadata')), 'map<string,string>')"
+            actual = f"element_at({metadata}, '{escape_sql_string_strict(key)}')"
+            values = selected.get(key, set())
+            matches = []
+            if key in any_value:
+                matches.append(f"{actual} IS NOT NULL")
+            present = sorted(value for value in values if value is not None)
+            if present:
+                matches.append(f"{actual} IN ({sql_string_in_list(present)})")
+            if None in values:
+                matches.append(f"{actual} IS NULL")
+            parts.append(f"exists(cast({col} as array<variant>), f -> ({' OR '.join(matches)}))")
         return parts
 
     err = _exists("errors")
@@ -416,7 +445,9 @@ def _facets(
     catalog: list[str] | None = None,
     schema: list[str] | None = None,
     outcome: list[str] | None = None,
+    tag: list[str] | None = None,
 ) -> ResultFacets:
+    tags, tags_any = _parse_tag_facet(tag)
     return ResultFacets(
         dimensions=tuple(dimension or ()),
         severities=tuple(severity or ()),
@@ -426,6 +457,62 @@ def _facets(
         catalogs=tuple(catalog or ()),
         schemas=tuple(schema or ()),
         outcomes=tuple(value for value in (outcome or ()) if value in ("passed", "failed")),
+        tags=tags,
+        tags_any=tags_any,
+    )
+
+
+def _parse_tag_facet(tag: list[str] | None) -> tuple[tuple[tuple[str, str | None], ...], tuple[str, ...]]:
+    """Parse repeatable ``tag`` params into (tag id, value) pairs and any-value tag ids.
+
+    ``<id>=<value>`` selects that value (``<id>=`` a key-only tag), ``<id>``
+    any value of the tag, and ``!<id>`` checks without the tag (value None). A
+    tag id is ``<source>:<key>`` (see :mod:`...tag_ids`). The value starts after
+    the FIRST ``=``, so a value may contain ``=`` and a key may not. Entries
+    without a known source or key are ignored.
+    """
+    pairs: list[tuple[str, str | None]] = []
+    any_value: list[str] = []
+    for raw in tag or ():
+        missing = raw.startswith("!")
+        tag_key, sep, value = raw.removeprefix("!").partition("=")
+        if split_tag_id(tag_key) is None or (missing and sep):
+            continue
+        if missing:
+            pairs.append((tag_key, None))
+        elif sep:
+            pairs.append((tag_key, value))
+        else:
+            any_value.append(tag_key)
+    return tuple(pairs), tuple(any_value)
+
+
+def _check_tag_param(tag: list[str] | None, sources: frozenset[str]) -> list[str] | None:
+    """Keep only the picks of a single-table request's *tag* param whose source is in *sources*.
+
+    The caller has already scoped the request to a table inside the filtered
+    universe, so the Unity Catalog picks are met by the table itself and are
+    dropped rather than matching nothing.
+    """
+    if not tag:
+        return tag
+    return [
+        raw
+        for raw in tag
+        if (parsed := split_tag_id(raw.removeprefix("!").partition("=")[0])) is not None and parsed[0] in sources
+    ]
+
+
+# Tags a single table's checks carry: frozen rule tags, plus (table results)
+# the column tags their rules map. Failing rows can only be matched on rule tags.
+_TABLE_CHECK_TAG_SOURCES = frozenset({RULE_TAG_SOURCE, COLUMN_TAG_SOURCE})
+_FAILED_ROW_TAG_SOURCES = frozenset({RULE_TAG_SOURCE})
+
+
+def _has_column_tag_pick(tag: list[str] | None) -> bool:
+    return any(
+        (parsed := split_tag_id(raw.removeprefix("!").partition("=")[0])) is not None and parsed[0] == COLUMN_TAG_SOURCE
+        for raw in tag or ()
     )
 
 
@@ -556,6 +643,23 @@ def _registry_defaults(registry: RegistryService, rule_ids: set[str]) -> dict[st
         logger.warning("Failed to load registry rules for threshold resolution", exc_info=True)
         return {}
     return {rid: get_rule_pass_threshold(rule.user_metadata) for rid, rule in rules.items()}
+
+
+def _rule_column_tags(registry: RegistryService, rule_ids: set[str]) -> dict[str, dict[str, str]]:
+    """rule_id -> the column tags the rule currently maps (see rule_column_tags), best-effort.
+
+    A registry-lookup hiccup degrades to no column tags, never a 500 on the
+    results path. Rules without slot tags are omitted.
+    """
+    if not rule_ids:
+        return {}
+    try:
+        rules = registry.get_rules_many(rule_ids)
+    except Exception:
+        logger.warning("Failed to load registry rules for column tags", exc_info=True)
+        return {}
+    by_rule = {rid: rule_column_tags(get_slot_tags(rule.user_metadata)) for rid, rule in rules.items()}
+    return {rid: tags for rid, tags in by_rule.items() if tags}
 
 
 def _build_threshold_resolver(
@@ -935,6 +1039,7 @@ def get_global_results(
     registry: Annotated[RegistryService, Depends(get_registry_service)],
     data_products: Annotated[DataProductService, Depends(get_data_product_service)],
     wake: Annotated[SchedulerWakeMarker, Depends(get_scheduler_wake_marker)],
+    uc_tags: Annotated[dict[str, dict[str, str]], Depends(get_monitored_table_uc_tags)],
     dimension: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
@@ -943,6 +1048,7 @@ def get_global_results(
     catalog: Annotated[list[str] | None, Query()] = None,
     schema: Annotated[list[str] | None, Query()] = None,
     outcome: Annotated[list[str] | None, Query()] = None,
+    tag: Annotated[list[str] | None, Query(max_length=200)] = None,
     collection: Annotated[list[str] | None, Query(max_length=200)] = None,
     owner: Annotated[list[str] | None, Query(max_length=200)] = None,
     score_bucket: Annotated[ScoreBucket | None, Query()] = None,
@@ -960,6 +1066,11 @@ def get_global_results(
     app-side like the other four facets (the rows it filters are already
     catalog-gated, so an inaccessible value simply matches nothing).
     *outcome* keeps only ``passed`` or ``failed`` checks.
+
+    *tag* filters by tag id (see :func:`_parse_tag_facet`). Besides the rule
+    tags frozen with each run, every check carries its table's CURRENT Unity
+    Catalog catalog, schema and table tags and the column tags its rule
+    currently maps, so those filter and group history by today's tags.
 
     *collection* (data-product ids), *owner* (owner_display_name -> owner ->
     created_by) and *score_bucket* (cached DQ score) narrow the TABLE
@@ -988,6 +1099,8 @@ def get_global_results(
             for row in _fetch_check_rows(sql, app_conf, None, run_id, include_drafts, allowed_catalogs=user_catalogs)
             if visible(row.table_fqn)
         ]
+        column_tags = _rule_column_tags(registry, _rule_ids_of(rows))
+        rows = with_current_tags(rows, uc_tags, column_tags)
         accessible_fqns = sorted({row.table_fqn for row in rows})
         failed_records = _fetch_failed_records_by_run(sql, app_conf, accessible_fqns)
         run_set_by_run_id = _run_set_map(run_sets, [row.run_id for row in rows if row.run_id])
@@ -1003,6 +1116,9 @@ def get_global_results(
                 )
                 if visible(row.table_fqn)
             ]
+            missing = _rule_ids_of(asof_rows) - column_tags.keys()
+            column_tags = {**column_tags, **_rule_column_tags(registry, missing)}
+            asof_rows = with_current_tags(asof_rows, uc_tags, column_tags)
     except Exception as exc:
         logger.exception("Failed to compute global results")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -1027,7 +1143,7 @@ def get_global_results(
     )
     return compute_entity_results(
         rows,
-        _facets(dimension, severity, rule, column, table, catalog, schema, outcome),
+        _facets(dimension, severity, rule, column, table, catalog, schema, outcome, tag=tag),
         axes=axes,
         table_axis="by_table",
         failed_records_by_run=failed_records,
@@ -1064,6 +1180,7 @@ def get_rule_results(
     rule: Annotated[list[str] | None, Query()] = None,
     column: Annotated[list[str] | None, Query()] = None,
     table: Annotated[list[str] | None, Query()] = None,
+    tag: Annotated[list[str] | None, Query(max_length=200)] = None,
     run_id: str | None = Query(None),
     axes: str = Query("all"),
     include_drafts: bool = Query(False),
@@ -1140,7 +1257,7 @@ def get_rule_results(
     )
     return compute_entity_results(
         rows,
-        _facets(dimension, severity, rule, column, _scope_table_facet(table, table_fqns)),
+        _facets(dimension, severity, rule, column, _scope_table_facet(table, table_fqns), tag=tag),
         axes=axes,
         table_axis="by_table",
         binding_ids_by_table=binding_id_by_fqn,
@@ -1243,6 +1360,7 @@ def get_product_results(
     rule: Annotated[list[str] | None, Query()] = None,
     column: Annotated[list[str] | None, Query()] = None,
     table: Annotated[list[str] | None, Query()] = None,
+    tag: Annotated[list[str] | None, Query(max_length=200)] = None,
     run_id: str | None = Query(None),
     axes: str = Query("all"),
     include_drafts: bool = Query(False),
@@ -1298,7 +1416,7 @@ def get_product_results(
     )
     return compute_entity_results(
         rows,
-        _facets(dimension, severity, rule, column, _scope_table_facet(table, fqns)),
+        _facets(dimension, severity, rule, column, _scope_table_facet(table, fqns), tag=tag),
         axes=axes,
         table_axis="by_table",
         failed_records_by_run=failed_records,
@@ -1333,6 +1451,7 @@ def get_dq_results_failed_rows(
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
     column: Annotated[list[str] | None, Query()] = None,
+    tag: Annotated[list[str] | None, Query(max_length=200)] = None,
     run_id: str | None = Query(None),
     limit: int = Query(200, ge=1, le=100000),
     offset: int = Query(0, ge=0),
@@ -1385,7 +1504,7 @@ def get_dq_results_failed_rows(
     # Best-effort (never raises) and never affects this response.
     entitlements.record_entitlement(email, table_fqn)
 
-    facets = _facets(dimension, severity, rule, column)
+    facets = _facets(dimension, severity, rule, column, tag=_check_tag_param(tag, _FAILED_ROW_TAG_SOURCES))
     active = facets.any_active()
 
     # (4) SP-side fetch of the precomputed failing rows, with created_at
@@ -1558,6 +1677,7 @@ def get_table_results(
     severity: Annotated[list[str] | None, Query()] = None,
     rule: Annotated[list[str] | None, Query()] = None,
     column: Annotated[list[str] | None, Query()] = None,
+    tag: Annotated[list[str] | None, Query(max_length=200)] = None,
     run_id: str | None = Query(None),
     axes: str = Query("all"),
     include_drafts: bool = Query(False),
@@ -1604,9 +1724,11 @@ def get_table_results(
         if app_settings.get_pass_threshold_enabled()
         else None
     )
+    if _has_column_tag_pick(tag):
+        rows = with_current_tags(rows, {}, _rule_column_tags(registry, _rule_ids_of(rows)))
     result = compute_entity_results(
         rows,
-        _facets(dimension, severity, rule, column),
+        _facets(dimension, severity, rule, column, tag=_check_tag_param(tag, _TABLE_CHECK_TAG_SOURCES)),
         axes=axes,
         table_axis="tables",
         failed_records_by_run=failed_records,

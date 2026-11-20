@@ -1,3 +1,4 @@
+import type { ColumnLayoutDef } from "@/components/data-table/column-layout";
 import { DQ_SCORE_BUCKETS, DQ_SCORE_FILTER_ALL } from "@/components/data-table/filter-bar";
 import type { FilterLayoutDef } from "@/components/data-table/filter-layout";
 import {
@@ -22,7 +23,8 @@ export type GlobalResultsFilterKey =
   | "rule"
   | "outcome"
   | "dimension"
-  | "severity";
+  | "severity"
+  | "tag";
 
 export const GLOBAL_RESULTS_FILTER_ORDER: readonly GlobalResultsFilterKey[] = [
   "catalog",
@@ -35,6 +37,7 @@ export const GLOBAL_RESULTS_FILTER_ORDER: readonly GlobalResultsFilterKey[] = [
   "outcome",
   "dimension",
   "severity",
+  "tag",
 ];
 
 export const GLOBAL_RESULTS_FILTERS: Record<GlobalResultsFilterKey, FilterLayoutDef> = {
@@ -48,7 +51,72 @@ export const GLOBAL_RESULTS_FILTERS: Record<GlobalResultsFilterKey, FilterLayout
   outcome: { labelKey: "resultsUi.filterLabelAlerts", defaultVisible: true },
   dimension: { labelKey: "resultsUi.filterLabelDimension", defaultVisible: false },
   severity: { labelKey: "resultsUi.filterLabelSeverity", defaultVisible: false },
+  // Tags are advanced: the bubble (like the tag charts) is hidden by default.
+  tag: { labelKey: "resultsUi.filterLabelTag", defaultVisible: false },
 };
+
+/**
+ * The Results page elements Edit View can show or hide, in page order. They
+ * ride on the saved view's column layout (Results has no table columns); the
+ * order is fixed, so the menu lists them without drag handles. The tag charts
+ * are hidden by default.
+ */
+export type ResultsElementKey =
+  | "scoreTrend"
+  | "scoreByDimension"
+  | "scoreBySeverity"
+  | "scoreByTag"
+  | "appliedCounts"
+  | "failedCounts"
+  | "byDimension"
+  | "bySeverity"
+  | "byTag"
+  | "byRule"
+  | "byTable"
+  | "byColumn";
+
+export const RESULTS_ELEMENT_ORDER: readonly ResultsElementKey[] = [
+  "scoreTrend",
+  "scoreByDimension",
+  "scoreBySeverity",
+  "scoreByTag",
+  "appliedCounts",
+  "failedCounts",
+  "byDimension",
+  "bySeverity",
+  "byTag",
+  "byRule",
+  "byTable",
+  "byColumn",
+];
+
+/** Menu label (the element's title) per element. */
+export const RESULTS_ELEMENT_LABEL_KEYS: Record<ResultsElementKey, string> = {
+  scoreTrend: "resultsUi.averageDqScoreTitle",
+  scoreByDimension: "resultsUi.scoreByDimensionTitle",
+  scoreBySeverity: "resultsUi.scoreBySeverityTitle",
+  scoreByTag: "resultsUi.scoreByTagTitle",
+  appliedCounts: "resultsUi.appliedCountsTitle",
+  failedCounts: "resultsUi.failedCountsTitle",
+  byDimension: "resultsUi.byDimensionTitle",
+  bySeverity: "resultsUi.bySeverityTitle",
+  byTag: "resultsUi.byTagTitle",
+  byRule: "resultsUi.byRuleTitle",
+  byTable: "resultsUi.byTableTitle",
+  byColumn: "resultsUi.byColumnTitle",
+};
+
+const HIDDEN_BY_DEFAULT: ReadonlySet<ResultsElementKey> = new Set(["scoreByTag", "byTag"]);
+
+export const RESULTS_ELEMENTS: Record<ResultsElementKey, ColumnLayoutDef> = Object.fromEntries(
+  RESULTS_ELEMENT_ORDER.map((key) => [
+    key,
+    { toggleable: true, defaultVisible: !HIDDEN_BY_DEFAULT.has(key), defaultWidth: 0, resizable: false },
+  ]),
+) as Record<ResultsElementKey, ColumnLayoutDef>;
+
+/** Shown on surfaces without an Edit View (product and rule results): every element. */
+export const ALL_RESULTS_ELEMENTS: ReadonlySet<ResultsElementKey> = new Set(RESULTS_ELEMENT_ORDER);
 
 export const GLOBAL_RESULTS_EMPTY_VALUES: Record<GlobalResultsFilterKey, ViewValue> = {
   catalog: [],
@@ -61,6 +129,7 @@ export const GLOBAL_RESULTS_EMPTY_VALUES: Record<GlobalResultsFilterKey, ViewVal
   outcome: [],
   dimension: [],
   severity: [],
+  tag: [],
 };
 
 /** Set by breakdown-row clicks too, so hiding their bubble keeps the value (shown as a chip). */
@@ -69,6 +138,7 @@ export const GLOBAL_RESULTS_KEEP_VALUE_ON_HIDE: readonly GlobalResultsFilterKey[
   "rule",
   "dimension",
   "severity",
+  "tag",
 ];
 
 export const GLOBAL_RESULTS_OUTCOME_VALUES: readonly string[] = ["failed", "passed"];
@@ -80,14 +150,16 @@ export type GlobalResultsFilterOptionValues = Record<
 >;
 
 /**
- * Saved-view definitions of Global Results (Filters only, no columns). Memoise on
- * *options* and *reconcileValues* (which keeps cross-filter picks consistent).
+ * Saved-view definitions of Global Results: the page elements (as the column
+ * layout) and the filters. Memoise on *options* and *reconcileValues* (which
+ * keeps cross-filter picks consistent).
  */
 export function buildGlobalResultsViewDefs(
   options: GlobalResultsFilterOptionValues,
   reconcileValues?: (values: ViewValues) => ViewValues,
-): ViewDefs<never, GlobalResultsFilterKey> {
+): ViewDefs<ResultsElementKey, GlobalResultsFilterKey> {
   return {
+    columns: { defaultOrder: RESULTS_ELEMENT_ORDER, columns: RESULTS_ELEMENTS },
     filters: { defaultOrder: GLOBAL_RESULTS_FILTER_ORDER, filters: GLOBAL_RESULTS_FILTERS },
     emptyValues: GLOBAL_RESULTS_EMPTY_VALUES,
     keepValueOnHide: GLOBAL_RESULTS_KEEP_VALUE_ON_HIDE,
@@ -121,6 +193,7 @@ export function filtersFromViewValues(values: ViewValues, column: string[] = [])
     outcome: stringArrayValue(values.outcome),
     dimension: stringArrayValue(values.dimension),
     severity: stringArrayValue(values.severity),
+    tag: stringArrayValue(values.tag),
     column,
   };
 }

@@ -59,13 +59,25 @@ import {
 import { usePermissions } from "@/hooks/use-permissions";
 import {
   DQ_SCORE_BUCKETS,
+  dqScoreTriggerText,
   DQ_SCORE_FILTER_ALL,
   FILTER_TRIGGER_CLASS,
+  FILTER_TRIGGER_PICKED_CLASS,
   matchesDqScoreBucket,
 } from "@/components/data-table/filter-bar";
 import { SearchableSelect } from "@/components/data-table/SearchableSelect";
 import { filterLayoutMenuConfig } from "@/components/data-table/filter-layout";
-import { MAX_VIEW_STRING_LENGTH, stringValue } from "@/components/data-table/saved-views";
+import { MAX_VIEW_STRING_LENGTH, stringArrayValue, stringValue } from "@/components/data-table/saved-views";
+import { TagFilter } from "@/components/tags/TagFilter";
+import { useMonitoredTableUcTags } from "@/components/tags/table-tags";
+import {
+  itemTags,
+  selectionFromTokens,
+  selectionToTokens,
+  tagOptionsOf,
+  tagsMatchSelection,
+  tokensOfOptions,
+} from "@/components/tags/tag-filter";
 import { useSavedViews } from "@/components/data-table/useSavedViews";
 import { usePageResetOn } from "@/components/data-table/usePageResetOn";
 import {
@@ -147,19 +159,39 @@ function DataProductsPage() {
     [products],
   );
 
+  // The Unity Catalog catalog, schema and table tags of each collection's
+  // tables. A collection matches the tag filter when one of its tables does.
+  const ucTags = useMonitoredTableUcTags();
+  const memberTagsByProduct = useMemo(
+    () =>
+      new Map(
+        products.map((p) => [
+          p.product_id,
+          (p.members ?? []).map((m) => itemTags(Object.entries(ucTags?.[m.table_fqn] ?? {}))),
+        ]),
+      ),
+    [products, ucTags],
+  );
+  const tagOptions = useMemo(() => tagOptionsOf([...memberTagsByProduct.values()].flat()), [memberTagsByProduct]);
+
   // Saved views own the column layout, filter layout and every filter value
   // (search included). A saved owner with no collections left is dropped once
   // the list loads; until then it is kept.
   const loaded = data !== undefined;
   const viewDefs = useMemo(
-    () => buildCollectionsViewDefs(DATA_PRODUCTS_COLUMN_LAYOUT, { owners: loaded ? ownerOptions : null }),
-    [loaded, ownerOptions],
+    () =>
+      buildCollectionsViewDefs(DATA_PRODUCTS_COLUMN_LAYOUT, {
+        owners: loaded ? ownerOptions : null,
+        tags: loaded && ucTags !== null ? tokensOfOptions(tagOptions) : null,
+      }),
+    [loaded, ownerOptions, ucTags, tagOptions],
   );
   const views = useSavedViews(SavedViewPage.collections, viewDefs);
   const { values, setValue } = views;
   const ownerFilter = stringValue(values.owner, ALL);
   const scoreFilter = stringValue(values.dqScore, DQ_SCORE_FILTER_ALL);
   const search = stringValue(values.search, "");
+  const tagFilter = useMemo(() => selectionFromTokens(stringArrayValue(values.tags)), [values.tags]);
   // Any filter edit (or switching view) starts the list from page 1.
   const [page, setPage] = usePageResetOn(values);
 
@@ -168,11 +200,17 @@ function DataProductsPage() {
     return products.filter((p) => {
       if (ownerFilter !== ALL && (p.owner ?? "") !== ownerFilter) return false;
       if (!matchesDqScoreBucket(p.score, scoreFilter)) return false;
+      if (
+        tagFilter.size > 0 &&
+        !(memberTagsByProduct.get(p.product_id) ?? []).some((tags) => tagsMatchSelection(tags, tagFilter))
+      ) {
+        return false;
+      }
       if (!q) return true;
       const hay = `${p.name} ${p.description ?? ""} ${p.owner ?? ""}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [products, ownerFilter, scoreFilter, search]);
+  }, [products, ownerFilter, scoreFilter, search, tagFilter, memberTagsByProduct]);
 
   const [sortKey, setSortKey] = useState<DataProductsSortKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -216,7 +254,8 @@ function DataProductsPage() {
     return sorted.slice(start, start + PAGE_SIZE);
   }, [sorted, page]);
 
-  const hasActiveFilters = ownerFilter !== ALL || scoreFilter !== DQ_SCORE_FILTER_ALL || search.trim() !== "";
+  const hasActiveFilters =
+    ownerFilter !== ALL || scoreFilter !== DQ_SCORE_FILTER_ALL || tagFilter.size > 0 || search.trim() !== "";
 
   const applyFilter = useCallback(
     (key: CollectionsFilterKey) => (v: string) => setValue(key, v),
@@ -554,12 +593,13 @@ function DataProductsPage() {
         searchPlaceholder={t("common.search")}
         emptyText={t("common.noMatches")}
         ariaLabel={t("dataProducts.colOwner")}
+        label={t("dataProducts.colOwner")}
       />
     ),
     dqScore: (
       <Select value={scoreFilter} onValueChange={applyFilter("dqScore")}>
-        <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("dataProducts.colDqScore")}>
-          <SelectValue />
+        <SelectTrigger className={cn(FILTER_TRIGGER_CLASS, scoreFilter !== DQ_SCORE_FILTER_ALL && FILTER_TRIGGER_PICKED_CLASS)} aria-label={t("dataProducts.colDqScore")}>
+          <SelectValue>{dqScoreTriggerText(t, scoreFilter, t("dataProducts.colDqScore"))}</SelectValue>
         </SelectTrigger>
         <SelectContent>
           {DQ_SCORE_BUCKETS.map((b) => (
@@ -569,6 +609,13 @@ function DataProductsPage() {
           ))}
         </SelectContent>
       </Select>
+    ),
+    tags: (
+      <TagFilter
+        options={tagOptions}
+        selected={tagFilter}
+        onChange={(next) => setValue("tags", selectionToTokens(next))}
+      />
     ),
   };
 

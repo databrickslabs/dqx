@@ -406,6 +406,7 @@ export function TrendTooltip({
   allSeries,
   colorMap,
   breachMarkers,
+  seriesLabel,
 }: {
   active?: boolean;
   payload?: TooltipPayloadEntry[];
@@ -421,6 +422,8 @@ export function TrendTooltip({
   colorMap?: Record<string, string>;
   /** Per-table breach markers: rows of tables that breached at the hovered run get a ⚠ prefix. */
   breachMarkers?: BreachMarker[];
+  /** Display label for an internal series key (tooltip only). */
+  seriesLabel?: (name: string) => string;
   /** Count mode: series name → marker shape, so the tooltip icon matches the
    *  line's marker instead of a generic round dot. */
   seriesShapes?: Record<string, Marker>;
@@ -525,7 +528,7 @@ export function TrendTooltip({
                 />
               )}
               <span>
-                {name}: {text}
+                {seriesLabel ? seriesLabel(name) : name}: {text}
               </span>
             </li>
           );
@@ -699,6 +702,9 @@ export function ScoreTrendChart({
   overall,
   overallLabel: overallLabelProp,
   onSeriesClick,
+  seriesLabel,
+  legend = false,
+  emptyText,
   title,
   info,
   collapsed,
@@ -729,6 +735,12 @@ export function ScoreTrendChart({
   /** Percent multi-series charts only: when provided, clicking a series line
    *  calls this with the series name (used to toggle a drilldown facet). */
   onSeriesClick?: (series: string) => void;
+  /** Display label for an internal series key (tooltip only). */
+  seriesLabel?: (name: string) => string;
+  /** Percent multi-series: show a legend under the chart (labels via *seriesLabel*); click an item to hide its line. */
+  legend?: boolean;
+  /** Shown instead of the "no runs yet" message when there is no data. */
+  emptyText?: string;
   title?: string;
   /** When set, a muted help "?" icon follows the title; hovering it shows this
    *  content in a tooltip. */
@@ -1229,10 +1241,33 @@ export function ScoreTrendChart({
     </ul>
   ) : null;
 
+  // Percent multi-series legend (opt-in): one chip per series in its line
+  // colour, labelled via seriesLabel. Clicking a chip hides or shows its line.
+  const seriesLegend =
+    legend && !overallMode && mode !== "count" ? (
+      <ul className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] select-none">
+        {series.map((name, idx) => {
+          const swatch = colorMap?.[name] ?? CHART_FALLBACK[idx % CHART_FALLBACK.length];
+          return (
+            <li
+              key={name}
+              className={`flex cursor-pointer select-none items-center gap-1.5 ${
+                hidden.has(name) ? "opacity-40 line-through" : ""
+              }`}
+              onClick={() => toggleSeries(name)}
+            >
+              <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: swatch }} />
+              <span style={{ color: swatch }}>{seriesLabel ? seriesLabel(name) : name}</span>
+            </li>
+          );
+        })}
+      </ul>
+    ) : null;
+
   const collapsible = onToggleCollapse != null;
   const body =
     points.length === 0 ? (
-      <p className="text-sm text-muted-foreground">{t("resultsUi.noRunsYet")}</p>
+      <p className="text-sm text-muted-foreground">{emptyText ?? t("resultsUi.noRunsYet")}</p>
     ) : (
       <>
       {/* Double-click resets zoom when a zoom is active. Attached HERE on the
@@ -1390,6 +1425,7 @@ export function ScoreTrendChart({
                     allSeries={series}
                     colorMap={colorMap}
                     breachMarkers={breachMarkers}
+                    seriesLabel={seriesLabel}
                   />
                 )}
               />
@@ -1588,6 +1624,7 @@ export function ScoreTrendChart({
                     type={lineType}
                     dataKey={name}
                     stroke={stroke}
+                    hide={hidden.has(name)}
                     strokeWidth={2}
                     strokeDasharray={
                       dashedSeries?.includes(name) ? "5 4" : undefined
@@ -1727,6 +1764,7 @@ export function ScoreTrendChart({
           </ResponsiveContainer>
         </div>
         {overallLegend}
+        {seriesLegend}
       </>
       );
 

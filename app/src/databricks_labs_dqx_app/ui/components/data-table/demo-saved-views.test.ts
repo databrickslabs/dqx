@@ -38,6 +38,7 @@ const DEFS: Record<string, ViewDefs<string, string>> = {
     catalogs: [CATALOG, "other"],
     schemas: [SCHEMA, "other"],
     owners: [],
+    tags: [],
   }),
   global_results: buildGlobalResultsViewDefs({
     catalog: [CATALOG],
@@ -48,13 +49,14 @@ const DEFS: Record<string, ViewDefs<string, string>> = {
     rule: [],
     dimension: [],
     severity: [],
+    tag: [],
   }),
   // The Rules page compares the dimension against the label definition values (seeded default list).
   registry_rules: buildRegistryRulesViewDefs(RULES_TABLE_COLUMN_LAYOUT, {
     dimensions: ["Validity", "Completeness", "Accuracy", "Consistency", "Uniqueness", "Timeliness"],
     severities: ["critical", "high", "medium", "low"],
   }),
-  collections: buildCollectionsViewDefs(DATA_PRODUCTS_COLUMN_LAYOUT, { owners: [] }),
+  collections: buildCollectionsViewDefs(DATA_PRODUCTS_COLUMN_LAYOUT, { owners: [], tags: [] }),
 };
 
 const GROUP_BY_VALUES: Record<string, readonly string[]> = {

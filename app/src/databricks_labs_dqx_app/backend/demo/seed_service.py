@@ -79,6 +79,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RESERVED_DESCRIPTION_KEY,
     RESERVED_DIMENSION_KEY,
     RESERVED_NAME_KEY,
+    RESERVED_RULE_METADATA_KEYS,
     RESERVED_SEVERITY_KEY,
     AuthorKind,
     ParamType,
@@ -126,7 +127,7 @@ from databricks_labs_dqx_app.backend.services.schedule_grant_service import Sche
 from databricks_labs_dqx_app.backend.services.score_cache_service import ScoreCacheService
 from databricks_labs_dqx_app.backend.services.view_service import ViewService
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, SqlExecutor
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, quote_object_fqn
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, quote_ident, quote_object_fqn
 
 logger = logging.getLogger(__name__)
 
@@ -382,7 +383,7 @@ class DemoSeedService:
     # ------------------------------------------------------------------
 
     def _build_source_data(self) -> None:
-        """Create the demo schema, source tables, ownership tag, and governed column tags."""
+        """Create the demo schema, source tables, ownership tag, plain object tags, and governed column tags."""
         self._demo_sql.execute(datagen.create_schema_sql(self._catalog, self._schema))
         for table in manifest.TABLES:
             self._demo_sql.execute(datagen.build_create_table_sql(table.name, self._catalog, self._schema))
@@ -414,6 +415,42 @@ class DemoSeedService:
                     tag.column,
                     self._sanitize(str(exc)),
                 )
+        # Plain object tags are a best-effort showcase too: a tag policy on the
+        # key or a missing APPLY TAG grant must not abort the seed.
+        for object_tag in manifest.OBJECT_TAGS:
+            try:
+                self._assign_object_tag(object_tag)
+            except Exception as exc:
+                logger.warning(
+                    "Skipped %s tag %s: %s",
+                    object_tag.level,
+                    object_tag.key,
+                    self._sanitize(str(exc)),
+                )
+
+    def _assign_object_tag(self, tag: manifest.ObjectTagSpec) -> None:
+        """Set one plain Unity Catalog tag on the demo catalog, schema, a table or a column.
+
+        The app SP owns the demo schema and tables, so it sets their tags. The
+        catalog is the deployer's, so its tag runs through the caller's OBO
+        SqlExecutor when the route supplied one (as the governed column tags
+        do), falling back to the SP otherwise.
+
+        Args:
+            tag: the object tag specification to assign.
+        """
+        tags = f"SET TAGS ('{escape_sql_string(tag.key)}' = '{escape_sql_string(tag.value)}')"
+        if tag.level == "catalog":
+            (self._tagging_sql or self._demo_sql).execute(f"ALTER CATALOG {quote_ident(self._catalog)} {tags}")
+            return
+        if tag.level == "schema":
+            self._demo_sql.execute(f"ALTER SCHEMA {quote_ident(self._catalog)}.{quote_ident(self._schema)} {tags}")
+            return
+        table_fqn = quote_object_fqn(self._catalog, self._schema, tag.table)
+        if tag.level == "column":
+            self._demo_sql.execute(f"ALTER TABLE {table_fqn} ALTER COLUMN {quote_ident(tag.column)} {tags}")
+        else:
+            self._demo_sql.execute(f"ALTER TABLE {table_fqn} {tags}")
 
     def _assign_column_tag(self, tag: manifest.ColumnTagSpec) -> None:
         """Assign one governed ``class.*`` column tag via ``SET TAG ON COLUMN`` SQL.
@@ -787,7 +824,12 @@ class DemoSeedService:
 
     @staticmethod
     def _metadata_for(spec: RuleSpec) -> dict[str, Any]:
-        """Build a rule's reserved-tag ``user_metadata`` from a manifest :class:`RuleSpec`."""
+        """Build a rule's ``user_metadata`` from a manifest :class:`RuleSpec`.
+
+        Reserved tags (name, description, dimension, severity, slot tags) come
+        first; the spec's free-text tags are added after them and never replace
+        a reserved key.
+        """
         metadata: dict[str, Any] = {}
         metadata = set_reserved_tag(metadata, RESERVED_NAME_KEY, spec.name)
         metadata = set_reserved_tag(metadata, RESERVED_DESCRIPTION_KEY, spec.description)
@@ -795,6 +837,9 @@ class DemoSeedService:
         metadata = set_reserved_tag(metadata, RESERVED_SEVERITY_KEY, spec.severity)
         if spec.slot_tags:
             metadata = set_slot_tags(metadata, {slot: list(tags) for slot, tags in spec.slot_tags.items()})
+        for key, value in spec.tags.items():
+            if key not in RESERVED_RULE_METADATA_KEYS:
+                metadata[key] = value
         return metadata
 
     # ------------------------------------------------------------------

@@ -1,4 +1,5 @@
 from databricks_labs_dqx_app.backend.demo import manifest as m
+from databricks_labs_dqx_app.backend.registry_models import RESERVED_RULE_METADATA_KEYS
 
 
 def test_every_rule_has_contract_compliant_name_and_description():
@@ -49,6 +50,18 @@ def test_slot_tags_are_class_namespaced_and_reference_real_slots():
     assert rules_with_tags >= 2, "expected >=2 rules with slot_tags for the tag showcase"
 
 
+def test_rule_tags_use_free_text_keys_and_cover_overlap_and_untagged_cases():
+    for r in m.RULES:
+        for key, value in r.tags.items():
+            assert key not in RESERVED_RULE_METADATA_KEYS, f"{r.key}: tag key {key!r} is reserved"
+            assert key and value, f"{r.key}: tag key and value must be non-empty"
+    bound_keys = {rule_key for b in m.BINDINGS for rule_key in b.mappings}
+    bound = [r for r in m.RULES if r.key in bound_keys]
+    # Results by tag must show a check counted under two tags and checks with no tag.
+    assert any(len(r.tags) >= 2 for r in bound), "expected a bound rule with two tags"
+    assert any(not r.tags for r in bound), "expected a bound rule with no tags"
+
+
 def test_no_email_validation_rule_is_seeded():
     # Email validation is reserved for a separate user-led demo flow.
     for r in m.RULES:
@@ -57,6 +70,18 @@ def test_no_email_validation_rule_is_seeded():
             assert "class.email_address" not in tags, f"{r.key}: email tag must not be seeded"
     for ct in m.COLUMN_TAGS:
         assert ct.tag != "class.email_address", f"{ct.column}: email tag must not be seeded"
+
+
+def test_object_tags_cover_every_level_and_target_real_tables_and_columns():
+    assert {tag.level for tag in m.OBJECT_TAGS} == {"catalog", "schema", "table", "column"}
+    tables = {table.name: table for table in m.TABLES}
+    table_tags = [tag for tag in m.OBJECT_TAGS if tag.level == "table"]
+    assert {tag.table for tag in table_tags} == set(tables)
+    assert len({tag.value for tag in table_tags}) > 1
+    for tag in m.OBJECT_TAGS:
+        assert tag.key and tag.value and not tag.key.startswith("class.")
+        if tag.level == "column":
+            assert tag.column in tables[tag.table].columns
 
 
 def test_column_tags_target_real_columns():
