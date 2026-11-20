@@ -114,15 +114,15 @@ def test_compute_rule_fingerprint_includes_for_each_column():
     assert compute_rule_fingerprint(base) != compute_rule_fingerprint(with_for_each_column)
 
 
-def test_compute_rule_fingerprint_excludes_user_metadata():
-    """user_metadata is excluded from the fingerprint; rules with/without it hash identically."""
+def test_compute_rule_fingerprint_includes_user_metadata():
+    """user_metadata is part of the fingerprint; rules with/without it hash differently."""
     base = {
         "name": "r",
         "criticality": "error",
         "check": {"function": "is_not_null", "arguments": {"column": "id"}},
     }
     with_meta = {**base, "user_metadata": {"team": "eng"}}
-    assert compute_rule_fingerprint(base) == compute_rule_fingerprint(with_meta)
+    assert compute_rule_fingerprint(base) != compute_rule_fingerprint(with_meta)
 
 
 def test_compute_rule_set_fingerprint_by_metadata_returns_64_char_hex():

@@ -613,6 +613,34 @@ def test_save_idempotency_overwrite_mode(ws, spark, make_lakebase_instance, lake
     compare_checks(checks, TEST_CHECKS[:1])
 
 
+def test_save_overwrite_writes_when_only_user_metadata_changes(
+    ws, spark, make_lakebase_instance, lakebase_client_id, make_random
+):
+    """Changing only user_metadata changes the fingerprint, so overwrite writes the new value (issue #1476)."""
+    dq_engine = DQEngine(ws, spark)
+    instance = make_lakebase_instance()
+    location = _create_lakebase_location(instance.database_name, make_random)
+
+    config = LakebaseChecksStorageConfig(
+        location=location, client_id=lakebase_client_id, instance_name=instance.name, mode="overwrite"
+    )
+
+    def check_with_threshold(threshold_pct: str) -> dict:
+        return {
+            "name": "col_1_is_null",
+            "criticality": "warn",
+            "check": {"function": "is_not_null", "arguments": {"column": "col_1"}},
+            "user_metadata": {"threshold_pct": threshold_pct},
+        }
+
+    dq_engine.save_checks(checks=[check_with_threshold("50")], config=config)
+    dq_engine.save_checks(checks=[check_with_threshold("10")], config=config)
+
+    checks = dq_engine.load_checks(config=config)
+    assert len(checks) == 1
+    assert checks[0]["user_metadata"] == {"threshold_pct": "10"}
+
+
 def test_save_append_then_overwrite_same_run_config(ws, spark, make_lakebase_instance, lakebase_client_id, make_random):
     """Append then overwrite for same run_config: overwrite replaces all rows for that run_config."""
     dq_engine = DQEngine(ws, spark)

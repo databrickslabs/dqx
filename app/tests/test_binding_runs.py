@@ -441,9 +441,10 @@ class TestRunProvenanceStamping:
     keys with the SAME value on every check, so a uniform per-check stamp is
     what carries ``run_mode`` / ``binding_version`` into the run-level
     ``dq_metrics.user_metadata`` map (the score views read it back out).
-    The tags never touch name/criticality/function/arguments/filter, so the
-    run's ``rule_set_fingerprint`` is unchanged (user_metadata does not
-    participate in ``compute_rule_fingerprint``).
+    The tags never touch name/criticality/function/arguments/filter. Because
+    dqx-core includes non-empty user_metadata in ``compute_rule_fingerprint``,
+    the stamped tags do change the run's ``rule_set_fingerprint``: draft and
+    published runs of the same rules fingerprint differently.
     """
 
     def _submitted_checks(self, job_service) -> list[dict]:
@@ -538,18 +539,15 @@ class TestRunProvenanceStamping:
         ]
         assert self._submitted_checks(job_service)[0] is not snapshot[0]
 
-    def test_stamping_does_not_change_the_rule_set_fingerprint(
-        self, service, monitored_tables, version_service, job_service
-    ):
-        # user_metadata does not participate in compute_rule_fingerprint, so
-        # a draft and published run of identical rules fingerprint the same.
-        from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint_by_metadata
-
+    def test_stamping_only_changes_user_metadata(self, service, monitored_tables, version_service, job_service):
+        # Stamping adds run-provenance tags to user_metadata and leaves the
+        # rule logic (name, criticality, check, filter) untouched.
         checks = [
             {
                 "name": "c1",
                 "criticality": "error",
                 "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+                "filter": "id > 0",
             }
         ]
         monitored_tables.get.return_value = _detail(version=2)
@@ -558,7 +556,7 @@ class TestRunProvenanceStamping:
         service.run_binding("b1", source="approved", version=2, user_email="alice@x")
 
         submitted = self._submitted_checks(job_service)
-        assert compute_rule_set_fingerprint_by_metadata(submitted) == compute_rule_set_fingerprint_by_metadata(checks)
+        assert [{k: v for k, v in c.items() if k != "user_metadata"} for c in submitted] == checks
 
 
 class TestFailClosedOrdering:

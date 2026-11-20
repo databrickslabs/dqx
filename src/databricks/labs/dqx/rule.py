@@ -703,6 +703,10 @@ def compute_rule_fingerprint(check_dict: dict) -> str:
     Normalization turns variants into a single canonical form.
     After normalization, all equivalent rules hash to the same fingerprint.
 
+    *user_metadata* is part of the fingerprint, so changing it produces a new fingerprint. It is
+    only hashed when non-empty: a rule without *user_metadata* (absent, None, or an empty dict)
+    keeps the same fingerprint it had before *user_metadata* was included.
+
     Args:
         check_dict: Dictionary representing a single check rule.
 
@@ -731,5 +735,9 @@ def compute_rule_fingerprint(check_dict: dict) -> str:
         "filter": check_dict.get("filter"),
         "for_each_column": sorted(for_each_column) if for_each_column else None,
     }
+    # Added only when non-empty so fingerprints of rules without user_metadata are unchanged.
+    user_metadata = check_dict.get("user_metadata")
+    if user_metadata:
+        fingerprint_data["user_metadata"] = user_metadata
     canonical = json.dumps(fingerprint_data, sort_keys=True, default=str)
     return hashlib.sha256(canonical.encode()).hexdigest()

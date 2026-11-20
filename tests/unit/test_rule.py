@@ -171,37 +171,47 @@ def test_compute_rule_fingerprint_for_each_column_order_independent():
     assert compute_rule_fingerprint(check_ab) == compute_rule_fingerprint(check_ba)
 
 
-def test_compute_rule_fingerprint_user_metadata_excluded():
-    """user_metadata is not part of the fingerprint.
-
-    Two rules that differ only in user_metadata must produce identical fingerprints so
-    that a metadata-only update does not create a new version in storage.
-    """
-    check_with_metadata = {
+def _id_not_null_check(**extra: object) -> dict:
+    return {
         "name": "id_not_null",
         "criticality": "error",
         "check": {"function": "is_not_null", "arguments": {"column": "id"}},
-        "user_metadata": {"owner": "alice", "team": "data-eng"},
+        **extra,
     }
-    check_different_metadata = {
-        "name": "id_not_null",
-        "criticality": "error",
-        "check": {"function": "is_not_null", "arguments": {"column": "id"}},
-        "user_metadata": {"owner": "bob"},
-    }
-    check_no_metadata = {
-        "name": "id_not_null",
-        "criticality": "error",
-        "check": {"function": "is_not_null", "arguments": {"column": "id"}},
-    }
-    fp_with = compute_rule_fingerprint(check_with_metadata)
-    fp_different = compute_rule_fingerprint(check_different_metadata)
-    fp_without = compute_rule_fingerprint(check_no_metadata)
-    assert fp_with == fp_different == fp_without
 
 
-def test_compute_rule_set_fingerprint_by_metadata_user_metadata_only_change_same_fingerprint():
-    """Changing user_metadata across the entire rule set does not change the set fingerprint."""
+def test_compute_rule_fingerprint_user_metadata_value_change():
+    """Changing only a user_metadata value changes the fingerprint (issue #1476)."""
+    fp_before = compute_rule_fingerprint(_id_not_null_check(user_metadata={"threshold_pct": "50"}))
+    fp_after = compute_rule_fingerprint(_id_not_null_check(user_metadata={"threshold_pct": "10"}))
+    assert fp_before != fp_after
+
+
+def test_compute_rule_fingerprint_user_metadata_key_order_independent():
+    """user_metadata key order does not affect the fingerprint."""
+    fp_ab = compute_rule_fingerprint(_id_not_null_check(user_metadata={"a": "1", "b": "2"}))
+    fp_ba = compute_rule_fingerprint(_id_not_null_check(user_metadata={"b": "2", "a": "1"}))
+    assert fp_ab == fp_ba
+
+
+def test_compute_rule_fingerprint_empty_user_metadata_same_as_none():
+    """Absent, None, and empty user_metadata all keep the fingerprint of a rule without metadata."""
+    fp_absent = compute_rule_fingerprint(_id_not_null_check())
+    fp_none = compute_rule_fingerprint(_id_not_null_check(user_metadata=None))
+    fp_empty = compute_rule_fingerprint(_id_not_null_check(user_metadata={}))
+    assert fp_absent == fp_none == fp_empty
+
+
+def test_dq_rule_fingerprint_includes_user_metadata():
+    """DQRule.rule_fingerprint and the rule set fingerprint change when only user_metadata changes."""
+    rule_v1 = DQRowRule(check_func=is_not_null, column="id", user_metadata={"threshold_pct": "50"})
+    rule_v2 = DQRowRule(check_func=is_not_null, column="id", user_metadata={"threshold_pct": "10"})
+    assert rule_v1.rule_fingerprint != rule_v2.rule_fingerprint
+    assert compute_rule_set_fingerprint([rule_v1]) != compute_rule_set_fingerprint([rule_v2])
+
+
+def test_compute_rule_set_fingerprint_by_metadata_user_metadata_only_change_new_fingerprint():
+    """Changing only user_metadata across the rule set changes the set fingerprint."""
     checks_v1 = [
         {
             "name": "a_not_null",
@@ -229,7 +239,7 @@ def test_compute_rule_set_fingerprint_by_metadata_user_metadata_only_change_same
             "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "b"}},
         },
     ]
-    assert compute_rule_set_fingerprint_by_metadata(checks_v1) == compute_rule_set_fingerprint_by_metadata(checks_v2)
+    assert compute_rule_set_fingerprint_by_metadata(checks_v1) != compute_rule_set_fingerprint_by_metadata(checks_v2)
 
 
 def test_compute_rule_fingerprint_different_functions_differ():

@@ -96,11 +96,11 @@ def _stamp_run_provenance(
     ``user_metadata`` dict re-built), so neither the materializer's rendered
     output nor the frozen version snapshot is ever mutated.
 
-    Note on fingerprints: *compute_rule_fingerprint* hashes only
-    name/criticality/function/arguments/filter/for_each_column —
-    ``user_metadata`` does not participate — so the stamped tags never change
-    ``rule_set_fingerprint`` and a draft and published run of identical rules
-    still fingerprint identically.
+    Note on fingerprints: dqx-core includes non-empty ``user_metadata`` in
+    *compute_rule_fingerprint*, so the stamped tags change the run's
+    ``rule_set_fingerprint``: a draft and a published run of identical rules
+    fingerprint differently, and run-time per-rule fingerprints differ from
+    the ones stored in the rules catalog (which are computed before stamping).
     """
     tags: dict[str, str] = {RUN_MODE_TAG: run_mode}
     if binding_version is not None:
