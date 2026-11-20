@@ -163,6 +163,7 @@ class TestBaselineOnlyCatalogue:
         assert [(m.version, m.description) for m in MIGRATIONS] == [
             (1, "Delta analytical baseline (validation, profiling, quarantine, metrics)"),
             (2, "Staged run configs too large to inline in job parameters"),
+            (3, "Widen run row counts to BIGINT"),
         ]
 
     def test_delta_migrations_do_not_create_oltp_tables(self) -> None:
@@ -183,7 +184,28 @@ class TestBaselineOnlyCatalogue:
             for stmt in _statements(migration.sql_template):
                 creates = stmt.startswith("CREATE TABLE IF NOT EXISTS")
                 constrains = stmt.startswith("ALTER TABLE") and "ADD CONSTRAINT" in stmt
-                assert creates or constrains, f"v{migration.version} statement is neither: {stmt[:120]}"
+                enables_widening = stmt.startswith("ALTER TABLE") and stmt.endswith(
+                    "SET TBLPROPERTIES ('delta.enableTypeWidening' = 'true')"
+                )
+                widens_to_bigint = stmt.startswith("ALTER TABLE") and re.search(r" ALTER COLUMN \w+ TYPE BIGINT$", stmt)
+                assert (
+                    creates or constrains or enables_widening or widens_to_bigint
+                ), f"v{migration.version} statement is neither: {stmt[:120]}"
+
+    def test_row_count_widening_enables_type_widening_before_each_alter(self) -> None:
+        widened: dict[str, list[str]] = {}
+        enabled: set[str] = set()
+        for stmt in _statements(MIGRATIONS[2].sql_template):
+            table = stmt.split()[2].rsplit(".", 1)[-1]
+            if "enableTypeWidening" in stmt:
+                enabled.add(table)
+            else:
+                assert table in enabled, f"{table} is altered before type widening is enabled"
+                widened.setdefault(table, []).append(stmt.split()[5])
+        assert widened == {
+            "dq_validation_runs": ["total_rows", "valid_rows", "invalid_rows", "error_rows", "warning_rows"],
+            "dq_profiling_results": ["rows_profiled"],
+        }
 
     def test_no_table_is_created_by_both_baselines(self) -> None:
         assert not set(ANALYTICAL_TABLE_NAMES) & set(OLTP_TABLE_NAMES)
@@ -306,6 +328,24 @@ class TestMigrationRunnerUsesQuotedIdentifiers:
         assert "prod-east.dqx_studio" not in " ".join(
             captured
         ), "Found raw (un-quoted) interpolation — hyphenated catalogs would emit parse-invalid DDL"
+
+    def test_apply_skips_v3_ddl_when_row_counts_are_already_bigint(
+        self, runner_state: tuple[MigrationRunner, MagicMock]
+    ) -> None:
+        runner, _ = runner_state
+        captured: list[str] = []
+        runner._sql.execute = lambda s, **_: captured.append(s)  # type: ignore[method-assign]
+        runner._sql.query_dicts = lambda s, **_: [  # type: ignore[method-assign]
+            {"column_name": "total_rows", "full_data_type": "bigint"},
+            {"column_name": "valid_rows", "full_data_type": "bigint"},
+            {"column_name": "invalid_rows", "full_data_type": "bigint"},
+            {"column_name": "error_rows", "full_data_type": "bigint"},
+            {"column_name": "warning_rows", "full_data_type": "bigint"},
+        ]
+        runner._apply(MIGRATIONS[2])
+        assert len(captured) == 1
+        assert captured[0].startswith("INSERT INTO `prod-east`.`dqx_studio`.dq_migrations")
+        assert not any("enableTypeWidening" in stmt for stmt in captured)
 
 
 # ---------------------------------------------------------------------------

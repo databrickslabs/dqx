@@ -190,7 +190,11 @@ function DataProductDetailPage() {
             ),
             scheduling: (
               <TabBoundary label={t("dataProducts.tabSchedule")}>
-                <ProductSchedulingTab editState={editState} canEdit={canEdit} />
+                <ProductSchedulingTab
+                  editState={editState}
+                  canEdit={canEdit}
+                  awaitingApproval={!product.version}
+                />
               </TabBoundary>
             ),
             history: (

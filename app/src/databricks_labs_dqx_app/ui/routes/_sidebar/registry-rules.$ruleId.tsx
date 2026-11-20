@@ -28,7 +28,6 @@ import {
 import {
   AlertCircle,
   Braces,
-  CheckCircle2,
   Clock,
   Download,
   Loader2,
@@ -206,20 +205,14 @@ function RegistryRuleDetailPage() {
   const lifecycleBusy = approveMutation.isPending || rejectMutation.isPending || revokeMutation.isPending;
 
   const handleApprove = useCallback(
-    (rationale?: string | null) => {
-      approveMutation.mutate(
-        { ruleId, rationale: rationale ?? null },
-        {
-          onSuccess: () => {
-            toast.success(t("rulesRegistry.toastApproved"));
-            invalidateDetail();
-            invalidateAfterLifecycleChange();
-          },
-          onError: (err) => {
-            toast.error(extractApiError(err, t("rulesRegistry.toastApproveFailed")), { duration: 6000 });
-          },
-        },
-      );
+    async (rationale?: string | null) => {
+      await approveMutation.mutateAsync({
+        ruleId,
+        rationale: rationale ?? null,
+      });
+      toast.success(t("rulesRegistry.toastApproved"));
+      invalidateDetail();
+      invalidateAfterLifecycleChange();
     },
     [approveMutation, ruleId, t, invalidateDetail, invalidateAfterLifecycleChange],
   );
@@ -287,7 +280,9 @@ function RegistryRuleDetailPage() {
   // rule into a fresh draft to author independently, without touching the
   // original (the standalone "Duplicate" menu item was removed — P24-C item
   // 12 — the clone endpoint stays, reached only via that JSON flow now).
-  const canEdit = (rule.status === "draft" || rule.status === "approved") && perms.canCreateRules;
+  const canEdit =
+    ((rule.status === "draft" || rule.status === "approved") && perms.canCreateRules) ||
+    (rule.status === "pending_approval" && perms.canApproveRules);
   const canDuplicate = perms.canCreateRules;
   const name = getTag(rule, RESERVED_NAME_KEY) || rule.rule_id;
 
@@ -330,20 +325,6 @@ function RegistryRuleDetailPage() {
     <>
       {canApproveReject && (
         <>
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-2 h-8 text-emerald-600 border-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950"
-            onClick={() => handleApprove(null)}
-            disabled={lifecycleBusy}
-          >
-            {approveMutation.isPending ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <CheckCircle2 className="h-3.5 w-3.5" />
-            )}
-            {t("rulesRegistry.actionApprove")}
-          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -497,6 +478,7 @@ function RegistryRuleDetailPage() {
           jsonDialogOpen={formJsonDialogOpen}
           onJsonDialogOpenChange={setFormJsonDialogOpen}
           headerActions={headerActions}
+          onApprove={canApproveReject ? () => handleApprove(null) : undefined}
           headerTitle={headerTitle}
         />
       </div>

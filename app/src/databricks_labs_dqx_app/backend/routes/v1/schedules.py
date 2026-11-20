@@ -223,6 +223,7 @@ def list_schedule_overview(
                     next_run_at=tracker.next_run_at if tracker else None,
                     last_run_id=tracker.last_run_id if tracker else None,
                     run_status=tracker.status if tracker else None,
+                    awaiting_approval=not table.version,
                 )
             )
         for detail in data_products.list_products():
@@ -250,6 +251,7 @@ def list_schedule_overview(
                     next_run_at=tracker.next_run_at if tracker else None,
                     last_run_id=tracker.last_run_id if tracker else None,
                     run_status=tracker.status if tracker else None,
+                    awaiting_approval=not product.version,
                 )
             )
         for entry in svc.list_schedules():
