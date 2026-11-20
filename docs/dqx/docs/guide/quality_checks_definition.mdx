@@ -419,6 +419,13 @@ Example `yaml` file defining several checks:
     arguments:
       column: try_element_at(col6, 1)
 
+# check every element of an array (array path, see the Quality Checks reference)
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      column: col6[*]
+
 # check uniqueness of composite key
 - criticality: error
   check:

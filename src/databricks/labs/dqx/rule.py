@@ -12,7 +12,13 @@ from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 from pydantic.json_schema import WithJsonSchema
 from pyspark.sql import Column
 import pyspark.sql.functions as F
-from databricks.labs.dqx.utils import get_column_name_or_alias, normalize_bound_args, SparkColumn
+from databricks.labs.dqx.array_path import ArrayPath, has_array_wildcard, is_array_path_supported
+from databricks.labs.dqx.utils import (
+    get_column_name_or_alias,
+    normalize_bound_args,
+    normalize_col_str,
+    SparkColumn,
+)
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidParameterError
 
 logger = logging.getLogger(__name__)
@@ -240,7 +246,9 @@ class DQRule(BaseModel, abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleCol
     * *criticality* (optional) - Defines the severity level of the check:
         - *error*: Critical issues.
         - *warn*: Potential issues.
-    * *column* (optional) - A single column to which the check function is applied.
+    * *column* (optional) - A single column to which the check function is applied. For row-level rules, a
+        column string containing "[*]" outside quotes is an array path (e.g. "users[*].events[*].event_date"):
+        the check is applied to every element the path reaches, and the row fails if any element fails.
     * *columns* (optional) - A list of columns to which the check function is applied.
     * *filter* (optional) - A filter expression to apply the check only to rows meeting specific conditions.
     * *check_func_args* (optional) - Positional arguments for the check function (excluding *column*).
@@ -360,10 +368,14 @@ class DQRule(BaseModel, abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleCol
         Prepares positional arguments and keyword arguments for the check function.
         Includes only arguments supported by the check function and skips empty values.
         """
+        return self._prepare_check_func_args_and_kwargs_for_column(self.column)
+
+    def _prepare_check_func_args_and_kwargs_for_column(self, column: str | Column | None) -> tuple[list, dict]:
+        """Prepares the check function arguments, passing *column* as the column argument."""
         sig = inspect.signature(self.check_func)
 
-        args = self._build_args(sig)
-        kwargs = self._build_kwargs(sig)
+        args = self._build_args(sig, column)
+        kwargs = self._build_kwargs(sig, column)
 
         return args, kwargs
 
@@ -487,7 +499,7 @@ class DQRule(BaseModel, abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleCol
         if self.column is not None and self.columns is not None:
             raise InvalidCheckError("Both 'column' and 'columns' cannot be provided at the same time.")
 
-    def _build_args(self, sig: inspect.Signature) -> list:
+    def _build_args(self, sig: inspect.Signature, column: str | Column | None) -> list:
         """
         Builds the list of positional arguments for the check function.
         Include column and columns in the args if they are provided but not optional.
@@ -495,7 +507,7 @@ class DQRule(BaseModel, abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleCol
         args: list[Any] = []
 
         if not self._is_optional_argument(sig, "column"):
-            args += self._build_column_args(self.column, sig.parameters)
+            args += self._build_column_args(column, sig.parameters)
 
         if not self._is_optional_argument(sig, "columns"):
             args += self._build_columns_args(self.columns, sig.parameters)
@@ -503,7 +515,7 @@ class DQRule(BaseModel, abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleCol
         args += self.check_func_args
         return args
 
-    def _build_kwargs(self, sig: inspect.Signature) -> dict:
+    def _build_kwargs(self, sig: inspect.Signature, column: str | Column | None) -> dict:
         """
         Builds the dictionary of keyword arguments for the check function.
         Include column and columns in the kwargs if they are provided but optional.
@@ -511,8 +523,8 @@ class DQRule(BaseModel, abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleCol
         kwargs = dict(self.check_func_kwargs)  # Copy to avoid side effects
 
         if self._is_optional_argument(sig, "column"):
-            if self.column is not None:
-                kwargs["column"] = self.column
+            if column is not None:
+                kwargs["column"] = column
         else:
             kwargs.pop("column", None)  # Ensure required args aren't duplicated in kwargs
 
@@ -575,10 +587,56 @@ class DQRowRule(DQRule):
         return check_condition
 
     @ft.cached_property
+    def array_path(self) -> ArrayPath | None:
+        """The parsed array path if the rule applies its check to array elements, otherwise None.
+
+        A rule applies its check to array elements when *column* is a string containing "[*]" outside
+        back-quoted names and quoted SQL strings, and the check function takes a *column* parameter.
+
+        Returns:
+            The parsed array path, or None.
+
+        Raises:
+            InvalidCheckError: If the array path is malformed.
+        """
+        if not isinstance(self.column, str) or not has_array_wildcard(self.column):
+            return None
+        if "column" not in inspect.signature(self.check_func).parameters:
+            return None
+        return ArrayPath.parse(self.column)
+
+    @ft.cached_property
     def check(self) -> Column:
+        """The check condition: a message column that is null when the check passes."""
+        if self.array_path is not None:
+            return self._build_array_path_check(self.array_path)
         args, kwargs = self.prepare_check_func_args_and_kwargs()
         condition = self.check_func(*args, **kwargs)
         return condition
+
+    def _validate_attributes(self) -> None:
+        super()._validate_attributes()
+        if self.array_path is not None and not is_array_path_supported(self.check_func):
+            raise InvalidCheckError(
+                f"Check function '{self.check_func.__name__}' does not support array paths with '[*]': "
+                f"'{self.column}'."
+            )
+
+    def _build_array_path_check(self, array_path: ArrayPath) -> Column:
+        """Wraps the check function so it is applied to every element the array path reaches.
+
+        The check function is never called with the raw path string. The default name is taken from the
+        check applied to a placeholder column named after the normalized path, so it follows the usual naming.
+        """
+
+        def element_check(element: Column) -> Column:
+            args, kwargs = self._prepare_check_func_args_and_kwargs_for_column(element)
+            return self.check_func(*args, **kwargs)
+
+        # The normalized path only contains [a-z0-9_], so it is a plain column name that needs no quoting.
+        placeholder = F.col(normalize_col_str(array_path.path) or "array")
+        alias = get_column_name_or_alias(element_check(placeholder), normalize=True)
+        return array_path.build_condition(element_check, self.check_func.__name__, alias)
 
 
 class DQDatasetRule(DQRule):

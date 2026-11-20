@@ -7209,6 +7209,9 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column=F.array_max("col4"),
             check_func_kwargs={"limit": 10},
         ),
+        # is_not_null and is_in_range checks applied to every element of an array column (array path)
+        DQRowRule(criticality="error", check_func=check_funcs.is_not_null, column="col4[*]"),
+        DQRowRule(criticality="error", check_func=check_funcs.is_in_range, column="col4[*]", check_func_args=[1, 10]),
         # sql_expression check applied to a map column element
         DQRowRule(
             criticality="error",
