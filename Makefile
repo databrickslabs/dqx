@@ -270,6 +270,11 @@ mcp-test: ## Run MCP server pytest suite (K=<expr> filter)
 mcp-check: ## Type-check the MCP server with basedpyright (standard mode, errors only)
 	cd mcp-server && uv run --with basedpyright basedpyright --level error server
 
+# The lean server environment has no Spark/DQX imports. Use the root test environment
+# for the runner tests; they inject mocks and never start Spark or call a workspace.
+mcp-runner-test: ## Test runner reference handling and cleanup without a live Spark session
+	$(UV_RUN) pytest -c mcp-server/pyproject.toml mcp-server/tests/test_runner_reference_views.py -q
+
 # One-command MCP server deploy (parity with app-deploy). Ensures the runner-wheel volume
 # exists, deploys the bundle (app + runner job + setup job), runs the one-time setup job (UC
 # grants + temp-schema ownership), then deploys & starts the app via ``bundle run``. The catalog

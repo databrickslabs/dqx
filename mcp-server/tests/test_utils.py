@@ -18,6 +18,25 @@ from databricks.sdk.service.jobs import (
 _JOB_ID_ENV = {"DQX_RUNNER_JOB_ID": "42", "DQX_CATALOG": "cat", "DQX_TMP_SCHEMA": "dqx_mcp_tmp"}
 
 
+class TestSanitizeForLog:
+    @pytest.mark.parametrize(
+        "control",
+        [chr(code) for code in range(32)]
+        + [chr(code) for code in range(127, 160)]
+        + [chr(code) for code in (0x200B, 0x202E, 0x2028, 0x2029)],
+    )
+    def test_replaces_control_characters_with_spaces(self, control: str) -> None:
+        from server.utils import sanitize_for_log
+
+        assert sanitize_for_log(f"catalog.{control}table") == "catalog. table"
+
+    @pytest.mark.parametrize("value", ["plain_table", "München_顧客_Δ", 42, None])
+    def test_preserves_ordinary_text_and_stringifies_other_values(self, value: object) -> None:
+        from server.utils import sanitize_for_log
+
+        assert sanitize_for_log(value) == str(value)
+
+
 def _make_terminated_run(result_state: RunResultState, run_id: int = 123) -> MagicMock:
     """Build a mock Run that has finished, with a single task."""
     run = MagicMock(spec=Run)
