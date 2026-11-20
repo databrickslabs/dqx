@@ -7,6 +7,7 @@ thin adapters over ``RegistryService``, whose behaviour is already covered
 by ``test_registry_service.py``.
 """
 
+import logging
 from unittest.mock import MagicMock, create_autospec
 
 import pytest
@@ -303,7 +304,7 @@ class TestBatchImport:
             role=UserRole.RULE_AUTHOR,
         )
         assert result.submitted == 1
-        svc.submit.assert_called_once_with("r1", "alice@x")
+        svc.submit.assert_called_once_with("r1", "alice@x", label_definitions=[])
 
     def test_batch_import_auto_approve_publishes_outright(self):
         svc = MagicMock()
@@ -325,7 +326,7 @@ class TestBatchImport:
         )
         assert result.submitted == 1
         # Publishing is submit THEN approve, both against the created rule.
-        svc.submit.assert_called_once_with("r1", "carol@x")
+        svc.submit.assert_called_once_with("r1", "carol@x", label_definitions=[])
         svc.approve.assert_called_once_with("r1", "carol@x")
         # …and the published rule is embedded so it enters the suggestion corpus.
         embeddings.embed_and_store.assert_called_once_with(approved)
@@ -700,6 +701,95 @@ class TestBatchImport:
         assert svc.create_rule.call_args.kwargs["user_metadata"] == {"dimension": "completeness"}
 
 
+class TestBatchImportTagDefaults:
+    @staticmethod
+    def _settings(defs: list[dict]) -> MagicMock:
+        app_settings = MagicMock()
+        app_settings.get_label_definitions.return_value = defs
+        return app_settings
+
+    def test_imported_rules_get_default_tags(self):
+        svc = MagicMock()
+        svc.create_rule.return_value = (_rule("r1"), None)
+        body = BatchImportRegistryRulesIn(rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())])
+        batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=self._settings([{"key": "team", "values": ["a", "b"], "default_value": "b"}]),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert svc.create_rule.call_args.kwargs["user_metadata"] == {"team": "b"}
+
+    def test_also_submit_skipped_when_required_tag_has_no_default(self):
+        svc = MagicMock()
+        svc.create_rule.return_value = (_rule("r1"), None)
+        body = BatchImportRegistryRulesIn(
+            rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())], also_submit=True
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=self._settings([{"key": "team", "values": ["a"], "required": True}]),
+            user_email="alice@x",
+            role=UserRole.RULE_AUTHOR,
+        )
+        assert result.saved == 1
+        assert result.submit_failed == 1
+        assert svc.create_rule.call_args.kwargs["user_metadata"] == {"team": ""}
+        svc.submit.assert_not_called()
+
+    def test_auto_approve_skipped_when_required_tag_has_no_default(self):
+        svc = MagicMock()
+        svc.create_rule.return_value = (_rule("r1"), None)
+        body = BatchImportRegistryRulesIn(
+            rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())], auto_approve=True
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=self._settings([{"key": "team", "values": ["a"], "required": True}]),
+            user_email="alice@x",
+            role=UserRole.ADMIN,
+        )
+        assert result.saved == 1
+        assert result.submit_failed == 1
+        svc.submit.assert_not_called()
+        svc.approve.assert_not_called()
+
+    def test_missing_required_tag_log_escapes_newlines(self, caplog):
+        from databricks_labs_dqx_app.backend.logger import logger as app_logger
+
+        svc = MagicMock()
+        svc.create_rule.return_value = (_rule("r1"), None)
+        body = BatchImportRegistryRulesIn(
+            rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())], also_submit=True
+        )
+        app_logger.addHandler(caplog.handler)
+        try:
+            with caplog.at_level(logging.WARNING):
+                batch_import_registry_rules(
+                    body=body,
+                    svc=svc,
+                    embeddings=MagicMock(),
+                    app_settings=self._settings([{"key": "team\r\nforged", "values": ["a"], "required": True}]),
+                    user_email="alice@x",
+                    role=UserRole.RULE_AUTHOR,
+                )
+            messages = [
+                record.getMessage() for record in caplog.records if "Batch import created" in record.getMessage()
+            ]
+            assert len(messages) == 1
+            assert "team\\r\\nforged" in messages[0]
+            assert "\r" not in messages[0]
+            assert "\n" not in messages[0]
+        finally:
+            app_logger.removeHandler(caplog.handler)
+
+
 class TestCreateAndUpdateContinued:
     def test_update_rejects_non_draft_with_400(self):
         svc = MagicMock()
@@ -905,6 +995,29 @@ class TestLifecycleRoutes:
         with pytest.raises(HTTPException) as excinfo:
             submit_registry_rule("r1", svc=svc, user_email="alice@x", **self._submit_deps())
         assert excinfo.value.status_code == 400
+
+    def test_submit_maps_missing_required_tag_error_to_400(self):
+        svc = MagicMock()
+        svc.submit.side_effect = ValueError("Missing required tag(s): owner_group. Add a value before submitting.")
+        with pytest.raises(HTTPException) as excinfo:
+            submit_registry_rule("r1", svc=svc, user_email="alice@x", **self._submit_deps())
+        assert excinfo.value.status_code == 400
+        assert "owner_group" in excinfo.value.detail
+
+    def test_submit_allowed_when_service_accepts_rule(self):
+        svc = MagicMock()
+        svc.submit.return_value = _rule(status="pending_approval")
+        result = submit_registry_rule("r1", svc=svc, user_email="alice@x", **self._submit_deps())
+        assert result.status == "pending_approval"
+
+    def test_submit_maps_unavailable_label_definitions_to_500(self):
+        from databricks_labs_dqx_app.backend.services.registry_service import LabelDefinitionsUnavailableError
+
+        svc = MagicMock()
+        svc.submit.side_effect = LabelDefinitionsUnavailableError("Could not load tag definitions")
+        with pytest.raises(HTTPException) as excinfo:
+            submit_registry_rule("r1", svc=svc, user_email="alice@x", **self._submit_deps())
+        assert excinfo.value.status_code == 500
 
     def test_approve_success(self):
         svc = MagicMock()

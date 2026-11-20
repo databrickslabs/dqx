@@ -343,14 +343,14 @@
     "addLabelDefinition": "Ajouter une définition d'étiquette",
     "definitionsActive_one": "{{count}} définition active",
     "definitionsActive_other": "{{count}} définitions actives",
-    "labelKeyInvalid": "La clé « {{key}} » doit commencer par une lettre et ne contenir que des lettres, des chiffres et des tirets bas.",
+    "labelKeyInvalid": "La clé « {{key}} » doit commencer par une lettre ou un chiffre et ne contenir que des lettres, chiffres, espaces, points, tirets bas, tirets et barres obliques.",
     "labelKeyDuplicate": "Clé « {{key}} » en double.",
     "clearedLabels": "Étiquettes de règles effacées.",
     "savedLabels_one": "{{count}} étiquette de règle enregistrée.",
     "savedLabels_other": "{{count}} étiquettes de règles enregistrées.",
     "failedSaveLabels": "Échec de l'enregistrement des définitions d'étiquettes",
     "key": "Clé",
-    "keyHint": "Lettres, chiffres, tiret bas. Doit commencer par une lettre.",
+    "keyHint": "Commence par une lettre ou un chiffre. Utilise ensuite des lettres, chiffres, espaces, points, tirets bas, tirets ou barres obliques.",
     "weightHint": "Alimente le sélecteur de poids sur les pages de rédaction de règles.",
     "builtinKeyLockedTooltip": "Clé intégrée — le nom et la description ne peuvent pas être modifiés.",
     "builtinCannotDelete": "Les clés intégrées ne peuvent pas être supprimées.",
@@ -539,7 +539,15 @@
     "governedKeyEmpty": "Aucune clé d'étiquette gouvernée disponible.",
     "governedKeyValueCount_one": "{{count}} valeur",
     "governedKeyValueCount_other": "{{count}} valeurs",
-    "demoDeployShort": "Déployer"
+    "demoDeployShort": "Déployer",
+    "tagOptions": "Options",
+    "mandatoryTag": "Obligatoire",
+    "mandatoryTagHint": "Chaque règle reçoit ce tag et doit lui attribuer une valeur avant d'être soumise.",
+    "mandatoryTagBuiltinHint": "Toujours requis avant qu'une règle puisse être soumise.",
+    "allowCustomValuesHint": "Les auteurs de règles peuvent saisir une valeur absente de la liste.",
+    "defaultValueLabel": "Par défaut",
+    "defaultValueBadge": "Par défaut",
+    "defaultValueHint": "Renseigne cette valeur dans les nouvelles règles. Une seule valeur par défaut par tag."
   },
   "discovery": {
     "breadcrumb": "Découverte",
@@ -918,6 +926,8 @@
       "previewFailed": "Impossible de construire le plan d'import.",
       "generateFailedFor": "Échec de la génération des règles depuis {{filename}}",
       "batchFailed": "Un lot de règles n'a pas pu être importé.",
+      "submitFailed_one": "{{count}} règle est restée brouillon car sa soumission a échoué",
+      "submitFailed_other": "{{count}} règles sont restées brouillons car leur soumission a échoué",
       "ruleCreateFailed_one": "Échec de la création de {{count}} règle",
       "ruleCreateFailed_other": "Échec de la création de {{count}} règles",
       "ruleCreateFailedNamed": "{{name}}: {{error}}",
@@ -935,6 +945,7 @@
       "applied": "appliquée(s)",
       "pending": "en attente d'approbation",
       "needsMapping": "mapping requis",
+      "submitFailed": "échec de soumission",
       "failed": "échec",
       "errors": "Erreurs",
       "attention": "Tables nécessitant un suivi",
@@ -1536,7 +1547,8 @@
     "customKeyPlaceholder": "clé personnalisée…",
     "set": "Définir",
     "currentNotInCatalog": "La valeur actuelle {{value}} n'est pas dans le catalogue.",
-    "clickToToggle": "cliquez pour basculer"
+    "clickToToggle": "cliquez pour basculer",
+    "requiredTag": "Obligatoire"
   },
   "labelFilter": {
     "allLabels": "Toutes les étiquettes",
@@ -2052,6 +2064,7 @@
     "joinPickSchemaPlaceholder": "Sélectionner un schéma…",
     "joinPickTablePlaceholder": "Sélectionner une table…",
     "sourceMarketplace": "Marketplace",
+    "requiredTagsMissing": "Valeurs des tags obligatoires ({{tags}})",
     "groupUncategorized": "Non catégorisé",
     "groupUnowned": "Sans propriétaire",
     "columnTypeGroup": {

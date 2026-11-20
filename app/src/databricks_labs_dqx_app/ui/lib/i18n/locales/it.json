@@ -343,14 +343,14 @@
     "addLabelDefinition": "Add new key",
     "definitionsActive_one": "{{count}} definizione attiva",
     "definitionsActive_other": "{{count}} definizioni attive",
-    "labelKeyInvalid": "La chiave \"{{key}}\" deve iniziare con una lettera e contenere solo lettere, cifre e underscore.",
+    "labelKeyInvalid": "La chiave \"{{key}}\" deve iniziare con una lettera o una cifra e contenere solo lettere, cifre, spazi, punti, underscore, trattini e barre.",
     "labelKeyDuplicate": "Chiave duplicata \"{{key}}\".",
     "clearedLabels": "Etichette regole cancellate.",
     "savedLabels_one": "Salvata {{count}} etichetta regola.",
     "savedLabels_other": "Salvate {{count}} etichette regole.",
     "failedSaveLabels": "Impossibile salvare le definizioni delle etichette",
     "key": "Chiave",
-    "keyHint": "Lettere, cifre, underscore. Deve iniziare con una lettera.",
+    "keyHint": "Inizia con una lettera o una cifra. Poi usa lettere, cifre, spazi, punti, underscore, trattini o barre.",
     "weightHint": "Controlla il selettore di peso nelle pagine di creazione regole.",
     "builtinKeyLockedTooltip": "Chiave predefinita — il nome e la descrizione non possono essere modificati.",
     "builtinCannotDelete": "Le chiavi predefinite non possono essere eliminate.",
@@ -539,7 +539,15 @@
     "governedKeyEmpty": "Nessuna chiave di tag governata disponibile.",
     "governedKeyValueCount_one": "{{count}} valore",
     "governedKeyValueCount_other": "{{count}} valori",
-    "demoDeployShort": "Distribuisci"
+    "demoDeployShort": "Distribuisci",
+    "tagOptions": "Opzioni",
+    "mandatoryTag": "Obbligatorio",
+    "mandatoryTagHint": "Ogni regola riceve questo tag e deve avere un valore prima di poter essere inviata.",
+    "mandatoryTagBuiltinHint": "Sempre obbligatorio prima che una regola possa essere inviata.",
+    "allowCustomValuesHint": "Gli autori delle regole possono inserire un valore non presente nell'elenco.",
+    "defaultValueLabel": "Predefinito",
+    "defaultValueBadge": "Predefinito",
+    "defaultValueHint": "Compila questo valore nelle nuove regole. Un solo valore predefinito per tag."
   },
   "discovery": {
     "breadcrumb": "Esplorazione",
@@ -918,6 +926,8 @@
       "previewFailed": "Impossibile creare il piano di importazione.",
       "generateFailedFor": "Impossibile generare regole da {{filename}}",
       "batchFailed": "Un batch di regole non è stato importato.",
+      "submitFailed_one": "{{count}} regola è rimasta bozza perché l'invio non è riuscito",
+      "submitFailed_other": "{{count}} regole sono rimaste bozze perché l'invio non è riuscito",
       "ruleCreateFailed_one": "{{count}} regola non creata",
       "ruleCreateFailed_other": "{{count}} regole non create",
       "ruleCreateFailedNamed": "{{name}}: {{error}}",
@@ -935,6 +945,7 @@
       "applied": "applicate",
       "pending": "in attesa di approvazione",
       "needsMapping": "richiedono mappatura",
+      "submitFailed": "invio non riuscito",
       "failed": "non riuscite",
       "errors": "Errori",
       "attention": "Tabelle che richiedono follow-up",
@@ -1536,7 +1547,8 @@
     "customKeyPlaceholder": "chiave personalizzata…",
     "set": "Imposta",
     "currentNotInCatalog": "Il valore corrente {{value}} non è nel catalogo.",
-    "clickToToggle": "clicca per alternare"
+    "clickToToggle": "clicca per alternare",
+    "requiredTag": "Obbligatorio"
   },
   "labelFilter": {
     "allLabels": "Tutte le Etichette",
@@ -2052,6 +2064,7 @@
     "joinPickSchemaPlaceholder": "Seleziona schema…",
     "joinPickTablePlaceholder": "Seleziona tabella…",
     "sourceMarketplace": "Marketplace",
+    "requiredTagsMissing": "Valori dei tag obbligatori ({{tags}})",
     "groupUncategorized": "Senza categoria",
     "groupUnowned": "Senza responsabile",
     "columnTypeGroup": {

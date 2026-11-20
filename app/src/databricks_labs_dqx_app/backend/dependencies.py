@@ -399,12 +399,13 @@ async def get_registry_service(
     sql: Annotated[OltpExecutorProtocol, Depends(get_sp_oltp_executor)],
     perms: Annotated[PermissionsService, Depends(get_permissions_service)],
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+    app_settings: Annotated[AppSettingsService, Depends(get_app_settings_service)],
 ) -> RegistryService:
     """Create a RegistryService routed at the OLTP executor.
 
     The SP client resolves ``owner_display_name`` at write time via SCIM.
     """
-    return RegistryService(sql=sql, permissions=perms, sp_ws=sp_ws)
+    return RegistryService(sql=sql, permissions=perms, sp_ws=sp_ws, app_settings=app_settings)
 
 
 async def get_monitored_table_service(

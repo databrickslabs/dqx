@@ -75,6 +75,7 @@ import {
   chunk,
   classifyRuleMapping,
   resolveTableFqn,
+  shouldPreStageRule,
   type ContractResult,
   type SchemaOutcome,
 } from "@/lib/bulk-contract-import";
@@ -386,7 +387,7 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
           bindingId: string;
           tableFqn: string | null;
           ruleId: string;
-          approved: boolean;
+          status: string;
           groups: Record<string, string>[];
           groupKeys: Set<string>;
           outcomes: SchemaOutcome[];
@@ -407,6 +408,7 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
           applied: 0,
           pending: 0,
           needsMapping: 0,
+          submitFailed: 0,
           failed: entry.parseErrors.length,
           errors: [...entry.parseErrors],
         };
@@ -439,6 +441,11 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
               ...created.map((cr) => ({ rule: cr.rule, reused: false, slotRenames: cr.slot_renames ?? {} })),
               ...reused.map((cr) => ({ rule: cr.rule, reused: true, slotRenames: cr.slot_renames ?? {} })),
             ];
+            const submitFailed = resp.data.submit_failed ?? 0;
+            if (submitFailed > 0) {
+              outcome.submitFailed += submitFailed;
+              outcome.errors.push(t("rulesBulkImport.errors.submitFailed", { count: submitFailed }));
+            }
             const failed = resp.data.failed ?? [];
             // Surface the real (server-sanitized) per-rule reason instead of a
             // bare count — the backend already scrubs unexpected errors down to
@@ -463,6 +470,9 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
             const rule = entryRule.rule;
             if (entryRule.reused) outcome.reused += 1;
             else outcome.created += 1;
+
+            // Drafts are not awaiting approval: never apply or pre-stage them.
+            if (rule.status !== "approved" && rule.status !== "pending_approval") continue;
 
             // Resolve the column mapping once — shared by the auto-apply path
             // (approved rules) and the pre-stage path (pending rules). A null
@@ -501,7 +511,7 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
                 bindingId: bindingId as string,
                 tableFqn: entry.tableFqn,
                 ruleId: rule.rule_id,
-                approved: rule.status === "approved",
+                status: rule.status,
                 groups: [],
                 groupKeys: new Set(),
                 outcomes: [],
@@ -525,7 +535,7 @@ export function BulkContractImportWorkspace({ onDone }: { onDone: () => void }) 
         // the (already de-duped) error messages — otherwise a 3-column apply
         // reports applied/failed/pending=3 against a single operation.
         const affectedOutcomes = new Set(target.outcomes);
-        if (!target.approved) {
+        if (shouldPreStageRule(target.status)) {
           // Rule is awaiting approval — pre-stage the application so it
           // activates automatically when the rule is approved.
           pendingRecords.push({
@@ -1114,6 +1124,9 @@ function ContractResultRow({ result }: { result: ContractResult }) {
               value={result.needsMapping}
               tone="warn"
             />
+          )}
+          {result.submitFailed > 0 && (
+            <Stat label={t("rulesBulkImport.results.submitFailed")} value={result.submitFailed} tone="bad" />
           )}
           {result.failed > 0 && (
             <Stat label={t("rulesBulkImport.results.failed")} value={result.failed} tone="bad" />

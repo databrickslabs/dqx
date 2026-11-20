@@ -6,8 +6,8 @@
  * `LabelDefinition` — same shape plus a client-only `draftId` used as the
  * stable React key while rows are added/removed. `draftToDef` is where all
  * save-time normalisation lives: values are trimmed, and the per-value maps
- * (`value_colors` / `value_descriptions` / `value_criticality`) are pruned to
- * surviving values and validated, mirroring the server-side pruning in
+ * (`value_colors` / `value_descriptions` / `value_criticality`) and the
+ * `default_value` are pruned to surviving values and validated, mirroring the server-side pruning in
  * `backend/routes/v1/config.py::save_label_definitions` so the optimistic
  * dirty-diff (`JSON.stringify` against the server copy) stays stable.
  *
@@ -17,6 +17,14 @@
 import type { LabelDefinition } from "@/lib/api-custom";
 
 export const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
+/** Human-readable JSON/YAML tag key; first character must be alphanumeric. */
+export const LABEL_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9 _./-]*$/;
+
+/** Whether a click outside the tag card should close its expanded value row. */
+export function shouldCloseExpandedValue(target: HTMLElement | null, card: HTMLDivElement | null): boolean {
+  if (!target || card?.contains(target)) return false;
+  return !target.closest("[data-radix-popper-content-wrapper]");
+}
 
 /** The two DQX criticalities a severity value can map to — mirrors the
  * backend's `LabelDefinitionModel` validator (`"warn" | "error"` only). */
@@ -37,8 +45,32 @@ export function defToDraft(d: LabelDefinition): DraftDefinition {
     value_colors: d.value_colors ? { ...d.value_colors } : null,
     value_descriptions: d.value_descriptions ? { ...d.value_descriptions } : null,
     value_criticality: d.value_criticality ? { ...d.value_criticality } : null,
+    required: !!d.required,
+    default_value: d.default_value ?? null,
     is_builtin: !!d.is_builtin,
   };
+}
+
+/** Reserved keys with their own submit-gated rule fields. The generic
+ * "Mandatory" flag never applies to them. */
+export const SELF_GATED_TAG_KEYS: ReadonlySet<string> = new Set(["dimension", "severity"]);
+
+/** Apply a save response without remounting cards or overwriting newer edits.
+ * Matching responses keep each card's draftId stable. A response for an older
+ * edit revision returns the current drafts unchanged. */
+export function reconcileSavedLabelDrafts(
+  current: DraftDefinition[],
+  saved: LabelDefinition[],
+  saveRevision: number,
+  currentRevision: number,
+): DraftDefinition[] {
+  if (saveRevision !== currentRevision) return current;
+  const idsByKey = new Map(current.map((draft) => [draft.key.trim(), draft.draftId]));
+  return saved.map((definition) => {
+    const draft = defToDraft(definition);
+    const existingId = idsByKey.get(draft.key.trim());
+    return existingId ? { ...draft, draftId: existingId } : draft;
+  });
 }
 
 export function draftToDef(d: DraftDefinition): LabelDefinition {
@@ -58,14 +90,18 @@ export function draftToDef(d: DraftDefinition): LabelDefinition {
       criticality[value] = crit;
     }
   }
+  const key = d.key.trim();
+  const defaultValue = (d.default_value ?? "").trim();
   return {
-    key: d.key.trim(),
+    key,
     description: (d.description ?? "").trim(),
     values,
     allow_custom_values: d.allow_custom_values,
     value_colors: Object.keys(colors).length > 0 ? colors : null,
     value_descriptions: Object.keys(descriptions).length > 0 ? descriptions : null,
     value_criticality: Object.keys(criticality).length > 0 ? criticality : null,
+    required: SELF_GATED_TAG_KEYS.has(key) ? false : !!d.required,
+    default_value: valueSet.has(defaultValue) ? defaultValue : null,
     is_builtin: !!d.is_builtin,
   };
 }

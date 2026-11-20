@@ -7,6 +7,7 @@ read real SQL/JSON rather than MagicMock reprs.
 """
 
 import json
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -27,8 +28,15 @@ def sql(sql_executor_mock):
 
 
 @pytest.fixture
-def svc(sql):
-    return RegistryService(sql=sql)
+def app_settings():
+    settings = MagicMock()
+    settings.get_label_definitions.return_value = []
+    return settings
+
+
+@pytest.fixture
+def svc(sql, app_settings):
+    return RegistryService(sql=sql, app_settings=app_settings)
 
 
 def _native_definition(column: str = "id") -> RuleDefinition:
@@ -672,6 +680,54 @@ class TestLifecycle:
         sql.query.return_value = [_row_for(self._rule("deprecated", version=1))]
         with pytest.raises(ValueError, match="Cannot transition"):
             svc.submit("r1", "alice@x")
+
+    def test_submit_rejects_missing_required_tag(self, sql, app_settings):
+        app_settings.get_label_definitions.return_value = [{"key": "owner_group", "values": ["a"], "required": True}]
+        sql.query.return_value = [_row_for(self._rule("draft"))]
+        svc = RegistryService(sql=sql, app_settings=app_settings)
+        with pytest.raises(ValueError, match="owner_group"):
+            svc.submit("r1", "alice@x")
+        sql.execute.assert_not_called()
+
+    def test_submit_fails_closed_when_label_definitions_are_unavailable(self, sql, app_settings):
+        from databricks_labs_dqx_app.backend.services.registry_service import LabelDefinitionsUnavailableError
+
+        app_settings.get_label_definitions.side_effect = RuntimeError("settings unavailable")
+        sql.query.return_value = [_row_for(self._rule("draft"))]
+        svc = RegistryService(sql=sql, app_settings=app_settings)
+        with pytest.raises(LabelDefinitionsUnavailableError, match="tag definitions"):
+            svc.submit("r1", "alice@x")
+        sql.execute.assert_not_called()
+
+    def test_submit_reads_fresh_label_definitions_per_submission(self, sql, app_settings):
+        first = self._rule("draft")
+        second = self._rule("draft").model_copy(update={"rule_id": "r2"})
+        sql.query.side_effect = [
+            [_row_for(first)],
+            [_row_for(first)],
+            [_row_for(second)],
+            [_row_for(second)],
+        ]
+        svc = RegistryService(sql=sql, app_settings=app_settings)
+        svc.submit("r1", "alice@x")
+        svc.submit("r2", "alice@x")
+        assert app_settings.get_label_definitions.call_count == 2
+        assert sql.query.call_count == 4
+
+    def test_batch_submit_shares_label_definitions_without_duplicate_rule_reads(self, sql, app_settings):
+        first = self._rule("draft")
+        second = self._rule("draft").model_copy(update={"rule_id": "r2"})
+        sql.query.side_effect = [
+            [_row_for(first)],
+            [_row_for(first)],
+            [_row_for(second)],
+            [_row_for(second)],
+        ]
+        svc = RegistryService(sql=sql, app_settings=app_settings)
+        svc.submit("r1", "alice@x", label_definitions=[])
+        svc.submit("r2", "alice@x", label_definitions=[])
+        app_settings.get_label_definitions.assert_not_called()
+        assert sql.query.call_count == 4
 
     def test_reject_first_draft_is_terminal(self, svc, sql):
         """Rejecting a first-time draft's review (version 0) is terminal."""
@@ -1320,6 +1376,20 @@ class TestMatchOrCreateApprovedRule:
         assert any("INSERT INTO dqx_test.dqx_app_test.dq_rules " in s for s in executed)
         assert any("INSERT INTO dqx_test.dqx_app_test.dq_rule_versions" in s for s in executed)
 
+    def test_match_or_create_rejects_missing_required_tag(self, sql, app_settings):
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        app_settings.get_label_definitions.return_value = [{"key": "owner_group", "values": ["a"], "required": True}]
+        draft = RegistryRule(
+            rule_id="new1", mode="dqx_native", status="draft", version=0, definition=_native_definition()
+        )
+        sql.query.side_effect = [[], [], [], [_row_for(draft)]]
+        svc = RegistryService(sql=sql, app_settings=app_settings)
+        with pytest.raises(ValueError, match="owner_group"):
+            svc.match_or_create_approved_rule(_native_definition(), {}, "alice@x")
+        executed = [c.args[0] for c in sql.execute.call_args_list]
+        assert not any("dq_rule_versions" in statement for statement in executed)
+
     def test_new_rule_attributed_to_profiling(self, svc, sql):
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule
 
@@ -1353,7 +1423,7 @@ class TestMatchOrCreateApprovedRule:
         assert "'profiling'" in insert
         assert "'ai_assisted'" in insert
 
-    def test_match_or_create_seeds_grants_on_create(self, sql):
+    def test_match_or_create_seeds_grants_on_create(self, sql, app_settings):
         """match_or_create_approved_rule seeds grants when it creates a new rule (created=True).
 
         Since match_or_create_approved_rule delegates to create_rule, the seeding
@@ -1367,7 +1437,7 @@ class TestMatchOrCreateApprovedRule:
         from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 
         perms = create_autospec(PermissionsService, instance=True)
-        svc = RegistryService(sql=sql, permissions=perms)
+        svc = RegistryService(sql=sql, permissions=perms, app_settings=app_settings)
 
         # Build rows for the newly created rule at different lifecycle stages
         defn = _native_definition()
@@ -1420,7 +1490,7 @@ class TestMatchOrCreateApprovedRule:
         assert call_args.kwargs["owner_email"] == "alice@x"
         assert call_args.kwargs["grantor"] == "alice@x"
 
-    def test_match_or_create_does_not_seed_on_match(self, sql):
+    def test_match_or_create_does_not_seed_on_match(self, sql, app_settings):
         """match_or_create_approved_rule does NOT seed when it matches an existing rule."""
         from unittest.mock import create_autospec
         from databricks_labs_dqx_app.backend.registry_fingerprint import compute_registry_rule_fingerprint
@@ -1428,7 +1498,7 @@ class TestMatchOrCreateApprovedRule:
         from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 
         perms = create_autospec(PermissionsService, instance=True)
-        svc = RegistryService(sql=sql, permissions=perms)
+        svc = RegistryService(sql=sql, permissions=perms, app_settings=app_settings)
 
         defn = _native_definition()
         existing = RegistryRule(rule_id="existing-r1", mode="dqx_native", status="approved", version=1, definition=defn)

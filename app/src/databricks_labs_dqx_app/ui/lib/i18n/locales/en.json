@@ -343,14 +343,14 @@
     "addLabelDefinition": "Add new key",
     "definitionsActive_one": "{{count}} definition active",
     "definitionsActive_other": "{{count}} definitions active",
-    "labelKeyInvalid": "Key \"{{key}}\" must start with a letter and contain only letters, digits, and underscores.",
+    "labelKeyInvalid": "Key \"{{key}}\" must start with a letter or digit and contain only letters, digits, spaces, dots, underscores, hyphens, and slashes.",
     "labelKeyDuplicate": "Duplicate key \"{{key}}\".",
     "clearedLabels": "Cleared rule labels.",
     "savedLabels_one": "Saved {{count}} rule label.",
     "savedLabels_other": "Saved {{count}} rule labels.",
     "failedSaveLabels": "Failed to save label definitions",
     "key": "Key",
-    "keyHint": "Letters, digits, underscore. Must start with a letter.",
+    "keyHint": "Start with a letter or digit. Then use letters, digits, spaces, dots, underscores, hyphens, or slashes.",
     "weightHint": "Drives the weight picker on rule authoring pages.",
     "builtinKeyLockedTooltip": "Built-in key — the name and description can't be changed.",
     "builtinCannotDelete": "Built-in keys can't be deleted.",
@@ -539,7 +539,15 @@
     "governedKeyEmpty": "No governed tag keys available.",
     "governedKeyValueCount_one": "{{count}} value",
     "governedKeyValueCount_other": "{{count}} values",
-    "demoDeployShort": "Deploy"
+    "demoDeployShort": "Deploy",
+    "tagOptions": "Options",
+    "mandatoryTag": "Mandatory",
+    "mandatoryTagHint": "Every rule gets this tag and needs a value before it can be submitted.",
+    "mandatoryTagBuiltinHint": "Always required before a rule can be submitted.",
+    "allowCustomValuesHint": "Rule authors can enter a value that isn't in the list.",
+    "defaultValueLabel": "Default",
+    "defaultValueBadge": "Default",
+    "defaultValueHint": "Pre-fill this value on new rules. One default per tag."
   },
   "discovery": {
     "breadcrumb": "Discovery",
@@ -918,6 +926,8 @@
       "previewFailed": "Couldn't build the import plan.",
       "generateFailedFor": "Failed to generate rules from {{filename}}",
       "batchFailed": "A batch of rules failed to import.",
+      "submitFailed_one": "{{count}} rule stayed a draft because submission failed",
+      "submitFailed_other": "{{count}} rules stayed drafts because submission failed",
       "ruleCreateFailed_one": "{{count}} rule failed to create",
       "ruleCreateFailed_other": "{{count}} rules failed to create",
       "ruleCreateFailedNamed": "{{name}}: {{error}}",
@@ -935,6 +945,7 @@
       "applied": "applied",
       "pending": "awaiting approval",
       "needsMapping": "need mapping",
+      "submitFailed": "submission failed",
       "failed": "failed",
       "errors": "Errors",
       "attention": "Tables needing follow-up",
@@ -1536,7 +1547,8 @@
     "customKeyPlaceholder": "custom key…",
     "set": "Set",
     "currentNotInCatalog": "Current value {{value}} isn't in the catalog.",
-    "clickToToggle": "click to toggle"
+    "clickToToggle": "click to toggle",
+    "requiredTag": "Required"
   },
   "labelFilter": {
     "allLabels": "All Labels",
@@ -2052,6 +2064,7 @@
     "joinPickSchemaPlaceholder": "Select schema…",
     "joinPickTablePlaceholder": "Select table…",
     "sourceMarketplace": "Marketplace",
+    "requiredTagsMissing": "Mandatory tag values ({{tags}})",
     "groupUncategorized": "Uncategorized",
     "groupUnowned": "No owner",
     "columnTypeGroup": {
