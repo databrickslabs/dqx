@@ -38,8 +38,8 @@ def test_create_lakebase_check_storage_config_default_port():
     "instance_name,location,client_id,port,expected_error",
     [
         # Empty/None instance_name
-        ("", "testdb.testschema.testtable", "client_id", "5432", "Instance name must not be empty or None."),
-        (None, "testdb.testschema.testtable", "client_id", "5432", "Instance name must not be empty or None."),
+        ("", "testdb.testschema.testtable", "client_id", "5432", "Either 'instance_name' or 'endpoint' must be set."),
+        (None, "testdb.testschema.testtable", "client_id", "5432", "Either 'instance_name' or 'endpoint' must be set."),
         # Empty/None database
         ("instance", "", "client_id", "5432", "Location must not be empty or None."),
         ("instance", None, "client_id", "5432", "Location must not be empty or None."),
@@ -125,8 +125,8 @@ def test_invalid_location_format(location, expected_error):
 @pytest.mark.parametrize(
     "instance_name,expected_error",
     [
-        ("", "Instance name must not be empty or None."),
-        (None, "Instance name must not be empty or None."),
+        ("", "Either 'instance_name' or 'endpoint' must be set."),
+        (None, "Either 'instance_name' or 'endpoint' must be set."),
     ],
 )
 def test_invalid_instance_name(instance_name, expected_error):
@@ -211,7 +211,7 @@ def test_complex_location_with_special_characters():
 def test_eager_validation_on_init():
     """Test that validation happens eagerly during __post_init__."""
     # This should fail immediately during construction, not later
-    with pytest.raises(InvalidParameterError, match="Instance name must not be empty or None"):
+    with pytest.raises(InvalidParameterError, match="Either 'instance_name' or 'endpoint' must be set."):
         LakebaseChecksStorageConfig(
             instance_name="", location="testdb.testschema.testtable", client_id="00000000-0000-0000-0000-000000000000"
         )
@@ -225,7 +225,7 @@ def test_multiple_validation_errors_precedence():
 
 
 def test_lakebase_config_missing_instance_name():
-    with pytest.raises(InvalidParameterError, match="Instance name must not be empty or None"):
+    with pytest.raises(InvalidParameterError, match="Either 'instance_name' or 'endpoint' must be set."):
         LakebaseChecksStorageConfig(
             location="db.schema.table", instance_name=None, client_id="00000000-0000-0000-0000-000000000000"
         )
@@ -321,3 +321,40 @@ def test_replace_reruns_validation():
 
     with pytest.raises(InvalidConfigError, match="Invalid mode 'BOGUS'. Must be 'append' or 'overwrite'."):
         config.replace(mode="BOGUS")
+
+
+_ENDPOINT = "projects/dqx-studio-db/branches/production/endpoints/primary"
+
+
+def test_lakebase_config_accepts_autoscaling_endpoint():
+    """A Lakebase Autoscaling endpoint can be used instead of a database instance name."""
+    config = LakebaseChecksStorageConfig(location="databricks_postgres.dqx_studio.dq_rules_core", endpoint=_ENDPOINT)
+
+    assert config.endpoint == _ENDPOINT
+    assert config.instance_name is None
+    assert config.database_name == "databricks_postgres"
+
+
+def test_lakebase_config_rejects_both_instance_name_and_endpoint():
+    with pytest.raises(InvalidParameterError, match="Specify either 'instance_name' or 'endpoint', not both."):
+        LakebaseChecksStorageConfig(location="db.schema.table", instance_name="instance", endpoint=_ENDPOINT)
+
+
+def test_lakebase_config_requires_instance_name_or_endpoint():
+    with pytest.raises(InvalidParameterError, match="Either 'instance_name' or 'endpoint' must be set."):
+        LakebaseChecksStorageConfig(location="db.schema.table")
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "primary",
+        "projects/dqx-studio-db",
+        "projects/dqx-studio-db/branches/production",
+        "projects/dqx-studio-db/branches/production/endpoints/",
+        "projects/dqx-studio-db/branches/production/endpoints/primary/extra",
+    ],
+)
+def test_lakebase_config_rejects_invalid_endpoint(endpoint):
+    with pytest.raises(InvalidParameterError, match="Invalid Lakebase endpoint"):
+        LakebaseChecksStorageConfig(location="db.schema.table", endpoint=endpoint)
