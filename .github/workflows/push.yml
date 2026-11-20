@@ -200,3 +200,6 @@ jobs:
 
       - name: Run MCP server tests
         run: make mcp-test
+
+      - name: Run mocked MCP runner tests with DQX dependencies
+        run: make mcp-runner-test
