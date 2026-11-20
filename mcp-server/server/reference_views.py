@@ -9,17 +9,21 @@ tables. The monitored table is exposed this way, but the reference table was
 not, so reference checks failed when DQX Core resolved ``ref_table`` with
 ``spark.table(...)`` as the runner service principal.
 
-This module scans a checks list for reference tables, materialises one temp view
-per distinct reference table (via an injected ``create_view`` callable, which the
-tools wire to :func:`server.utils.create_temp_view` under the caller's OBO
-token), and rewrites each check's ``ref_table`` to its view. The runner then
-reads the reference through the temp view like any other input.
+This module materialises one temp view per distinct reference table (via an
+injected ``create_view`` callable, wired to :func:`server.utils.create_temp_view`
+under the caller's OBO token) and rewrites each check to read that view. Rather
+than putting the view FQN into ``ref_table`` — which would leak the random
+``tmp_view_…`` name into check messages and change the rule fingerprint every run
+— each check is switched to ``ref_df_name`` keyed by the *original* table name,
+and the runner supplies ``ref_dfs = {original_name: spark.table(view_fqn)}``. The
+original name is therefore what appears in check output and stays stable across
+runs.
 
-The ``create_view``/``drop_view`` callables are injected so the pure functions
-and the orchestration can be unit tested without Spark or a workspace. Views
-created by :func:`server.utils.create_temp_view` are always full (unsampled)
-``SELECT *`` views, which is required: a sampled reference set would drop valid
-keys and report false violations.
+Views produced by :func:`server.utils.create_temp_view` are always full
+(unsampled) ``SELECT *`` views, which is required: a sampled reference set would
+drop valid keys and report false violations. The ``create_view``/``drop_view``
+callables are injected so the pure functions and the orchestration can be unit
+tested without Spark or a workspace.
 """
 
 import copy
@@ -27,14 +31,15 @@ from collections.abc import Callable
 from typing import Any
 
 _REF_TABLE_ARG = "ref_table"
+_REF_DF_NAME_ARG = "ref_df_name"
 
 
 def _ref_table_of(check: dict[str, Any]) -> str | None:
     """Return the non-empty ``ref_table`` argument of one check, or ``None``.
 
     Tolerates malformed/partial check dicts (missing ``check``/``arguments``) and
-    checks that name an in-memory reference DataFrame via ``ref_df_name`` instead
-    of a table — those carry no ``ref_table`` and are left untouched.
+    checks that already name an in-memory reference DataFrame via ``ref_df_name``
+    — those carry no ``ref_table`` and are left untouched.
     """
     inner = check.get("check")
     if not isinstance(inner, dict):
@@ -62,13 +67,14 @@ def collect_reference_tables(checks: list[dict[str, Any]]) -> list[str]:
     return list(seen)
 
 
-def rewrite_reference_tables(checks: list[dict[str, Any]], view_by_table: dict[str, str]) -> list[dict[str, Any]]:
-    """Return a deep copy of *checks* with each ``ref_table`` swapped for its view.
+def rewrite_to_ref_df_name(checks: list[dict[str, Any]], handled: set[str]) -> list[dict[str, Any]]:
+    """Return a deep copy of *checks* with each handled ``ref_table`` swapped for ``ref_df_name``.
 
-    *view_by_table* maps an original reference-table FQN to the temporary-view
-    FQN that stands in for it. Checks whose ``ref_table`` is absent from the map
-    (or that have none) are copied through unchanged. The input list is never
-    mutated.
+    For every check whose ``ref_table`` is in *handled*, the ``ref_table`` argument
+    is removed and ``ref_df_name`` is set to the same (original) table name, so the
+    runner can resolve it from a ``ref_dfs`` entry keyed by that name. DQX Core
+    rejects a check that carries both, which is why ``ref_table`` is deleted. The
+    input list is never mutated; checks not in *handled* are copied unchanged.
     """
     rewritten = copy.deepcopy(checks)
     for check in rewritten:
@@ -79,8 +85,9 @@ def rewrite_reference_tables(checks: list[dict[str, Any]], view_by_table: dict[s
         if not isinstance(arguments, dict):
             continue
         ref = arguments.get(_REF_TABLE_ARG)
-        if isinstance(ref, str) and ref.strip() in view_by_table:
-            arguments[_REF_TABLE_ARG] = view_by_table[ref.strip()]
+        if isinstance(ref, str) and ref.strip() in handled:
+            del arguments[_REF_TABLE_ARG]
+            arguments[_REF_DF_NAME_ARG] = ref.strip()
     return rewritten
 
 
@@ -88,16 +95,21 @@ class ReferenceViews:
     """Outcome of exposing a checks list's reference tables as temp views.
 
     Attributes:
-        checks: The checks list with every ``ref_table`` rewritten to its view
-            FQN (the original list when there were no reference tables).
-        created_view_fqns: View FQNs this call created, in creation order, so the
-            caller can drop them if the job submission fails.
+        checks: The checks list with every handled ``ref_table`` rewritten to
+            ``ref_df_name`` (the original list when there were no reference tables).
+        ref_views: Map of original reference-table FQN to the temp-view FQN that
+            stands in for it. Passed to the runner, which builds
+            ``ref_dfs = {name: spark.table(view_fqn)}`` and drops the views when done.
+        created_view_fqns: View FQNs this call *created* (excludes a reused
+            monitored view), so the submitting caller can drop them if the job
+            submission fails.
     """
 
-    __slots__ = ("checks", "created_view_fqns")
+    __slots__ = ("checks", "created_view_fqns", "ref_views")
 
-    def __init__(self, checks: list[dict[str, Any]], created_view_fqns: list[str]) -> None:
+    def __init__(self, checks: list[dict[str, Any]], ref_views: dict[str, str], created_view_fqns: list[str]) -> None:
         self.checks = checks
+        self.ref_views = ref_views
         self.created_view_fqns = created_view_fqns
 
 
@@ -113,10 +125,10 @@ def build_reference_views(
 
     Each distinct ``ref_table`` is passed to *create_view* (wired to
     :func:`server.utils.create_temp_view`, which produces a full, unsampled view
-    under the caller's OBO token) and its ``ref_table`` is rewritten to the
-    returned view FQN. When a reference table equals the already-materialised
-    monitored table, its existing view is reused rather than creating a second
-    identical one.
+    under the caller's OBO token). When a reference table equals the already
+    materialised monitored table, its existing view is reused. The checks are then
+    rewritten from ``ref_table`` to ``ref_df_name`` (see
+    :func:`rewrite_to_ref_df_name`).
 
     Args:
         checks: The checks list to scan and rewrite.
@@ -130,31 +142,36 @@ def build_reference_views(
             partial failure never leaks views.
 
     Returns:
-        A :class:`ReferenceViews` with the rewritten checks and the FQNs created.
+        A :class:`ReferenceViews` with the rewritten checks, the name→view map, and
+        the FQNs created.
 
     Raises:
-        Propagates any error from *create_view* (after best-effort cleanup).
+        RuntimeError: If a reference table's view cannot be created (e.g. the
+            caller lacks SELECT on it); the message names the offending table.
     """
     ref_tables = collect_reference_tables(checks)
     if not ref_tables:
-        return ReferenceViews(checks, [])
+        return ReferenceViews(checks, {}, [])
 
     view_by_table: dict[str, str] = {}
     created: list[str] = []
-    try:
-        for ref in ref_tables:
-            if monitored_table_fqn and monitored_view_fqn and ref == monitored_table_fqn:
-                # Reuse the monitored view for a self-referential check; it is
-                # itself an unsampled full view, so results stay correct.
-                view_by_table[ref] = monitored_view_fqn
-                continue
+    for ref in ref_tables:
+        if monitored_table_fqn and monitored_view_fqn and ref == monitored_table_fqn:
+            # Reuse the monitored view for a self-referential check; it is itself
+            # an unsampled full view, so results stay correct.
+            view_by_table[ref] = monitored_view_fqn
+            continue
+        try:
             view_fqn = create_view(ref)
-            view_by_table[ref] = view_fqn
-            created.append(view_fqn)
-    except Exception:
-        if drop_view is not None:
-            for view_fqn in created:
-                drop_view(view_fqn)
-        raise
+        except Exception as e:
+            if drop_view is not None:
+                for created_fqn in created:
+                    drop_view(created_fqn)
+            raise RuntimeError(
+                f"Cannot create a temporary view over reference table '{ref}'. " "The caller may lack SELECT on it."
+            ) from e
+        view_by_table[ref] = view_fqn
+        created.append(view_fqn)
 
-    return ReferenceViews(rewrite_reference_tables(checks, view_by_table), created)
+    rewritten = rewrite_to_ref_df_name(checks, set(view_by_table))
+    return ReferenceViews(rewritten, view_by_table, created)

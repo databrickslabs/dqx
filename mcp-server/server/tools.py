@@ -102,6 +102,10 @@ def _submit_check_job(
         )
         created_views.extend(refs.created_view_fqns)
         params = {"view_name": view_fqn, "table_name": table_name, "checks": refs.checks, **extra_params}
+        if refs.ref_views:
+            # Original-table-name -> temp-view FQN. The runner builds ref_dfs from this and drops
+            # these views in its finally; we drop them here only if submission fails below.
+            params["ref_views"] = refs.ref_views
         return utils.submit_job_async(operation, params)
     except Exception:
         for view in created_views:

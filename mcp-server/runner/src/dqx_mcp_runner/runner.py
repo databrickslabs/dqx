@@ -220,6 +220,7 @@ def apply_checks_and_save_to_table(spark: SparkSession, ws: WorkspaceClient, par
         output_config=OutputConfig(location=output_table, mode=mode),
         checks=checks,
         quarantine_config=OutputConfig(location=quarantine_table, mode=mode) if quarantine_table else None,
+        ref_dfs=_ref_dfs_from_params(spark, params),
     )
 
     created_tables = [tbl for tbl in (output_table, quarantine_table) if tbl]
@@ -276,7 +277,9 @@ def run_checks(spark: SparkSession, ws: WorkspaceClient, params: dict) -> dict:
 
     engine = DQEngine(workspace_client=ws, spark=spark)
     df = spark.table(view_name)
-    valid_df, invalid_df = engine.apply_checks_by_metadata_and_split(df, checks)
+    valid_df, invalid_df = engine.apply_checks_by_metadata_and_split(
+        df, checks, ref_dfs=_ref_dfs_from_params(spark, params)
+    )
 
     error_sample = [_make_json_safe(r.asDict(recursive=True)) for r in invalid_df.limit(sample_size).collect()]
     return {
@@ -392,6 +395,18 @@ def _grant_table_access(spark: SparkSession, table_name: str, principal: str) ->
         return False
 
 
+def _ref_dfs_from_params(spark: SparkSession, params: dict) -> dict | None:
+    """Build the ref_dfs map DQX expects from the server-supplied ``ref_views`` (name -> view FQN).
+
+    The server creates an OBO temp view per reference table and passes
+    ``ref_views = {original_table_name: view_fqn}``; each check was rewritten to
+    ``ref_df_name = original_table_name`` so DQX resolves it from this map. Returns
+    ``None`` when there are no reference views, so the engine's default applies.
+    """
+    ref_views = params.get("ref_views") or {}
+    return {name: spark.table(fqn) for name, fqn in ref_views.items()} or None
+
+
 def _drop_view_safe(spark: SparkSession, view_name) -> None:
     """Drop the OBO-created temp view for this run. Best-effort: logs, never raises."""
     if not view_name:
@@ -470,8 +485,10 @@ def main() -> None:
         logger.error(f"Operation '{operation}' failed: {e}", exc_info=True)
         raise
     finally:
-        # Always drop the run's temp view, on success or failure.
-        _drop_view_safe(spark, params.get("view_name"))
+        # Always drop the run's temp views (monitored + any reference views), on success or failure.
+        # A set dedupes a reference view that reuses the monitored view FQN.
+        for view in {params.get("view_name"), *(params.get("ref_views") or {}).values()}:
+            _drop_view_safe(spark, view)
 
     _write_result(ws, args.results_volume, args.run_id, result)
     logger.info(f"Operation '{operation}' complete.")
