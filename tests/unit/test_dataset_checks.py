@@ -810,17 +810,43 @@ def test_dataset_sql_query_builds_lazy_single_row_validation():
 
 def test_sql_query_runs_on_result_of_previous_checks():
     current_df = create_autospec(DataFrame)
+    current_df.columns = ["id", "_errors"]
     original_df = create_autospec(DataFrame)
+    original_df.columns = ["id"]
     spark = create_autospec(SparkSession)
     rule = DQDatasetRule(
         check_func=check_funcs.sql_query,
-        check_func_kwargs={"query": "SELECT count(*) > 0 AS condition FROM {{ input_view }} WHERE _errors IS NULL"},
+        check_func_kwargs={"query": "SELECT count(*) > 0 AS condition FROM {{ input_view }} WHERE _ERRORS IS NULL"},
     )
 
     DQDatasetRuleExecutor(rule).apply(current_df, spark, input_df=original_df)
 
     current_df.createOrReplaceTempView.assert_called_once()
     original_df.createOrReplaceTempView.assert_not_called()
+
+
+@pytest.mark.parametrize("merge_columns", [None, ["id"]])
+def test_sql_query_runs_on_input_when_not_referring_to_added_columns(merge_columns):
+    current_df = create_autospec(DataFrame)
+    current_df.columns = ["id", "_errors"]
+    original_df = create_autospec(DataFrame)
+    original_df.columns = ["id"]
+    spark = create_autospec(SparkSession)
+    rule = DQDatasetRule(
+        check_func=check_funcs.sql_query,
+        check_func_kwargs={
+            "query": "SELECT id, id_errors IS NULL AS condition FROM {{ input_view }}",
+            "merge_columns": merge_columns,
+        },
+    )
+
+    DQDatasetRuleExecutor(rule).apply(current_df, spark, input_df=original_df)
+
+    original_df.createOrReplaceTempView.assert_called_once()
+    current_df.createOrReplaceTempView.assert_not_called()
+    original_df.alias.assert_not_called()
+    original_df.crossJoin.assert_not_called()
+    assert current_df.alias.called or current_df.crossJoin.called
 
 
 def test_sql_query_registers_only_referenced_dataframes():
