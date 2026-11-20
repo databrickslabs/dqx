@@ -27,7 +27,7 @@ class SubmissionEnvironment:
         self.created.append(source)
         if source == self.fail_creation:
             raise RuntimeError("access denied")
-        return PRIMARY_VIEW if source == SOURCE else REFERENCE_VIEW
+        return f"cat.tmp.v_1234567890_{len(self.created):012d}"
 
     def drop_view(self, view: str) -> None:
         self.dropped.append(view)
@@ -135,6 +135,39 @@ def test_later_reference_failure_cleans_up_prior_reference_and_monitored_views()
     assert set(env.dropped) == {PRIMARY_VIEW, REFERENCE_VIEW}
     assert len(env.dropped) == 2
     assert env.submitted == []
+
+
+def test_invalid_later_reference_cleans_up_every_acquired_view() -> None:
+    env = SubmissionEnvironment()
+    with pytest.raises(ValueError, match="Invalid reference table name"):
+        submit_check_job(
+            "run_checks",
+            SOURCE,
+            [fk_check(), fk_check("sch.invalid")],
+            {},
+            create_view=env.create_view,
+            drop_view=env.drop_view,
+            submit_job=env.submit,
+        )
+    assert env.created == [SOURCE, REFERENCE]
+    assert env.dropped == [PRIMARY_VIEW, REFERENCE_VIEW]
+    assert not env.submitted
+
+
+def test_partial_creation_failure_still_attempts_all_drops_when_one_fails() -> None:
+    env = SubmissionEnvironment(fail_creation="cat.sch.third", fail_first_drop=True)
+    with pytest.raises(RuntimeError, match="cat.sch.third"):
+        submit_check_job(
+            "run_checks",
+            SOURCE,
+            [fk_check(), fk_check("cat.sch.second"), fk_check("cat.sch.third")],
+            {},
+            create_view=env.create_view,
+            drop_view=env.drop_view,
+            submit_job=env.submit,
+        )
+    assert env.dropped == [PRIMARY_VIEW, REFERENCE_VIEW, "cat.tmp.v_1234567890_000000000003"]
+    assert not env.submitted
 
 
 def test_failed_drop_does_not_hide_submission_failure_or_skip_other_views() -> None:

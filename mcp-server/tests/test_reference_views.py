@@ -4,7 +4,7 @@ import copy
 import traceback
 
 import pytest
-from server.reference_views import build_reference_views, collect_reference_tables, rewrite_to_ref_df_name
+from server.reference_views import build_reference_views
 
 REFERENCE_FUNCTIONS = ("foreign_key", "compare_datasets", "has_valid_schema", "aggr_matches_dataset")
 REFERENCE = "cat.sch.parent"
@@ -54,7 +54,6 @@ def test_build_handles_each_supported_check_without_mutating_input(function: str
 
     assert requested == [REFERENCE]
     assert result.ref_views == {REFERENCE: VIEW}
-    assert result.created_view_fqns == [VIEW]
     expected_arguments = dict(arguments_of(checks[0]))
     del expected_arguments["ref_table"]
     expected_arguments["ref_df_name"] = REFERENCE
@@ -77,9 +76,15 @@ def test_for_each_column_shape_is_preserved(function: str) -> None:
     assert result.ref_views == {REFERENCE: VIEW}
 
 
-def test_collect_dedupes_and_preserves_first_occurrence_order() -> None:
-    checks = [make_check(), make_check("cat.sch.other"), make_check(function="compare_datasets")]
-    assert collect_reference_tables(checks) == [REFERENCE, "cat.sch.other"]
+def test_distinct_references_are_created_in_first_occurrence_order() -> None:
+    requested: list[str] = []
+
+    def create_view(reference: str) -> str:
+        requested.append(reference)
+        return VIEW
+
+    build_reference_views([make_check(), make_check("cat.sch.other"), make_check()], create_view)
+    assert requested == [REFERENCE, "cat.sch.other"]
 
 
 @pytest.mark.parametrize("function", REFERENCE_FUNCTIONS)
@@ -93,7 +98,6 @@ def test_duplicate_tables_share_one_full_view(function: str) -> None:
     result = build_reference_views([make_check(function=function), make_check()], create_view)
 
     assert requested == [REFERENCE]
-    assert result.created_view_fqns == [VIEW]
     assert all(arguments_of(check)["ref_df_name"] == REFERENCE for check in result.checks)
 
 
@@ -117,17 +121,17 @@ def test_existing_reference_dataframe_is_not_overwritten(function: str) -> None:
 
     result = build_reference_views(checks, create_view)
 
-    assert requested == []
+    assert not requested
     assert result.checks == checks
-    assert result.ref_views == {}
-    assert rewrite_to_ref_df_name(checks, {REFERENCE}) == checks
+    assert not result.ref_views
 
 
 @pytest.mark.parametrize("function", ("foreign_key", "compare_datasets", "has_valid_schema"))
 def test_empty_reference_dataframe_name_is_still_a_conflict(function: str) -> None:
     checks = [make_check(function=function, ref_df_name="")]
-    assert collect_reference_tables(checks) == []
-    assert rewrite_to_ref_df_name(checks, {REFERENCE}) == checks
+    result = build_reference_views(checks, lambda reference: VIEW)
+    assert not result.ref_views
+    assert result.checks == checks
 
 
 @pytest.mark.parametrize("ref_df_name", (None, ""))
@@ -142,34 +146,39 @@ def test_aggregate_preserves_core_truthiness_semantics(ref_df_name: str | None) 
 @pytest.mark.parametrize("ref_df_name", (False, 0, [], {}))
 def test_aggregate_does_not_repair_invalid_reference_dataframe_types(ref_df_name: object) -> None:
     checks = [make_check(function="aggr_matches_dataset", ref_df_name=ref_df_name)]
-    assert collect_reference_tables(checks) == []
-    assert rewrite_to_ref_df_name(checks, {REFERENCE}) == checks
+    result = build_reference_views(checks, lambda reference: VIEW)
+    assert not result.ref_views
+    assert result.checks == checks
 
 
 @pytest.mark.parametrize("expected_schema", ("id INT", ""))
 def test_schema_reference_with_expected_schema_remains_invalid(expected_schema: str) -> None:
     checks = [make_check(function="has_valid_schema", expected_schema=expected_schema)]
-    assert collect_reference_tables(checks) == []
-    assert rewrite_to_ref_df_name(checks, {REFERENCE}) == checks
+    result = build_reference_views(checks, lambda reference: VIEW)
+    assert not result.ref_views
+    assert result.checks == checks
 
 
 @pytest.mark.parametrize("function", REFERENCE_FUNCTIONS)
 def test_explicit_none_reference_dataframe_remains_eligible(function: str) -> None:
-    checks = [make_check(function=function, ref_df_name=None)]
-    assert collect_reference_tables(checks) == [REFERENCE]
-    assert arguments_of(rewrite_to_ref_df_name(checks, {REFERENCE})[0])["ref_df_name"] == REFERENCE
+    result = build_reference_views([make_check(function=function, ref_df_name=None)], lambda reference: VIEW)
+    assert result.ref_views == {REFERENCE: VIEW}
+    assert arguments_of(result.checks[0])["ref_df_name"] == REFERENCE
 
 
 def test_schema_none_expected_schema_does_not_conflict() -> None:
-    checks = [make_check(function="has_valid_schema", expected_schema=None)]
-    assert collect_reference_tables(checks) == [REFERENCE]
+    result = build_reference_views(
+        [make_check(function="has_valid_schema", expected_schema=None)], lambda reference: VIEW
+    )
+    assert result.ref_views == {REFERENCE: VIEW}
 
 
 @pytest.mark.parametrize("function", ("unknown_function", "is_not_null", "sql_query"))
 def test_other_functions_are_not_adapted(function: str) -> None:
     checks = [make_check(function=function)]
-    assert collect_reference_tables(checks) == []
-    assert rewrite_to_ref_df_name(checks, {REFERENCE}) == checks
+    result = build_reference_views(checks, lambda reference: VIEW)
+    assert not result.ref_views
+    assert result.checks == checks
 
 
 def test_mixed_checks_sharing_a_table_do_not_repair_invalid_checks() -> None:
@@ -182,17 +191,19 @@ def test_mixed_checks_sharing_a_table_do_not_repair_invalid_checks() -> None:
     ]
     original = copy.deepcopy(checks)
     result = build_reference_views(checks, lambda reference: VIEW)
-    assert result.created_view_fqns == [VIEW]
+    assert result.ref_views == {REFERENCE: VIEW}
     assert arguments_of(result.checks[0])["ref_df_name"] == REFERENCE
     assert result.checks[1:] == original[1:]
     assert checks == original
 
 
-def test_unhandled_references_are_unchanged() -> None:
-    checks = [make_check(), make_check("cat.sch.other")]
-    result = rewrite_to_ref_df_name(checks, {REFERENCE})
-    assert arguments_of(result[0])["ref_df_name"] == REFERENCE
-    assert result[1] == checks[1]
+def test_returned_metadata_does_not_share_mutable_arguments_with_input() -> None:
+    checks = [make_check()]
+    result = build_reference_views(checks, lambda reference: VIEW)
+    columns = arguments_of(result.checks[0])["columns"]
+    assert isinstance(columns, list)
+    columns.append("other_id")
+    assert arguments_of(checks[0])["columns"] == ["id"]
 
 
 def test_no_references_is_a_noop() -> None:
@@ -210,8 +221,7 @@ def test_no_references_is_a_noop() -> None:
 
     result = build_reference_views(checks, create_view)
     assert result.checks is checks
-    assert result.ref_views == {}
-    assert result.created_view_fqns == []
+    assert not result.ref_views
 
 
 def test_self_reference_reuses_the_monitored_full_view() -> None:
@@ -219,7 +229,6 @@ def test_self_reference_reuses_the_monitored_full_view() -> None:
         raise AssertionError("The full monitored view should be reused")
 
     result = build_reference_views([make_check()], create_view, monitored_table_fqn=REFERENCE, monitored_view_fqn=VIEW)
-    assert result.created_view_fqns == []
     assert result.ref_views == {REFERENCE: VIEW}
     assert arguments_of(result.checks[0])["ref_df_name"] == REFERENCE
 
@@ -235,19 +244,10 @@ def test_invalid_names_fail_without_creating_a_view_or_exposing_control_characte
         build_reference_views([make_check(reference)], create_view)
 
     rendered = "".join(traceback.format_exception(error.value))
-    assert "Only alphanumeric" not in rendered  # the underlying validator's raw error is suppressed
+    assert "Only alphanumeric" not in rendered  # The underlying validator's raw error is suppressed.
     assert "SELECT" not in str(error.value)
     assert "\n" not in str(error.value)
     assert "\x1b" not in rendered
-
-
-def test_invalid_later_name_still_cleans_up_created_views() -> None:
-    dropped: list[str] = []
-    with pytest.raises(ValueError, match="Invalid reference table name"):
-        build_reference_views(
-            [make_check(), make_check("sch.invalid")], lambda reference: VIEW, drop_view=dropped.append
-        )
-    assert dropped == [VIEW]
 
 
 def test_creation_error_names_the_table_and_keeps_the_original_cause() -> None:
@@ -260,25 +260,3 @@ def test_creation_error_names_the_table_and_keeps_the_original_cause() -> None:
         build_reference_views([make_check()], create_view)
     assert "warehouse availability" in str(error.value)
     assert "warehouse unavailable" in "".join(traceback.format_exception(error.value))
-
-
-def test_partial_creation_failure_cleans_up_every_created_view_even_if_one_drop_fails() -> None:
-    dropped: list[str] = []
-
-    def create_view(reference: str) -> str:
-        if reference.endswith("third"):
-            raise RuntimeError("no access")
-        return reference.replace("cat.sch.", "cat.tmp.")
-
-    def drop_view(view: str) -> None:
-        dropped.append(view)
-        if view.endswith("parent"):
-            raise RuntimeError("cleanup unavailable")
-
-    with pytest.raises(RuntimeError, match="cat.sch.third"):
-        build_reference_views(
-            [make_check(), make_check("cat.sch.second"), make_check("cat.sch.third")],
-            create_view,
-            drop_view=drop_view,
-        )
-    assert dropped == ["cat.tmp.parent", "cat.tmp.second"]

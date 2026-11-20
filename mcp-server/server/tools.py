@@ -88,17 +88,21 @@ def submit_check_job(
     Returns:
         The job run ID.
     """
-    view_fqn = create_view(table_name)
-    created_views = [view_fqn]
+    created_views: list[str] = []
+
+    def create_owned_view(source: str) -> str:
+        view = create_view(source)
+        created_views.append(view)
+        return view
+
     try:
+        view_fqn = create_owned_view(table_name)
         refs = build_reference_views(
             checks,
-            create_view,
+            create_owned_view,
             monitored_table_fqn=table_name,
             monitored_view_fqn=view_fqn,
-            drop_view=drop_view,
         )
-        created_views.extend(refs.created_view_fqns)
         params = {"view_name": view_fqn, "table_name": table_name, "checks": refs.checks, **extra_params}
         if refs.ref_views:
             # Original-table-name -> temp-view FQN. The runner builds ref_dfs from this and drops

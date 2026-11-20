@@ -10,9 +10,9 @@ import re
 from collections.abc import Mapping
 from typing import Protocol
 
-from dqx_mcp_runner.naming import IDENTIFIER_RE
-
 logger = logging.getLogger("dqx-mcp-runner")
+# Match the server's quoted UC identifiers, not the stricter bare output names.
+_TEMP_IDENTIFIER_RE = re.compile(r"[A-Za-z0-9_]+")
 _TEMP_VIEW_NAME_RE = re.compile(r"v_[0-9]+_[0-9a-f]+")
 
 
@@ -36,7 +36,7 @@ def trusted_view_namespace(results_volume: str) -> tuple[str, str] | None:
     if len(parts) < 4 or parts[0] != "Volumes":
         return None
     catalog, schema = parts[1], parts[2]
-    if not (IDENTIFIER_RE.fullmatch(catalog) and IDENTIFIER_RE.fullmatch(schema)):
+    if not (_TEMP_IDENTIFIER_RE.fullmatch(catalog) and _TEMP_IDENTIFIER_RE.fullmatch(schema)):
         return None
     return catalog.lower(), schema.lower()
 
@@ -80,7 +80,7 @@ def collect_temp_views(params: Mapping[str, object]) -> list[str]:
 
 def _is_trusted_view(view_name: str, namespace: tuple[str, str] | None) -> bool:
     parts = view_name.split(".")
-    if namespace is None or len(parts) != 3 or not all(IDENTIFIER_RE.fullmatch(part) for part in parts):
+    if namespace is None or len(parts) != 3 or not all(_TEMP_IDENTIFIER_RE.fullmatch(part) for part in parts):
         return False
     return (parts[0].lower(), parts[1].lower()) == namespace and _TEMP_VIEW_NAME_RE.fullmatch(parts[2]) is not None
 

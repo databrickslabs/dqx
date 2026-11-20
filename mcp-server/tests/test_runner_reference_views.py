@@ -18,8 +18,6 @@ from typing import NoReturn
 from unittest.mock import MagicMock, create_autospec
 
 import pytest
-from databricks.sdk import WorkspaceClient
-
 from dqx_mcp_runner.temp_views import (
     collect_temp_views,
     drop_temp_views,
@@ -27,6 +25,9 @@ from dqx_mcp_runner.temp_views import (
     parse_ref_views,
     trusted_view_namespace,
 )
+from server.utils import validate_and_quote_table_name
+
+from databricks.sdk import WorkspaceClient
 
 NAMESPACE = ("main", "dqx_mcp_tmp")
 RESULTS_VOLUME = "/Volumes/main/dqx_mcp_tmp/mcp_results"
@@ -54,6 +55,17 @@ class TestTrustedViewNamespace:
         assert trusted_view_namespace(RESULTS_VOLUME) == NAMESPACE
         assert trusted_view_namespace("/Volumes/Main/Tmp/vol/") == ("main", "tmp")
 
+    @pytest.mark.parametrize("catalog,schema", [("1dq", "tmp"), ("main", "1dq"), ("1dq", "2tmp"), ("123", "456")])
+    def test_digit_leading_names_match_the_server_and_allow_cleanup(self, catalog: str, schema: str) -> None:
+        view = f"{catalog}.{schema}.v_1234567890_abcdef123456"
+        assert validate_and_quote_table_name(view) == f"`{catalog}`.`{schema}`.`v_1234567890_abcdef123456`"
+        namespace = trusted_view_namespace(f"/Volumes/{catalog}/{schema}/mcp_results")
+        assert namespace == (catalog, schema)
+        ensure_views_in_namespace([view], namespace)
+        spark = RecordingSql()
+        drop_temp_views(spark, [view], namespace)
+        assert spark.statements == [f"DROP VIEW IF EXISTS `{catalog}`.`{schema}`.`v_1234567890_abcdef123456`"]
+
     @pytest.mark.parametrize("path", ["", "/tmp/x/y/z", "/Volumes/main/schema", "/Volumes/ma-in/s/v", "Volumes/a/b"])
     def test_untrusted_paths_yield_none(self, path: str) -> None:
         assert trusted_view_namespace(path) is None
@@ -65,12 +77,12 @@ class TestCollectTempViews:
         assert collect_temp_views(params) == [MONITORED, REF_A, REF_B]
 
     def test_absent_and_malformed_values_are_ignored(self) -> None:
-        assert collect_temp_views({}) == []
+        assert not collect_temp_views({})
         assert collect_temp_views({"view_name": MONITORED, "ref_views": "nope"}) == [MONITORED]
         assert collect_temp_views({"ref_views": {"a": REF_A, "b": 5, "c": ""}}) == [REF_A]
 
     def test_parse_ref_views_rejects_bad_shape(self) -> None:
-        assert parse_ref_views({}) == {}
+        assert not parse_ref_views({})
         assert parse_ref_views({"ref_views": {"a": REF_A}}) == {"a": REF_A}
         for bad in ("x", ["a"], {"a": 1}):
             with pytest.raises(ValueError, match="ref_views"):
@@ -112,7 +124,7 @@ class TestDropTempViews:
             ensure_views_in_namespace([view], NAMESPACE)
         spark = RecordingSql()
         drop_temp_views(spark, [view], NAMESPACE)
-        assert spark.statements == []
+        assert not spark.statements
 
     def test_ensure_views_in_namespace(self) -> None:
         ensure_views_in_namespace([MONITORED, REF_A], NAMESPACE)
@@ -135,10 +147,13 @@ def fake_engine(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     """Replace DQEngine (third-party boundary that needs a live session) with an autospec instance."""
     engine_module = pytest.importorskip("databricks.labs.dqx.engine")
     instance = create_autospec(engine_module.DQEngine, instance=True)
-    valid_df, invalid_df = MagicMock(name="valid_df"), MagicMock(name="invalid_df")
+    spark_module = pytest.importorskip("pyspark.sql")
+    valid_df = create_autospec(spark_module.DataFrame, instance=True)
+    invalid_df = create_autospec(spark_module.DataFrame, instance=True)
     for frame in (valid_df, invalid_df):
         frame.count.return_value = 0
-        frame.limit.return_value.collect.return_value = []
+        frame.limit.return_value = frame
+        frame.collect.return_value = []
     instance.apply_checks_by_metadata_and_split.return_value = (valid_df, invalid_df)
     monkeypatch.setattr(engine_module, "DQEngine", lambda *args, **kwargs: instance)
     return instance
@@ -151,7 +166,7 @@ def spark_mock(runner: ModuleType) -> MagicMock:
 
     def table(name: str) -> MagicMock:
         if name not in frames:
-            frames[name] = MagicMock(name=f"df:{name}")
+            frames[name] = create_autospec(runner.DataFrame, instance=True)
             frames[name].count.return_value = 0
         return frames[name]
 
@@ -247,6 +262,20 @@ class TestEntrypointCleanup:
         ]
         assert ws.files.upload.call_args.args[0] == f"{RESULTS_VOLUME}/42.json"
 
+    @pytest.mark.parametrize("catalog,schema", [("1dq", "tmp"), ("main", "1dq")])
+    def test_digit_leading_namespace_does_not_block_the_operation_or_cleanup(
+        self, catalog: str, schema: str, runner: ModuleType, engine: MagicMock, spark: MagicMock, ws: MagicMock
+    ) -> None:
+        view = f"{catalog}.{schema}.v_1_aaa"
+        params: dict[str, object] = {"view_name": view, "checks": [], "ref_views": {"self": view}}
+        argv = _argv("run_checks", params)
+        argv[-1] = f"/Volumes/{catalog}/{schema}/mcp_results"
+
+        _run_main(runner, argv, spark, ws)
+
+        engine.apply_checks_by_metadata_and_split.assert_called_once()
+        assert _dropped(spark) == [f"DROP VIEW IF EXISTS `{catalog}`.`{schema}`.`v_1_aaa`"]
+
     def test_operation_failure_drops_every_view_and_writes_no_result(
         self, runner: ModuleType, engine: MagicMock, spark: MagicMock, ws: MagicMock
     ) -> None:
@@ -317,7 +346,7 @@ class TestEntrypointCleanup:
         assert _dropped(spark) == ["DROP VIEW IF EXISTS `main`.`dqx_mcp_tmp`.`v_1_aaa`"]
 
     def test_spark_initialisation_failure_is_not_recovered(self, runner: ModuleType, ws: MagicMock) -> None:
-        workspace_factory = MagicMock(return_value=ws)
+        workspace_factory = create_autospec(WorkspaceClient, return_value=ws)
 
         def broken_spark() -> NoReturn:
             raise RuntimeError("no spark")
@@ -330,7 +359,10 @@ class TestEntrypointCleanup:
         workspace_factory.assert_not_called()
 
     def test_invalid_params_json_is_not_recovered(self, runner: ModuleType, ws: MagicMock) -> None:
-        spark_factory = MagicMock()
+        def unexpected_spark_factory() -> NoReturn:
+            raise AssertionError("Invalid JSON must fail before Spark starts")
+
+        spark_factory = create_autospec(unexpected_spark_factory)
         argv = _argv("run_checks", {})
         argv[argv.index("--params") + 1] = "{not json"
 
