@@ -70,7 +70,7 @@ export function RuleTestModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t("marketplace.tryItTitle", { name: rule.name })}</DialogTitle>
         </DialogHeader>
@@ -89,6 +89,7 @@ export function RuleTestModal({
             nativeFunction={mode === "dqx_native" ? nativeFunction : undefined}
             nativeArguments={mode === "dqx_native" ? nativeArguments : undefined}
             canTest={canTest}
+            compact
           />
         ) : (
           <p className="text-sm italic text-muted-foreground">
