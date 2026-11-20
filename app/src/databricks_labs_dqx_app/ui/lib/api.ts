@@ -2180,7 +2180,7 @@ export type HistoryEventOutHistoryId = number | null;
  * One step of a table's, collection's or rule's history — backs the History tab.
  */
 export interface HistoryEventOut {
-  /** created | edited | submitted | approved | rejected | withdrawn */
+  /** created | edited | submitted | approved | rejected | withdrawn | returned */
   action: string;
   /** Who did it; an automatic approval carries an (auto) marker */
   actor?: HistoryEventOutActor;

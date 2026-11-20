@@ -3445,7 +3445,8 @@
       "submitted": "Soumis",
       "approved": "Approuvé",
       "rejected": "Rejeté",
-      "withdrawn": "Retiré"
+      "withdrawn": "Retiré",
+      "returned": "Renvoyé"
     },
     "status": {
       "added": "Ajoutée",

@@ -67,6 +67,7 @@ export interface HistoryPoint {
 
 /** Steps that leave a saved draft: the state they recorded is one the user saved. */
 const DRAFT_ACTIONS = new Set(["created", "edited"]);
+const REVIEW_ACTIONS = new Set(["submitted", "rejected", "withdrawn", "returned"]);
 
 function time(at: string | null | undefined): number {
   const ms = at ? Date.parse(at) : Number.NaN;
@@ -111,7 +112,7 @@ export function pickerPoints(points: HistoryPoint[]): HistoryPoint[] {
  * - A version: the version.
  * - Creating the object: nothing (it's where the history starts).
  * - A saved draft (an edit): the draft.
- * - A submit, rejection or withdrawal: the draft under review then.
+ * - A submit, rejection, withdrawal or return: the draft under review then.
  * - A step that didn't record its state: the version its review cycle produced.
  */
 export function selectionFor(
@@ -125,7 +126,7 @@ export function selectionFor(
   if (entry.hasSnapshot && entry.historyId != null && DRAFT_ACTIONS.has(entry.action)) {
     return fromNothing(stepRef(entry.historyId));
   }
-  if (entry.action === "submitted" || entry.action === "rejected" || entry.action === "withdrawn") {
+  if (REVIEW_ACTIONS.has(entry.action)) {
     const reviewed = points.find((p) => p.at <= at);
     return reviewed ? fromNothing(reviewed.ref) : null;
   }

@@ -3445,7 +3445,8 @@
       "submitted": "Inviato",
       "approved": "Approvato",
       "rejected": "Rifiutato",
-      "withdrawn": "Ritirato"
+      "withdrawn": "Ritirato",
+      "returned": "Rinviato"
     },
     "status": {
       "added": "Aggiunta",

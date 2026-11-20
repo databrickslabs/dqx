@@ -2,7 +2,7 @@
 
 A registry rule's lifecycle (create/update/status transitions/delete) is
 recorded in the shared ``dq_lifecycle_history`` table alongside monitored
-tables and collections. The v5 migration moved the older ``dq_rules_history``
+tables and collections. The v6 migration moved the older ``dq_rules_history``
 rows into it.
 """
 
@@ -33,6 +33,14 @@ class TestLifecycleHistoryPostgres:
             "changed_at",
         ):
             assert f" {col} " in create
+
+    def test_legacy_steps_that_left_review_without_a_note_migrate_as_returned(self):
+        # A note-less reject() and a revoke() wrote the same legacy row, so the
+        # migration must not guess between "reject" and "withdraw".
+        v6 = next(m for m in PG_MIGRATIONS if m.version == 6)
+        assert "WHEN action = 'status:approved' AND prev_status = 'pending_approval'" in v6.sql
+        assert "THEN CASE WHEN COALESCE(rationale, '') <> '' THEN 'reject' ELSE 'return' END" in v6.sql
+        assert "ELSE 'withdraw' END" not in v6.sql
 
     def test_no_new_migration_version_added(self):
         # Greenfield constraint: dq_rules_history piggybacks on the

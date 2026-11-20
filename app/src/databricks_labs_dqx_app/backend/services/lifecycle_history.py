@@ -29,10 +29,12 @@ logger = logging.getLogger(__name__)
 
 HistoryObjectType = Literal["registry_rule", "monitored_table", "data_product"]
 HistoryAction = Literal[
-    "create", "update", "submit", "approve", "reject", "withdraw", "deprecate", "reinstate", "delete"
+    "create", "update", "submit", "approve", "reject", "withdraw", "return", "deprecate", "reinstate", "delete"
 ]
 # What the History tab shows for each action. Deprecate / reinstate and delete aren't shown.
-EventAction = Literal["created", "edited", "submitted", "approved", "rejected", "withdrawn"]
+# "return" is only written by the v6 migration, for a legacy step that left review without
+# a note: it was either a note-less rejection or a withdrawal, and the old row can't tell.
+EventAction = Literal["created", "edited", "submitted", "approved", "rejected", "withdrawn", "returned"]
 
 _EVENT_OF_ACTION: dict[str, EventAction] = {
     "create": "created",
@@ -41,6 +43,7 @@ _EVENT_OF_ACTION: dict[str, EventAction] = {
     "approve": "approved",
     "reject": "rejected",
     "withdraw": "withdrawn",
+    "return": "returned",
 }
 
 

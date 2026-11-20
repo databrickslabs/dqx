@@ -44,7 +44,7 @@ Schedules are operational settings, not part of a collection's approved definiti
 
 Approved versions remain the frozen artifacts used by version-pinned runs. Lifecycle snapshots are separate comparison data.
 
-Existing registry-rule history is moved into the unified lifecycle history when the app migrates to this design. Collections approved before collection versions were recorded are backfilled just before their first edit. If two older collection states were never recorded, Studio explains that they cannot be compared instead of inventing a diff.
+Existing registry-rule history is moved into the unified lifecycle history when the app migrates to this design. Older versions of Studio recorded a rejection without a note the same way as a withdrawal, so those steps appear as **Returned**. Collections approved before collection versions were recorded are backfilled just before their first edit. If two older collection states were never recorded, Studio explains that they cannot be compared instead of inventing a diff.
 
 Lifecycle snapshots can be larger than other audit rows because they contain the object's full state. Lifecycle history is audit metadata, so Studio's retention sweep does not remove its event rows or snapshots. Approved version artifacts are stored separately and are not removed either.
 

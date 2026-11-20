@@ -777,7 +777,7 @@ class UpdateMonitoredTableOwnerIn(BaseModel):
 class HistoryEventOut(BaseModel):
     """One step of a table's, collection's or rule's history — backs the History tab."""
 
-    action: str = Field(description="created | edited | submitted | approved | rejected | withdrawn")
+    action: str = Field(description="created | edited | submitted | approved | rejected | withdrawn | returned")
     actor: str | None = Field(default=None, description="Who did it; an automatic approval carries an (auto) marker")
     created_at: str | None = None
     rationale: str | None = Field(default=None, description="The note left with it")

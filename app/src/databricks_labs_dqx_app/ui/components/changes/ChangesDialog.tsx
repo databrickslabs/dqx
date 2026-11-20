@@ -399,7 +399,7 @@ export interface ChangesVersion {
   note?: string | null;
 }
 
-/** One history step (created, edited, submitted, approved, rejected, withdrawn), for the History timeline. */
+/** One history step (created, edited, submitted, approved, rejected, withdrawn, returned), for the History timeline. */
 export interface ChangesEvent {
   action: string;
   actor?: string | null;
@@ -681,6 +681,7 @@ const EVENT_STYLE: Record<string, string> = {
   approved: "text-green-700 dark:text-green-400",
   rejected: "text-red-700 dark:text-red-400",
   withdrawn: "text-muted-foreground",
+  returned: "text-muted-foreground",
 };
 
 function timeOf(at: string | null | undefined): number {

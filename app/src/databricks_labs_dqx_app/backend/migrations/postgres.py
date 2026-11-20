@@ -165,8 +165,8 @@ _LIFECYCLE_HISTORY_DDL = (
 # here: ``status:<new>`` becomes the step it was, and a ``status:approved`` that
 # left review is a rejection when it carries a note (a withdrawal never did).
 # Legacy reject() also allowed a NULL rationale, producing the same row shape as
-# revoke(). Those note-less rows cannot be distinguished reliably and migrate as
-# withdrawals; actor comparison would only be a heuristic, not an audit-safe rule.
+# revoke(). Those note-less rows can't be told apart (approvers can withdraw too,
+# so comparing actors doesn't work), so they migrate as a neutral ``return``.
 # The legacy table is created first (a no-op on an upgrade) so the copy also
 # runs on a fresh install, which never has it.
 _AUTO_SUFFIX_SQL = "' (auto)'"
@@ -195,7 +195,7 @@ _RULES_HISTORY_TO_LIFECYCLE_HISTORY = (
     " WHEN action = 'status:deprecated' THEN 'deprecate'"
     " WHEN action = 'status:draft' THEN 'withdraw'"
     " WHEN action = 'status:approved' AND prev_status = 'pending_approval'"
-    "  THEN CASE WHEN COALESCE(rationale, '') <> '' THEN 'reject' ELSE 'withdraw' END"
+    "  THEN CASE WHEN COALESCE(rationale, '') <> '' THEN 'reject' ELSE 'return' END"
     " WHEN action = 'status:approved' AND prev_status = 'deprecated' THEN 'reinstate'"
     " ELSE action END, "
     "prev_status, new_status, version, "

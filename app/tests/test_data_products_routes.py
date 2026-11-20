@@ -1031,6 +1031,7 @@ class TestSaveDataProduct:
         svc.transaction.side_effect = transaction
         for method in (svc.require_approved_bindings, svc.add_member, svc.remove_member):
             method.side_effect = inside_transaction
+
         def history_after_commit(*_args, **_kwargs):
             assert not active, "Best-effort history must run after the domain transaction"
 

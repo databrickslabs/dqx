@@ -118,6 +118,11 @@ class TestListEvents:
         assert [(e.action, e.version) for e in events] == [("withdrawn", None)]
         assert sql.select_rows.call_args_list[0].kwargs["where"] == {"object_type": "registry_rule", "object_id": "r1"}
 
+    def test_a_migrated_return_is_shown_as_returned(self, service, sql):
+        self._rows(sql, [["return", "bob@x", False, "2026-10-01 09:00:00+00:00", None, "1", "7"]])
+        (event,) = service.list_events("registry_rule", "r1")
+        assert event.action == "returned"
+
     @pytest.mark.parametrize("flag", [True, "true", "t"])
     def test_an_automatic_step_keeps_its_auto_marker(self, service, sql, flag):
         self._rows(sql, [["approve", "bob@x", flag, "2026-10-02 09:00:00+00:00", None, "2", "8"]])

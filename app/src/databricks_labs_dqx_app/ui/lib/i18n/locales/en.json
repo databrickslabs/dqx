@@ -3445,7 +3445,8 @@
       "submitted": "Submitted",
       "approved": "Approved",
       "rejected": "Rejected",
-      "withdrawn": "Withdrawn"
+      "withdrawn": "Withdrawn",
+      "returned": "Returned"
     },
     "status": {
       "added": "Added",

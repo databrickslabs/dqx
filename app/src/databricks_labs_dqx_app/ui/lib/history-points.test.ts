@@ -83,6 +83,11 @@ describe("selectionFor", () => {
     expect(key(selectionFor({ kind: "step", ...steps[2] }, points))).toBe("v0→s2");
   });
 
+  test("a migrated return shows the draft under review then, like a submit", () => {
+    const returned: TimelineStep = { ...steps[2], action: "returned", hasSnapshot: false };
+    expect(key(selectionFor({ kind: "step", ...returned }, points))).toBe("v0→s2");
+  });
+
   test("a step without a recorded state shows the version its cycle produced", () => {
     expect(key(selectionFor({ kind: "step", ...steps[4] }, points))).toBe("v0→v1");
   });

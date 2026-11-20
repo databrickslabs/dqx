@@ -92,8 +92,8 @@ but is protected transitively by the instance-level guard.
 Lakebase project (when enabled, default `lakebase_project_id` = `dqx-studio-db`):
  └── databricks_postgres              (database — always-present admin DB; no per-app DB provisioned)
      └── dqx_studio                   (schema — created by PgMigrationRunner on first start; configurable via DQX_LAKEBASE_SCHEMA)
-         ├── dq_app_settings, dq_role_mappings, dq_quality_rules, 
-         |   dq_resolved_rules, dq_quality_rules_history, dq_comments,
+         ├── dq_app_settings, dq_role_mappings, dq_rules,
+         |   dq_resolved_rules, dq_resolved_rules_history, dq_comments,
          |   dq_lifecycle_history, dq_data_product_versions,
          |   dq_schedule_configs, dq_schedule_configs_history, dq_schedule_runs
          └── dq_migrations             (Postgres migration version tracker)
@@ -521,7 +521,7 @@ choice is driven entirely by `databricks.yml`:
 | Backend | Tables | Why |
 |---------|--------|-----|
 | **Delta Lake** (always) | `dq_validation_runs`, `dq_profiling_results`, `dq_quarantine_records`, `dq_metrics`, `dq_run_configs` | Spark task runner reads/writes these; high-volume append-mostly; columnar reads. |
-| **Lakebase Postgres** *(default — opt-out via `lakebase_endpoint="-"`)* | `dq_app_settings`, `dq_role_mappings`, `dq_quality_rules`, `dq_resolved_rules`, `dq_resolved_rules_history`, `dq_comments`, `dq_schedule_configs`, `dq_schedule_configs_history`, `dq_schedule_runs` | Low-latency point reads/writes from FastAPI request handlers; row-level upserts; primary-key/foreign-key semantics. |
+| **Lakebase Postgres** *(default — opt-out via `lakebase_endpoint="-"`)* | `dq_app_settings`, `dq_role_mappings`, `dq_rules`, `dq_resolved_rules`, `dq_resolved_rules_history`, `dq_comments`, `dq_lifecycle_history`, `dq_schedule_configs`, `dq_schedule_configs_history`, `dq_schedule_runs` | Low-latency point reads/writes from FastAPI request handlers; row-level upserts; primary-key/foreign-key semantics. |
 
 `MigrationRunner` creates the Delta tables (`v1` analytical baseline,
 `v2` staged run configs) and `PgMigrationRunner` provisions the OLTP
