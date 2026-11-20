@@ -816,6 +816,70 @@ class TestConnectionContextManager:
 
 
 # ===========================================================================
+# transaction() context manager
+# ===========================================================================
+
+
+class TestTransactionContextManager:
+    """Multi-statement writes commit or roll back as one unit on one pooled connection."""
+
+    def test_statements_share_the_transaction_and_commit_once_on_success(self) -> None:
+        executor = _make_pg_executor()
+        conn = _conn_of(executor)
+        cur = _cursor_of(executor)
+        cur.fetchall.return_value = []
+        cur.description = []
+
+        with executor.transaction():
+            executor.execute("UPDATE t SET x = 1")
+            assert executor.query("SELECT * FROM t") == []
+            assert executor.query_dicts("SELECT * FROM t") == []
+            conn.commit.assert_not_called()  # type: ignore[attr-defined]
+
+        conn.commit.assert_called_once_with()  # type: ignore[attr-defined]
+        conn.rollback.assert_not_called()  # type: ignore[attr-defined]
+        executor._pool.connection.assert_called_once_with()
+
+    def test_an_error_rolls_back_every_statement(self) -> None:
+        executor = _make_pg_executor()
+        conn = _conn_of(executor)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            with executor.transaction():
+                executor.execute("UPDATE t SET x = 1")
+                raise RuntimeError("boom")
+
+        conn.commit.assert_not_called()  # type: ignore[attr-defined]
+        conn.rollback.assert_called_once_with()  # type: ignore[attr-defined]
+        executor._pool.connection.assert_called_once_with()
+
+    def test_nested_transactions_commit_only_at_the_outer_boundary(self) -> None:
+        executor = _make_pg_executor()
+        conn = _conn_of(executor)
+
+        with executor.transaction():
+            with executor.transaction():
+                executor.execute("UPDATE t SET x = 1")
+                conn.commit.assert_not_called()  # type: ignore[attr-defined]
+
+        conn.commit.assert_called_once_with()  # type: ignore[attr-defined]
+        executor._pool.connection.assert_called_once_with()
+
+    def test_the_next_statement_after_the_transaction_commits_independently(self) -> None:
+        executor = _make_pg_executor()
+        conn = _conn_of(executor)
+
+        with executor.transaction():
+            executor.execute("UPDATE t SET x = 1")
+        conn.commit.reset_mock()  # type: ignore[attr-defined]
+
+        executor.execute("UPDATE t SET x = 2")
+
+        conn.commit.assert_called_once_with()  # type: ignore[attr-defined]
+        assert executor._pool.connection.call_count == 2
+
+
+# ===========================================================================
 # _token_refresh_loop — happy / sad / permanent-failure paths
 # ===========================================================================
 
