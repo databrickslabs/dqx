@@ -123,6 +123,7 @@ import {
   freeTags,
   colorFor,
   ColorDot,
+  STATUS_LABEL_KEYS,
   type LabelColorDefinition,
 } from "@/components/RegistryRuleBadges";
 
@@ -180,15 +181,6 @@ const GROUP_BY_OPTIONS: readonly { value: RuleGroupBy; labelKey: string }[] = [
   { value: "level", labelKey: "rulesRegistry.groupByLevel" },
   { value: "owner", labelKey: "rulesRegistry.groupByOwner" },
 ];
-
-const STATUS_LABEL_KEYS: Record<RuleStatusValue, string> = {
-  approved: "rulesRegistry.statusApproved",
-  modified: "rulesRegistry.statusModified",
-  pending_approval: "rulesRegistry.statusPendingApproval",
-  draft: "rulesRegistry.statusDraft",
-  rejected: "rulesRegistry.statusRejected",
-  deprecated: "rulesRegistry.statusDeprecated",
-};
 
 function isRuleStatusValue(status: string): status is RuleStatusValue {
   return (RULE_STATUS_VALUES as readonly string[]).includes(status);
