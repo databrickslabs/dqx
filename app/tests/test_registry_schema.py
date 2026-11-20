@@ -1,34 +1,46 @@
-"""Schema tests for the Rules Registry audit table (``dq_rules_history``).
+"""Schema tests for the registry rule audit trail.
 
-Phase 2B adds a minimal append-only history table for the registry rule
-lifecycle (create/update/status transitions/delete), following the same
-greenfield-baseline convention Phase 2A used for ``dq_rules`` /
-``dq_rule_versions`` — appended directly to the existing baseline
-migration (Postgres version=1), not a new migration version.
+A registry rule's lifecycle (create/update/status transitions/delete) is
+recorded in the shared ``dq_lifecycle_history`` table alongside monitored
+tables and collections. The v6 migration moved the older ``dq_rules_history``
+rows into it.
 """
 
 from databricks_labs_dqx_app.backend.migrations.postgres import PG_MIGRATIONS
 
 
-class TestDqRulesHistoryPostgres:
-    def test_table_defined_in_baseline_version(self):
+class TestLifecycleHistoryPostgres:
+    def test_rule_history_lives_in_the_shared_lifecycle_history(self):
         baseline = next(m for m in PG_MIGRATIONS if m.version == 1)
-        assert "CREATE TABLE IF NOT EXISTS" in baseline.sql
-        assert "dq_rules_history" in baseline.sql
+        assert "CREATE TABLE IF NOT EXISTS {schema}.dq_lifecycle_history" in baseline.sql
+        assert "CREATE TABLE IF NOT EXISTS {schema}.dq_rules_history" not in baseline.sql
 
     def test_has_expected_columns(self):
         baseline = next(m for m in PG_MIGRATIONS if m.version == 1)
+        create = baseline.sql[baseline.sql.index("{schema}.dq_lifecycle_history (") :]
+        create = create[: create.index(");")]
         for col in (
-            "rule_id",
-            "definition",
-            "version",
+            "object_type",
+            "object_id",
             "action",
             "prev_status",
             "new_status",
+            "version",
+            "details",
+            "rationale",
             "changed_by",
+            "is_automatic",
             "changed_at",
         ):
-            assert col in baseline.sql
+            assert f" {col} " in create
+
+    def test_legacy_steps_that_left_review_without_a_note_migrate_as_returned(self):
+        # A note-less reject() and a revoke() wrote the same legacy row, so the
+        # migration must not guess between "reject" and "withdraw".
+        v6 = next(m for m in PG_MIGRATIONS if m.version == 6)
+        assert "WHEN action = 'status:approved' AND prev_status = 'pending_approval'" in v6.sql
+        assert "THEN CASE WHEN COALESCE(rationale, '') <> '' THEN 'reject' ELSE 'return' END" in v6.sql
+        assert "ELSE 'withdraw' END" not in v6.sql
 
     def test_no_new_migration_version_added(self):
         # Greenfield constraint: dq_rules_history piggybacks on the

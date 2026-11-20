@@ -9,7 +9,8 @@ makes services testable via ``create_autospec(SqlExecutor)``.
 import logging
 import re
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import AbstractContextManager, contextmanager
 from typing import Any, Protocol, runtime_checkable
 
 from databricks.sdk import WorkspaceClient
@@ -136,6 +137,16 @@ class OltpExecutorProtocol(Protocol):
         Delta wraps in ``CAST(... AS STRING)``; Postgres returns the
         column verbatim because :func:`backend.pg_executor._to_text`
         ISO-formats it during row coercion.
+        """
+        ...
+
+    def transaction(self) -> AbstractContextManager[None]:
+        """Group ordinary executor calls into one unit of work.
+
+        Postgres commits or rolls back at the outermost boundary. Delta's
+        Statement Execution API has no multi-statement transaction, so its
+        implementation is a compatibility no-op; callers must not claim
+        atomicity on that fallback backend.
         """
         ...
 
@@ -668,6 +679,11 @@ class SqlExecutor:
         out.
         """
         return f"CAST({col} AS STRING)"
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Provide the shared unit-of-work surface; Delta statements still commit individually."""
+        yield
 
     def execute(self, sql: str, *, timeout_seconds: int = 120) -> None:
         """Execute a SQL statement that does not return rows.

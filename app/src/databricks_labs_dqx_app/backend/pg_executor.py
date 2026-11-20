@@ -31,6 +31,7 @@ import random
 import threading
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -321,6 +322,12 @@ class PgExecutor:
         # the pool after suspension killed it, nudging the endpoint awake and
         # defeating scale-to-zero; the pre-ping above absorbs the cold-connect
         # on the next real request instead.
+        # A transaction-scoped connection lets the ordinary CRUD helpers join a
+        # multi-statement unit of work instead of committing each statement on
+        # its own. ContextVar keeps concurrent requests and worker threads apart.
+        self._transaction_connection: ContextVar[Connection | None] = ContextVar(
+            "dqx_pg_transaction_connection", default=None
+        )
         self._pool: ConnectionPool = ConnectionPool(
             conninfo="",
             min_size=pool_min_size,
@@ -480,6 +487,39 @@ class PgExecutor:
         with self._pool.connection() as conn:
             yield conn
 
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Run ordinary executor calls in one transaction, committing at the outer boundary.
+
+        Nested contexts reuse the active connection and neither commit nor roll
+        back; the outermost context owns the outcome. Any exception rolls back
+        all statements, including writes made through :meth:`execute`,
+        :meth:`insert`, :meth:`update` and :meth:`delete`.
+        """
+        if self._transaction_connection.get() is not None:
+            yield
+            return
+        with self._pool.connection() as conn:
+            token = self._transaction_connection.set(conn)
+            try:
+                yield
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+            finally:
+                self._transaction_connection.reset(token)
+
+    @contextmanager
+    def _statement_connection(self) -> Iterator[tuple[Connection, bool]]:
+        """Yield the active transaction connection, or a pooled one whose caller commits."""
+        active = self._transaction_connection.get()
+        if active is not None:
+            yield active, False
+            return
+        with self._pool.connection() as conn:
+            yield conn, True
+
     @staticmethod
     def _apply_statement_timeout(cur: Cursor[Any], timeout_seconds: int) -> None:
         """Cap the next statement on ``cur`` at ``timeout_seconds`` via
@@ -524,11 +564,12 @@ class PgExecutor:
         :meth:`_apply_statement_timeout` — a runaway query gets
         cancelled rather than pinning a pool connection forever.
         """
-        with self._pool.connection() as conn:
+        with self._statement_connection() as (conn, commit):
             with conn.cursor() as cur:
                 self._apply_statement_timeout(cur, timeout_seconds)
                 run_trusted_sql(cur, sql)
-            conn.commit()
+            if commit:
+                conn.commit()
 
     def execute_no_schema(self, sql: str) -> None:
         """Parity stub. Postgres has no per-statement catalog/schema context.
@@ -551,7 +592,7 @@ class PgExecutor:
         ``timeout_seconds`` is enforced via
         :meth:`_apply_statement_timeout`.
         """
-        with self._pool.connection() as conn:
+        with self._statement_connection() as (conn, _):
             with conn.cursor() as cur:
                 self._apply_statement_timeout(cur, timeout_seconds)
                 run_trusted_sql(cur, sql)
@@ -564,7 +605,7 @@ class PgExecutor:
         ``timeout_seconds`` is enforced via
         :meth:`_apply_statement_timeout`.
         """
-        with self._pool.connection() as conn:
+        with self._statement_connection() as (conn, _):
             with conn.cursor() as cur:
                 self._apply_statement_timeout(cur, timeout_seconds)
                 run_trusted_sql(cur, sql)

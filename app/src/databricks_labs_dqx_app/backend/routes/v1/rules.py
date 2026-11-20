@@ -28,7 +28,6 @@ from databricks_labs_dqx_app.backend.models import (
     CheckDuplicatesIn,
     CheckDuplicatesOut,
     RuleCatalogEntryOut,
-    RuleHistoryEntryOut,
     SaveRulesIn,
     SetStatusIn,
 )
@@ -166,45 +165,6 @@ async def list_rules(
     except Exception as e:
         logger.error(f"Failed to list rules: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to list rules: {e}")
-
-
-@router.get(
-    "/{rule_id}/history",
-    response_model=list[RuleHistoryEntryOut],
-    operation_id="getRuleHistory",
-    dependencies=[require_role(*_ALL_ROLES)],
-)
-def get_rule_history(
-    rule_id: str,
-    svc: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
-    user_catalogs: Annotated[frozenset[str], Depends(get_user_catalog_names)],
-) -> list[RuleHistoryEntryOut]:
-    """Return a per-table rule's recorded change history (newest first).
-
-    Backs the Drafts & Review change-diff popout: reads the
-    ``dq_resolved_rules_history`` audit trail so the UI can diff the two most
-    recent recorded ``check`` payloads (previous vs proposed). Declared BEFORE
-    the ``/{table_fqn:path}`` catch-all so the more-specific pattern wins.
-
-    Scoped to the caller's Unity Catalog entitlements exactly as ``getRules``
-    is: all history rows for one rule share the same ``table_fqn``, so if that
-    catalog is not in the user's accessible set we raise 403 rather than leak
-    the table name and ``check`` payloads. Cross-table SQL checks
-    (``__sql_check__/``) carry no home catalog and are always allowed.
-    """
-    try:
-        entries = svc.get_history(rule_id)
-        if not entries:
-            return []
-        table_fqn = entries[0].get("table_fqn", "")
-        if not table_fqn.startswith(_SQL_CHECK_PREFIX) and _catalog_of(table_fqn) not in user_catalogs:
-            raise HTTPException(status_code=403, detail="You do not have access to this table's catalog")
-        return [RuleHistoryEntryOut(**entry) for entry in entries]
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to get history for rule {rule_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to get rule history: {e}")
 
 
 @router.get(
