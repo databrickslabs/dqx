@@ -894,6 +894,32 @@ def test_save_idempotency_overwrite_mode(ws, make_schema, make_random, spark):
     assert checks == EXPECTED_CHECKS_FROM_TABLE_LOAD[1:], "Idempotency guard must prevent duplicate overwrite"
 
 
+def test_save_overwrite_writes_when_only_user_metadata_changes(ws, make_schema, make_random, spark):
+    """Changing only user_metadata changes the fingerprint, so overwrite writes the new value (issue #1476)."""
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.t{make_random(10).lower()}"
+
+    engine = DQEngine(ws, spark)
+    config = TableChecksStorageConfig(location=table_name, run_config_name="default", mode="overwrite")
+
+    def check_with_threshold(threshold_pct: str) -> dict:
+        return {
+            "name": "col_1_is_null",
+            "criticality": "warn",
+            "check": {"function": "is_not_null", "arguments": {"column": "col_1"}},
+            "user_metadata": {"threshold_pct": threshold_pct},
+        }
+
+    engine.save_checks([check_with_threshold("50")], config=config)
+    engine.save_checks([check_with_threshold("10")], config=config)
+
+    loaded = engine.load_checks(config=config)
+    assert len(loaded) == 1
+    assert loaded[0]["user_metadata"] == {"threshold_pct": "10"}
+    assert spark.read.table(table_name).count() == 1, "overwrite must replace the previous version"
+
+
 def test_save_and_load_checks_from_table_with_variables(ws, make_schema, make_random, spark):
     """Save checks with {{ }} placeholders resolved via engine-level + per-call variables, then load and apply."""
     catalog_name = TEST_CATALOG

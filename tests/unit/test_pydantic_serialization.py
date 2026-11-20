@@ -86,7 +86,7 @@ _FINGERPRINT_CORPUS: list[tuple[dict, str]] = [
         },
         "48f39b1855fe6076c3711bbfde743fe223c646c19f293510bf83404835d33342",
     ),
-    # 4 — rule with user_metadata (excluded from fingerprint)
+    # 4 — rule with user_metadata (part of the fingerprint since issue #1476; hash re-captured then)
     (
         {
             "name": "with_meta",
@@ -94,7 +94,7 @@ _FINGERPRINT_CORPUS: list[tuple[dict, str]] = [
             "check": {"function": "is_not_null", "arguments": {"column": "id"}},
             "user_metadata": {"team": "eng"},
         },
-        "d17a63634dcc00f35335db33daf55decd11b005c64346f91ad801b194e0273ba",
+        "96aa43d40e132d6c45c6c557fd6dc6da3146832186d62151aed74b6d8e502492",
     ),
     # 5 — rule with __decimal__ markers in arguments (Decimal values serialized to disk)
     (
