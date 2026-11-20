@@ -52,6 +52,7 @@ describe("buildRegistryRulesViewDefs", () => {
     expect(state.values).toEqual({
       groupBy: "none",
       search: "",
+      status: "all",
       dimension: "all",
       severity: "all",
       owner: "all",
@@ -65,6 +66,34 @@ describe("buildRegistryRulesViewDefs", () => {
     expect(reconcileView(payload, buildRegistryRulesViewDefs(columns, { dimensions: null, severities: null })).values.dimension).toBe("gone");
     const state = reconcileView(payload, buildRegistryRulesViewDefs(columns, loaded));
     expect(state.values).toMatchObject({ dimension: "all", severity: "high", owner: "ana@x.com", labels: ["pii"] });
+  });
+
+  it("lists Status between search and dimensions, hidden by default", () => {
+    const state = builtinViewState(buildRegistryRulesViewDefs(columns, loaded));
+    expect(state.filters.order.slice(1, 4)).toEqual(["search", "status", "dimension"]);
+    expect(state.filters.visibility.status).toBe(false);
+  });
+
+  it("keeps a known status and drops an unknown one", () => {
+    const defs = buildRegistryRulesViewDefs(columns, loaded);
+    const visible = { visibility: { status: true } };
+    expect(reconcileView({ v: 1, filters: visible, values: { status: "modified" } }, defs).values.status).toBe("modified");
+    expect(reconcileView({ v: 1, filters: visible, values: { status: "archived" } }, defs).values.status).toBe("all");
+  });
+
+  it("adds Status, hidden, to a view saved before it existed", () => {
+    const order = ["groupBy", "search", "dimension", "severity", "owner", "labels"];
+    const state = reconcileView({ v: 1, filters: { order } }, buildRegistryRulesViewDefs(columns, loaded));
+    expect(state.filters.order).toContain("status");
+    expect(state.filters.visibility.status).toBe(false);
+  });
+
+  it("offers Status as a Group by", () => {
+    const state = reconcileView(
+      { v: 1, filters: { visibility: { groupBy: true } }, values: { groupBy: "status" } },
+      buildRegistryRulesViewDefs(columns, loaded),
+    );
+    expect(state.values.groupBy).toBe("status");
   });
 
   it("falls back to no grouping for an unknown Group by", () => {
