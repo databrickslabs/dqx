@@ -118,6 +118,7 @@ from databricks_labs_dqx_app.backend.services.materializer import Materializatio
 from databricks_labs_dqx_app.backend.services.monitored_table_service import (
     AppliedRuleSummary,
     DuplicateMonitoredTableError,
+    MonitoredTableDetail,
     MonitoredTableService,
     MonitoredTableSummary,
 )
@@ -304,6 +305,7 @@ def get_monitored_table(
     svc: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     tag_suggestions: Annotated[TagSuggestionService, Depends(get_tag_suggestion_service)],
+    version_svc: Annotated[MonitoredTableVersionService | None, Depends(get_monitored_table_version_service)] = None,
 ) -> MonitoredTableDetailOut:
     """Get a monitored table binding plus its applied rules (joined to rule name/dimension/severity tags).
 
@@ -326,7 +328,9 @@ def get_monitored_table(
         # includes them; otherwise reuse the detail we already loaded.
         if attached:
             detail = svc.get(binding_id) or detail
-        return MonitoredTableDetailOut.from_domain(detail)
+        return MonitoredTableDetailOut.from_domain(
+            detail, unapproved_rule_changes=_unapproved_rule_changes(version_svc, detail)
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -1345,6 +1349,51 @@ def _transition_binding_checks(
     )
 
 
+def _unapproved_rule_changes(version_svc: MonitoredTableVersionService | None, detail: MonitoredTableDetail) -> bool:
+    """Whether an approved table's saved applied rules differ from its approved version.
+
+    The detail page's hint for enabling "Submit for review". Only an
+    ``approved`` table needs it (any other status can already be submitted),
+    and a failed comparison reads as "no changes" so it never breaks the page.
+    Submit decides for itself — see :func:`_submit_changes_approved_version`.
+    """
+    table = detail.table
+    if version_svc is None or table.status != "approved" or table.version <= 0:
+        return False
+    try:
+        return version_svc.changed_since_version(table.binding_id, table.version, detail)
+    except Exception:
+        logger.warning(f"Couldn't compare monitored table {table.binding_id} with its approved version", exc_info=True)
+        return False
+
+
+def _submit_changes_approved_version(
+    version_svc: MonitoredTableVersionService, monitored_tables_svc: MonitoredTableService, binding_id: str
+) -> bool:
+    """Whether a submit must be reviewed because it changes what the approved version runs.
+
+    Asked whenever the table has an approved version, whatever its status: a
+    table that removed every rule rolls up to ``draft``, and one that was
+    withdrawn or rejected is stored as ``draft`` / ``rejected``, yet in each
+    case the approved version keeps running the old rules. The table is read
+    again here, after the submit materialized it, so an edit saved while the
+    submit was in flight is compared too. A failed comparison counts as a
+    change: an extra review is safer than a skipped one, and the submit still
+    succeeds.
+    """
+    detail = monitored_tables_svc.get(binding_id)
+    if detail is None or detail.table.version <= 0:
+        return False
+    try:
+        return version_svc.changed_since_version(binding_id, detail.table.version, detail)
+    except Exception:
+        logger.warning(
+            f"Couldn't compare monitored table {binding_id} with its approved version; sending it to review",
+            exc_info=True,
+        )
+        return True
+
+
 def _rollup_binding_status(monitored_tables_svc: MonitoredTableService, binding_id: str) -> str:
     """Roll a binding's status up from its materialized checks' statuses.
 
@@ -1476,9 +1525,17 @@ def submit_monitored_table(
             to_status="pending_approval",
             user_email=user_email,
         )
+        status = _rollup_binding_status(monitored_tables_svc, binding_id)
+        if status != "pending_approval" and _submit_changes_approved_version(
+            version_svc, monitored_tables_svc, binding_id
+        ):
+            # No check is pending (rules were only removed, or a withdrawn or
+            # rejected edit is resubmitted), but the approved version still
+            # runs the old rules — review the change.
+            status = "pending_approval"
         table = monitored_tables_svc.set_status(
             binding_id,
-            _rollup_binding_status(monitored_tables_svc, binding_id),
+            status,
             user_email,
             rationale=rationale,
             set_rationale=True,

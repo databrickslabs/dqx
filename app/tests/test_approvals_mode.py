@@ -34,6 +34,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
 )
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.data_product_service import DataProductDetail
+from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableDetail
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import RuleCatalogEntry
 from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol
@@ -411,6 +412,61 @@ class TestMonitoredTableSubmitWiring:
 
     def test_auto_bypass_pending_when_predicate_false(self):
         version_svc, _ = self._call(ApprovalMode.AUTO_BYPASS, can_edit_and_approve=False)
+        version_svc.freeze_new_version.assert_not_called()
+
+
+class TestMonitoredTableRemovalOnlyAutoApprove:
+    """A removal-only edit has no check to approve; auto-approval must still freeze the next version."""
+
+    @staticmethod
+    def _submit(mode: str, *, can_edit_and_approve: bool) -> tuple[MagicMock, MagicMock]:
+        from databricks_labs_dqx_app.backend.routes.v1 import monitored_tables as mt
+
+        mt_svc = MagicMock()
+        mt_svc.get.return_value = MonitoredTableDetail(
+            table=MonitoredTable(binding_id="b1", table_fqn="cat.schema.tbl", status="approved", version=3),
+            applied_rules=[],
+        )
+        mt_svc.list_materialized_rule_statuses.return_value = [("r1", "approved")]
+        mt_svc.set_status.return_value = MonitoredTable(binding_id="b1", table_fqn="cat.schema.tbl", status="approved")
+        version_svc = MagicMock()
+        version_svc.changed_since_version.return_value = True
+        version_svc.freeze_new_version.return_value = 4
+        perms = MagicMock()
+        perms.can_edit_and_approve.return_value = can_edit_and_approve
+        perms.get_object_owner.return_value = "owner@x"
+        mt.submit_monitored_table(
+            binding_id="b1",
+            monitored_tables_svc=mt_svc,
+            materializer=MagicMock(),
+            rules_catalog=MagicMock(),
+            version_svc=version_svc,
+            app_settings=_app_settings(mode),
+            draft_run_gate=MagicMock(),
+            perms=perms,
+            role=UserRole.RULE_APPROVER,
+            principal_ids=frozenset({"me"}),
+            obo_ws=_mock_obo_ws("alice@x"),
+        )
+        return mt_svc, version_svc
+
+    @pytest.mark.parametrize(
+        ("mode", "can_edit_and_approve"),
+        [(ApprovalMode.DISABLED, False), (ApprovalMode.AUTO_BYPASS, True)],
+    )
+    def test_auto_approval_freezes_the_next_version(self, mode, can_edit_and_approve):
+        mt_svc, version_svc = self._submit(mode, can_edit_and_approve=can_edit_and_approve)
+        assert [c.args[1] for c in mt_svc.set_status.call_args_list] == ["pending_approval", "approved"]
+        version_svc.freeze_new_version.assert_called_once()
+        assert version_svc.freeze_new_version.call_args.args[1].endswith(AUTO_APPROVER_SUFFIX)
+
+    @pytest.mark.parametrize(
+        ("mode", "can_edit_and_approve"),
+        [(ApprovalMode.ENABLED, True), (ApprovalMode.AUTO_BYPASS, False)],
+    )
+    def test_without_auto_approval_the_removal_waits_for_review(self, mode, can_edit_and_approve):
+        mt_svc, version_svc = self._submit(mode, can_edit_and_approve=can_edit_and_approve)
+        assert [c.args[1] for c in mt_svc.set_status.call_args_list] == ["pending_approval"]
         version_svc.freeze_new_version.assert_not_called()
 
 
