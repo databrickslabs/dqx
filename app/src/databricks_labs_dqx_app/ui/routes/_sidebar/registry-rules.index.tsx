@@ -88,10 +88,12 @@ import {
   RULES_FILTERS as FILTERS,
   RULES_FILTER_ALL as ALL,
   RULE_GROUP_BY_VALUES,
+  RULE_STATUS_VALUES,
   buildRegistryRulesViewDefs,
   labelSelectionFromValue,
   labelSelectionToValue,
   type RuleGroupBy,
+  type RuleStatusValue,
   type RulesFilterKey,
 } from "@/components/rules/registry-rules-view";
 import {
@@ -121,6 +123,7 @@ import {
   freeTags,
   colorFor,
   ColorDot,
+  STATUS_LABEL_KEYS,
   type LabelColorDefinition,
 } from "@/components/RegistryRuleBadges";
 
@@ -171,12 +174,22 @@ const FILTER_CLASS = FILTER_TRIGGER_CLASS;
 const GROUP_BY_OPTIONS: readonly { value: RuleGroupBy; labelKey: string }[] = [
   { value: "none", labelKey: "rulesRegistry.groupByNone" },
   { value: "columnType", labelKey: "rulesRegistry.groupByColumnType" },
+  { value: "status", labelKey: "rulesRegistry.groupByStatus" },
   { value: "dimension", labelKey: "rulesRegistry.groupByDimension" },
   { value: "severity", labelKey: "rulesRegistry.groupBySeverity" },
   { value: "mode", labelKey: "rulesRegistry.groupByRuleType" },
   { value: "level", labelKey: "rulesRegistry.groupByLevel" },
   { value: "owner", labelKey: "rulesRegistry.groupByOwner" },
 ];
+
+function isRuleStatusValue(status: string): status is RuleStatusValue {
+  return (RULE_STATUS_VALUES as readonly string[]).includes(status);
+}
+
+/** Group order for the Status group-by; an unknown status sorts last. */
+function statusRank(status: string): number {
+  return isRuleStatusValue(status) ? RULE_STATUS_VALUES.indexOf(status) : RULE_STATUS_VALUES.length;
+}
 
 /** Group order for the Level group-by; an unknown (still loading) level sorts last. */
 function levelRank(level: RuleLevel | null): number {
@@ -220,6 +233,7 @@ function RegistryRulesPage() {
   );
   const views = useSavedViews(SavedViewPage.registry_rules, viewDefs);
   const { values, setValue } = views;
+  const statusFilter = stringValue(values.status, ALL);
   const dimensionFilter = stringValue(values.dimension, ALL);
   const severityFilter = stringValue(values.severity, ALL);
   const ownerFilter = stringValue(values.owner, ALL);
@@ -285,13 +299,14 @@ function RegistryRulesPage() {
   const rules = useMemo(() => {
     const q = nameSearch.trim().toLowerCase();
     return serverFilteredRules.filter((r) => {
+      if (statusFilter !== ALL && r.display_status !== statusFilter) return false;
       if (ownerFilter !== ALL && (r.owner ?? "") !== ownerFilter) return false;
       if (!labelsMatchFilter(freeTags(r), labelFilter)) return false;
       if (!q) return true;
       const name = getTag(r, RESERVED_NAME_KEY).toLowerCase();
       return name.includes(q) || r.rule_id.toLowerCase().includes(q);
     });
-  }, [serverFilteredRules, ownerFilter, labelFilter, nameSearch]);
+  }, [serverFilteredRules, statusFilter, ownerFilter, labelFilter, nameSearch]);
 
   // Each check function's registered rule type (row / dataset) drives the
   // Level column and group-by; until the list loads the level is unknown.
@@ -333,6 +348,13 @@ function RegistryRulesPage() {
         case "columnType": {
           const value = ruleColumnTypeGroup(rule);
           return { key: value, label: t(`rulesRegistry.columnTypeGroup.${value}`) };
+        }
+        case "status": {
+          const status = rule.display_status;
+          return {
+            key: status,
+            label: isRuleStatusValue(status) ? t(STATUS_LABEL_KEYS[status]) : status,
+          };
         }
         case "dimension":
         case "severity": {
@@ -380,17 +402,20 @@ function RegistryRulesPage() {
         const groupOrder =
           groupBy === "columnType"
             ? compareRuleColumnTypeGroups(a, b)
-            : groupBy === "severity"
-              ? // Settings order (as the admin editor and severity filter list it), not alphabetical.
-                compareSeverityGroups(
-                  getTag(a, RESERVED_SEVERITY_KEY),
-                  getTag(b, RESERVED_SEVERITY_KEY),
-                  severityValues,
-                )
-              : groupBy === "level"
-                ? // Row before Table in every locale, not alphabetical.
-                  levelRank(levelForRule(a)) - levelRank(levelForRule(b))
-                : groupForRule(a).label.localeCompare(groupForRule(b).label);
+            : groupBy === "status"
+              ? // Lifecycle order (as the Status filter lists it), not alphabetical.
+                statusRank(a.display_status) - statusRank(b.display_status)
+              : groupBy === "severity"
+                ? // Settings order (as the admin editor and severity filter list it), not alphabetical.
+                  compareSeverityGroups(
+                    getTag(a, RESERVED_SEVERITY_KEY),
+                    getTag(b, RESERVED_SEVERITY_KEY),
+                    severityValues,
+                  )
+                : groupBy === "level"
+                  ? // Row before Table in every locale, not alphabetical.
+                    levelRank(levelForRule(a)) - levelRank(levelForRule(b))
+                  : groupForRule(a).label.localeCompare(groupForRule(b).label);
         if (groupOrder !== 0) return groupOrder;
       }
       if (!sortKey || !sortConfig) return 0;
@@ -412,6 +437,7 @@ function RegistryRulesPage() {
   const visibleRules = groupBy === "none" ? pagedRules : sortedRules;
 
   const hasActiveFilters =
+    statusFilter !== ALL ||
     dimensionFilter !== ALL ||
     severityFilter !== ALL ||
     ownerFilter !== ALL ||
@@ -994,6 +1020,21 @@ function RegistryRulesPage() {
         />
       </div>
     ),
+    status: (
+      <Select value={statusFilter} onValueChange={applyFilter("status")}>
+        <SelectTrigger className={FILTER_CLASS} aria-label={t("rulesRegistry.filterStatuses")}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={ALL} className="text-xs">{t("rulesRegistry.allStatuses")}</SelectItem>
+          {RULE_STATUS_VALUES.map((v) => (
+            <SelectItem key={v} value={v} className="text-xs">
+              {t(STATUS_LABEL_KEYS[v])}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    ),
     dimension: (
       <Select value={dimensionFilter} onValueChange={applyFilter("dimension")}>
         <SelectTrigger className={FILTER_CLASS}>
@@ -1076,6 +1117,7 @@ function RegistryRulesPage() {
           size="sm"
           className="h-8 text-xs"
           onClick={() => {
+            setValue("status", ALL);
             setValue("dimension", ALL);
             setValue("severity", ALL);
             setValue("owner", ALL);

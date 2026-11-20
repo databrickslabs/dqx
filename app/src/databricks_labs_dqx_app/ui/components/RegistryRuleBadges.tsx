@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { AI_BUTTON_BG } from "@/lib/ai-style";
 import type { RegistryRuleOut, RegistryRuleOutAuthorKind } from "@/lib/api";
+import type { RuleStatusValue } from "@/components/rules/registry-rules-view";
 
 // Reserved `user_metadata` keys with dedicated form fields — never rendered
 // as free-form tags. Shared by the Rules Registry list and detail pages.
@@ -108,6 +109,15 @@ export function SeverityBadge({ severity, color }: { severity: string; color?: s
   return <TagBadge label={severity} color={color} />;
 }
 
+export const STATUS_LABEL_KEYS: Record<RuleStatusValue, string> = {
+  approved: "rulesRegistry.statusApproved",
+  modified: "rulesRegistry.statusModified",
+  pending_approval: "rulesRegistry.statusPendingApproval",
+  draft: "rulesRegistry.statusDraft",
+  rejected: "rulesRegistry.statusRejected",
+  deprecated: "rulesRegistry.statusDeprecated",
+};
+
 export function StatusBadge({ status }: { status: string }) {
   const { t } = useTranslation();
   switch (status) {
@@ -115,35 +125,35 @@ export function StatusBadge({ status }: { status: string }) {
       return (
         <Badge variant="secondary" className="gap-1 text-[10px]">
           <FileEdit className="h-2.5 w-2.5" />
-          {t("rulesRegistry.statusDraft")}
+          {t(STATUS_LABEL_KEYS.draft)}
         </Badge>
       );
     case "pending_approval":
       return (
         <Badge variant="outline" className="gap-1 text-[10px] border-amber-500 text-amber-600">
           <Clock className="h-2.5 w-2.5" />
-          {t("rulesRegistry.statusPendingApproval")}
+          {t(STATUS_LABEL_KEYS.pending_approval)}
         </Badge>
       );
     case "approved":
       return (
         <Badge variant="outline" className="gap-1 text-[10px] border-emerald-500 text-emerald-600">
           <ShieldCheck className="h-2.5 w-2.5" />
-          {t("rulesRegistry.statusApproved")}
+          {t(STATUS_LABEL_KEYS.approved)}
         </Badge>
       );
     case "rejected":
       return (
         <Badge variant="outline" className="gap-1 text-[10px] border-red-500 text-red-600">
           <XCircle className="h-2.5 w-2.5" />
-          {t("rulesRegistry.statusRejected")}
+          {t(STATUS_LABEL_KEYS.rejected)}
         </Badge>
       );
     case "deprecated":
       return (
         <Badge variant="outline" className="gap-1 text-[10px] border-muted-foreground text-muted-foreground">
           <Archive className="h-2.5 w-2.5" />
-          {t("rulesRegistry.statusDeprecated")}
+          {t(STATUS_LABEL_KEYS.deprecated)}
         </Badge>
       );
     default:
