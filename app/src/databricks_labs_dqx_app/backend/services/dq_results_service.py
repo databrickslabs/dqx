@@ -44,6 +44,7 @@ from databricks_labs_dqx_app.backend.models import (
     TrendPointOut,
 )
 from databricks_labs_dqx_app.backend.services.score_view_service import RUN_MODE_DRAFT
+from databricks_labs_dqx_app.backend.tag_ids import COLUMN_TAG_SOURCE, RULE_TAG_SOURCE, tag_id
 
 VALID_AXES = ("all", "trend", "breakdown")
 
@@ -154,9 +155,12 @@ class CheckResultRow:
     # admin/rule/registry setting change can never re-judge it. None for legacy
     # runs predating the stamp, which fall back to the live resolver chain.
     pass_threshold: int | None = None
-    # Free-text rule tags (key -> value) frozen with the run, minus the keys
-    # Studio writes itself (see score_view_service.STUDIO_CHECK_METADATA_KEYS).
-    # A check has at most one value per tag key. Empty for untagged checks.
+    # Tags by tag id (see tag_ids): the free-text rule tags frozen with the run
+    # (``rule:<key>``, minus the keys Studio writes itself, see
+    # score_view_service.STUDIO_CHECK_METADATA_KEYS), plus, on Global Results,
+    # the table's current Unity Catalog catalog, schema and table tags and the
+    # column tags its rule currently maps (merged by with_current_tags). One
+    # value per tag id; "" for a key-only tag.
     tags: dict[str, str] = field(default_factory=dict)
 
 
@@ -178,10 +182,10 @@ class ResultFacets:
 
     *outcomes* keeps only ``passed`` (no failing rows) or ``failed`` checks.
 
-    *tags* holds (key, value) pairs, with None selecting checks missing that
-    key. Values of the SAME key are ORed; different
-    keys are ANDed, like the other facets (domain=finance OR domain=customer,
-    AND pii=true).
+    *tags* holds (tag id, value) pairs, with None selecting checks missing that
+    tag; *tags_any* holds tag ids where any value matches. Selections of the
+    SAME tag id are ORed; different tag ids are ANDed, like the other facets
+    (rule:domain=finance OR rule:domain=customer, AND table:pii=true).
     """
 
     dimensions: tuple[str, ...] = ()
@@ -193,6 +197,7 @@ class ResultFacets:
     schemas: tuple[str, ...] = ()
     outcomes: tuple[str, ...] = ()
     tags: tuple[tuple[str, str | None], ...] = ()
+    tags_any: tuple[str, ...] = ()
 
     def any_active(self) -> bool:
         return bool(
@@ -205,6 +210,7 @@ class ResultFacets:
             or self.schemas
             or self.outcomes
             or self.tags
+            or self.tags_any
         )
 
 
@@ -222,7 +228,10 @@ def _parse_columns_json(raw: str | None) -> tuple[str, ...]:
 
 
 def _parse_tags_json(raw: str | None) -> dict[str, str]:
-    """Parse the view's ``to_json(tags)`` object; empty on absent/corrupt or non-string entries."""
+    """Parse the view's ``to_json(tags)`` rule-tag object into ``rule:<key>`` ids.
+
+    Empty on absent or corrupt JSON; non-string or empty entries are dropped.
+    """
     if not raw or raw == "null":
         return {}
     try:
@@ -231,7 +240,49 @@ def _parse_tags_json(raw: str | None) -> dict[str, str]:
         return {}
     if not isinstance(parsed, dict):
         return {}
-    return {k: v for k, v in parsed.items() if isinstance(k, str) and k and isinstance(v, str) and v}
+    return {
+        tag_id(RULE_TAG_SOURCE, k): v
+        for k, v in parsed.items()
+        if isinstance(k, str) and k and isinstance(v, str) and v
+    }
+
+
+def rule_column_tags(slot_tags: dict[str, list[str]]) -> dict[str, str]:
+    """The ``column:<key>`` tags a rule maps onto the columns it checks, from its slot tags.
+
+    Each slot tag is ``key`` or ``key=value`` (a governed Unity Catalog tag);
+    a key-only tag has the value ``""``. When two slots map the same key, the
+    first value in slot order wins.
+    """
+    out: dict[str, str] = {}
+    for tags in slot_tags.values():
+        for tag in tags:
+            key, _, value = tag.partition("=")
+            if key:
+                out.setdefault(tag_id(COLUMN_TAG_SOURCE, key), value)
+    return out
+
+
+def with_current_tags(
+    rows: list[CheckResultRow],
+    tags_by_table: dict[str, dict[str, str]],
+    tags_by_rule: dict[str, dict[str, str]] | None = None,
+) -> list[CheckResultRow]:
+    """Add the tags that are not frozen with each run to its rows.
+
+    *tags_by_table* holds each table's Unity Catalog catalog, schema and table
+    tags; *tags_by_rule* the column tags each registry rule maps (see
+    :func:`rule_column_tags`). Both are read as they are today, so history is
+    attributed to the CURRENT tags. Rows with nothing to add are returned as is.
+    """
+    by_rule = tags_by_rule or {}
+    if not tags_by_table and not by_rule:
+        return rows
+    out: list[CheckResultRow] = []
+    for row in rows:
+        extra = {**tags_by_table.get(row.table_fqn, {}), **(by_rule.get(row.rule_id, {}) if row.rule_id else {})}
+        out.append(replace(row, tags={**extra, **row.tags}) if extra else row)
+    return out
 
 
 def parse_check_rows(raw_rows: list[dict[str, str | None]]) -> list[CheckResultRow]:
@@ -312,17 +363,24 @@ def row_matches_facets(row: CheckResultRow, facets: ResultFacets) -> bool:
         return False
     if facets.outcomes and ("failed" if row.failed > 0 else "passed") not in facets.outcomes:
         return False
-    if facets.tags and not _matches_tag_facet(row.tags, facets.tags):
+    if (facets.tags or facets.tags_any) and not _matches_tag_facet(row.tags, facets.tags, facets.tags_any):
         return False
     return True
 
 
-def _matches_tag_facet(tags: dict[str, str], selected: tuple[tuple[str, str | None], ...]) -> bool:
-    """True when, for every selected tag key, the check's value is one of that key's selected values."""
+def _matches_tag_facet(
+    tags: dict[str, str],
+    selected: tuple[tuple[str, str | None], ...],
+    any_value: tuple[str, ...] = (),
+) -> bool:
+    """True when, for every selected tag id, the check has any value (*any_value*) or a selected value."""
     wanted: dict[str, set[str | None]] = defaultdict(set)
     for key, value in selected:
         wanted[key].add(value)
-    return all(tags.get(key) in values for key, values in wanted.items())
+    present = set(any_value)
+    return all(
+        (key in present and key in tags) or tags.get(key) in wanted.get(key, ()) for key in present | set(wanted)
+    )
 
 
 @dataclass

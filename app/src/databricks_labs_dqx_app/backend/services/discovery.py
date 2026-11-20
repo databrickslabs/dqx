@@ -93,6 +93,69 @@ def read_column_tags(sql: "SqlExecutor", table_fqn: str) -> dict[str, list[str]]
     return tags
 
 
+def read_object_tags(sql: "SqlExecutor", table_fqns: list[str]) -> dict[str, dict[str, str]]:
+    """Return ``table_fqn -> {tag id: value}`` for the catalog, schema and table tags of each table.
+
+    Tag ids are ``catalog:<key>``, ``schema:<key>`` and ``table:<key>`` (see
+    :mod:`..tag_ids`); a key-only tag has the value ``""``. Reads
+    ``<catalog>.information_schema.{catalog,schema,table}_tags`` with one query
+    per catalog, so it only sees objects the executor's identity can see.
+
+    Best-effort per catalog: invalid FQNs are skipped, and a catalog whose query
+    is unsafe or fails contributes no tags, so a tag-read failure never aborts
+    the caller. Never raises. Every table in *table_fqns* with a valid FQN gets
+    an entry, empty when it has no tags.
+    """
+    from databricks.labs.dqx.utils import is_sql_query_safe
+
+    from ..sql_utils import escape_sql_string, quote_ident, sql_string_in_list, validate_fqn
+    from ..tag_ids import UC_TAG_SOURCES, tag_id
+
+    tables_by_catalog: dict[str, set[tuple[str, str]]] = {}
+    for fqn in table_fqns:
+        try:
+            validate_fqn(fqn)
+        except ValueError:
+            continue
+        catalog, schema, table = fqn.split(".")
+        tables_by_catalog.setdefault(catalog, set()).add((schema, table))
+
+    out: dict[str, dict[str, str]] = {
+        f"{catalog}.{schema}.{table}": {} for catalog, tables in tables_by_catalog.items() for schema, table in tables
+    }
+    for catalog, tables in sorted(tables_by_catalog.items()):
+        info = f"{quote_ident(catalog)}.information_schema"
+        schemas = sql_string_in_list(sorted({schema for schema, _ in tables}))
+        names = sql_string_in_list(sorted({table for _, table in tables}))
+        query = (
+            "SELECT 'catalog', CAST(NULL AS STRING), CAST(NULL AS STRING), tag_name, tag_value "
+            f"FROM {info}.catalog_tags WHERE catalog_name = '{escape_sql_string(catalog)}' "
+            "UNION ALL SELECT 'schema', schema_name, CAST(NULL AS STRING), tag_name, tag_value "
+            f"FROM {info}.schema_tags WHERE schema_name IN ({schemas}) "
+            "UNION ALL SELECT 'table', schema_name, table_name, tag_name, tag_value "
+            f"FROM {info}.table_tags WHERE schema_name IN ({schemas}) AND table_name IN ({names})"
+        )
+        try:
+            if not is_sql_query_safe(query):
+                logger.warning("Skipping an unsafe Unity Catalog tag query")
+                continue
+            rows = sql.query(query)
+        except Exception:
+            logger.warning("Failed to read Unity Catalog tags for one catalog", exc_info=True)
+            continue
+        for row in rows:
+            level, schema, table, key, value = (list(row) + [None] * 5)[:5]
+            if not isinstance(level, str) or level not in UC_TAG_SOURCES or not isinstance(key, str) or not key:
+                continue
+            tag_value = value if isinstance(value, str) else ""
+            matching = [
+                (s, t) for s, t in tables if level == "catalog" or (s == schema and (level == "schema" or t == table))
+            ]
+            for s, t in matching:
+                out[f"{catalog}.{s}.{t}"][tag_id(level, key)] = tag_value
+    return out
+
+
 class DiscoveryService:
     """OBO-scoped Unity Catalog browsing with per-user response caching."""
 
@@ -283,6 +346,13 @@ class DiscoveryService:
 
         return [by_tag[tag] for tag in sorted(by_tag)]
 
+    def list_object_tags(self, table_fqns: tuple[str, ...]) -> dict[str, dict[str, str]]:
+        """Catalog, schema and table tags of *table_fqns* the caller can see (see :func:`read_object_tags`)."""
+        if self._sql is None:
+            logger.warning("Unity Catalog tag read skipped: no SQL executor available")
+            return {}
+        return read_object_tags(self._sql, list(table_fqns))
+
     # ── async wrappers (cached per user) ───────────────────────
 
     @app_cache.cached("discovery:{_user}:catalogs", ttl=_CATALOG_TTL)
@@ -308,6 +378,10 @@ class DiscoveryService:
     @app_cache.cached("discovery:{_user}:schema_ddl:{table_fqn}", ttl=_COLUMN_TTL)
     async def get_table_schema_ddl_async(self, table_fqn: str) -> str:
         return await asyncio.to_thread(self.get_table_schema_ddl, table_fqn)
+
+    @app_cache.cached("discovery:{_user}:object_tags:{table_fqns}", ttl=_TAGS_TTL)
+    async def list_object_tags_async(self, table_fqns: tuple[str, ...]) -> dict[str, dict[str, str]]:
+        return await asyncio.to_thread(self.list_object_tags, table_fqns)
 
     @app_cache.cached("discovery:{_user}:governed_tags", ttl=_TAGS_TTL)
     async def list_governed_tags_async(self) -> list[GovernedTag]:

@@ -68,13 +68,13 @@ import selector from "@/lib/selector";
 import type { User as UserType } from "@/lib/api";
 import { useLabelDefinitions, exportRegistryRules } from "@/lib/api-custom";
 import { ExportDialog } from "@/components/ExportDialog";
-import { LabelFilter, labelsMatchFilter, type LabelSelection } from "@/components/Labels";
-import { labelToken } from "@/lib/format-utils";
+import { TagFilter } from "@/components/tags/TagFilter";
+import { itemTags, tagId, tagsMatchSelection, type TagOption } from "@/components/tags/tag-filter";
 import { usePermissions } from "@/hooks/use-permissions";
 import { invalidateAfterRegistryRuleApprovalChange } from "@/lib/registry-rule-invalidation";
 import { cn } from "@/lib/utils";
 import { Pagination } from "@/components/Pagination";
-import { FILTER_TRIGGER_CLASS } from "@/components/data-table/filter-bar";
+import { FILTER_TRIGGER_CLASS, FILTER_TRIGGER_PICKED_CLASS } from "@/components/data-table/filter-bar";
 import { BulkActionBar } from "@/components/data-table/BulkActionBar";
 import { SearchableSelect } from "@/components/data-table/SearchableSelect";
 import { GroupBySelect } from "@/components/data-table/GroupBySelect";
@@ -89,8 +89,8 @@ import {
   RULES_FILTER_ALL as ALL,
   RULE_GROUP_BY_VALUES,
   buildRegistryRulesViewDefs,
-  labelSelectionFromValue,
-  labelSelectionToValue,
+  ruleTagSelectionFromValue,
+  ruleTagSelectionToValue,
   type RuleGroupBy,
   type RulesFilterKey,
 } from "@/components/rules/registry-rules-view";
@@ -225,19 +225,16 @@ function RegistryRulesPage() {
   const ownerFilter = stringValue(values.owner, ALL);
   const nameSearch = stringValue(values.search, "");
   const groupBy: RuleGroupBy = oneOf(values.groupBy, RULE_GROUP_BY_VALUES, "none");
-  const labelFilter: LabelSelection = useMemo(
-    () => labelSelectionFromValue(stringArrayValue(values.labels)),
-    [values.labels],
-  );
+  const tagFilter = useMemo(() => ruleTagSelectionFromValue(stringArrayValue(values.labels)), [values.labels]);
   // Any filter edit (or switching view) starts the list from page 1.
   const [page, setPage] = usePageResetOn(values);
 
   // Only dimension/severity are pushed to the server. Owner, free-text tags
-  // (via the key-first LabelFilter) and the name search are all derived from
+  // (via the shared TagFilter) and the name search are all derived from
   // and filtered over the server-filtered result set client-side — the same
   // one-fetch-then-filter approach the old dqx Active Rules list used. Moving
   // tag filtering client-side (it was previously a single free-text `tag`
-  // server param matching key presence) is what lets the LabelFilter offer
+  // server param matching key presence) is what lets the tag filter offer
   // key + value multi-select without a new backend query shape.
   const serverParams = useMemo(
     () => ({
@@ -265,17 +262,17 @@ function RegistryRulesPage() {
   }, [serverFilteredRules]);
 
   // Distinct free-text (non-reserved) tags across the server-filtered set,
-  // feeding the key-first LabelFilter. Reserved keys (dimension/severity) are
-  // excluded — they have their own dedicated Select facets above.
-  const availableLabels = useMemo(() => {
+  // feeding the tag filter. Reserved keys (dimension/severity) are excluded —
+  // they have their own dedicated Select facets above.
+  const tagOptions = useMemo((): TagOption[] => {
     const seen = new Set<string>();
-    const out: { key: string; value: string }[] = [];
+    const out: TagOption[] = [];
     for (const r of serverFilteredRules) {
       for (const [key, value] of Object.entries(freeTags(r))) {
-        const tok = labelToken(key, value);
-        if (!seen.has(tok)) {
-          seen.add(tok);
-          out.push({ key, value });
+        const id = tagId("rule", key);
+        if (!seen.has(`${id}=${value}`)) {
+          seen.add(`${id}=${value}`);
+          out.push({ id, value });
         }
       }
     }
@@ -286,12 +283,13 @@ function RegistryRulesPage() {
     const q = nameSearch.trim().toLowerCase();
     return serverFilteredRules.filter((r) => {
       if (ownerFilter !== ALL && (r.owner ?? "") !== ownerFilter) return false;
-      if (!labelsMatchFilter(freeTags(r), labelFilter)) return false;
+      const tags = itemTags(Object.entries(freeTags(r)).map(([key, value]) => [tagId("rule", key), value] as const));
+      if (!tagsMatchSelection(tags, tagFilter)) return false;
       if (!q) return true;
       const name = getTag(r, RESERVED_NAME_KEY).toLowerCase();
       return name.includes(q) || r.rule_id.toLowerCase().includes(q);
     });
-  }, [serverFilteredRules, ownerFilter, labelFilter, nameSearch]);
+  }, [serverFilteredRules, ownerFilter, tagFilter, nameSearch]);
 
   // Each check function's registered rule type (row / dataset) drives the
   // Level column and group-by; until the list loads the level is unknown.
@@ -415,7 +413,7 @@ function RegistryRulesPage() {
     dimensionFilter !== ALL ||
     severityFilter !== ALL ||
     ownerFilter !== ALL ||
-    labelFilter.size > 0 ||
+    tagFilter.size > 0 ||
     nameSearch.trim() !== "";
 
   const invalidate = useCallback(
@@ -996,8 +994,12 @@ function RegistryRulesPage() {
     ),
     dimension: (
       <Select value={dimensionFilter} onValueChange={applyFilter("dimension")}>
-        <SelectTrigger className={FILTER_CLASS}>
-          <SelectValue />
+        <SelectTrigger className={cn(FILTER_CLASS, dimensionFilter !== ALL && FILTER_TRIGGER_PICKED_CLASS)} aria-label={t("rulesRegistry.colDimension")}>
+          <SelectValue>
+            {dimensionFilter === ALL
+              ? t("rulesRegistry.allDimensions")
+              : `${t("rulesRegistry.colDimension")}: ${dimensionFilter}`}
+          </SelectValue>
         </SelectTrigger>
         <SelectContent>
           <SelectItem value={ALL} className="text-xs">{t("rulesRegistry.allDimensions")}</SelectItem>
@@ -1014,8 +1016,12 @@ function RegistryRulesPage() {
     ),
     severity: (
       <Select value={severityFilter} onValueChange={applyFilter("severity")}>
-        <SelectTrigger className={FILTER_CLASS}>
-          <SelectValue />
+        <SelectTrigger className={cn(FILTER_CLASS, severityFilter !== ALL && FILTER_TRIGGER_PICKED_CLASS)} aria-label={t("resultsUi.filterLabelSeverity")}>
+          <SelectValue>
+            {severityFilter === ALL
+              ? t("rulesRegistry.allSeverities")
+              : `${t("resultsUi.filterLabelSeverity")}: ${severityFilter}`}
+          </SelectValue>
         </SelectTrigger>
         <SelectContent>
           <SelectItem value={ALL} className="text-xs">{t("rulesRegistry.allSeverities")}</SelectItem>
@@ -1044,14 +1050,14 @@ function RegistryRulesPage() {
         searchPlaceholder={t("common.search")}
         emptyText={t("common.noMatches")}
         ariaLabel={t("rulesRegistry.ownerPlaceholder")}
+        label={t("rulesRegistry.ownerPlaceholder")}
       />
     ),
     labels: (
-      <LabelFilter
-        available={availableLabels}
-        selected={labelFilter}
-        onChange={(next) => setValue("labels", labelSelectionToValue(next))}
-        className={FILTER_CLASS}
+      <TagFilter
+        options={tagOptions}
+        selected={tagFilter}
+        onChange={(next) => setValue("labels", ruleTagSelectionToValue(next))}
       />
     ),
     groupBy: (

@@ -40,7 +40,9 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { StatusBadge } from "@/components/RegistryRuleBadges";
-import { LabelFilter, tagPairsMatchFilter, type LabelSelection } from "@/components/Labels";
+import { TagFilter } from "@/components/tags/TagFilter";
+import { monitoredTableTags, useMonitoredTableUcTags } from "@/components/tags/table-tags";
+import { EMPTY_TAG_SELECTION, tagOptionsOf, tagsMatchSelection, type TagSelection } from "@/components/tags/tag-filter";
 import { MemberVersionPin } from "@/components/data-products/MemberVersionPin";
 import { cn } from "@/lib/utils";
 
@@ -156,7 +158,7 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
   const [catalogFilter, setCatalogFilter] = useState<string>(ALL);
   const [schemaFilter, setSchemaFilter] = useState<string>(ALL);
   const [ownerFilter, setOwnerFilter] = useState<string>(ALL);
-  const [tagFilter, setTagFilter] = useState<LabelSelection>(new Map());
+  const [tagFilter, setTagFilter] = useState<TagSelection>(EMPTY_TAG_SELECTION);
 
   const catalogOptions = useMemo(
     () => Array.from(new Set(rows.map((r) => splitFqn(r.table.table_fqn).catalog))).sort(),
@@ -171,23 +173,15 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
     () => Array.from(new Set(rows.map((r) => r.table.owner).filter((s): s is string => !!s))).sort(),
     [rows],
   );
-  // Distinct free-text custom tags across the loaded set, feeding the
-  // key-first LabelFilter. Reserved keys (dimension/severity/…) are already
-  // stripped by the list API.
-  const availableTags = useMemo(() => {
-    const seen = new Set<string>();
-    const out: { key: string; value: string }[] = [];
-    for (const r of rows) {
-      for (const tag of r.custom_tags ?? []) {
-        const tok = `${tag.key}=${tag.value}`;
-        if (!seen.has(tok)) {
-          seen.add(tok);
-          out.push({ key: tag.key, value: tag.value });
-        }
-      }
-    }
-    return out;
-  }, [rows]);
+  // Each table's tags for the tag filter: its Unity Catalog catalog, schema and
+  // table tags plus the tags of its applied rules (custom_tags, reserved keys
+  // already stripped by the list API).
+  const ucTags = useMonitoredTableUcTags();
+  const tagsByBinding = useMemo(
+    () => new Map(rows.map((r) => [r.table.binding_id, monitoredTableTags(ucTags?.[r.table.table_fqn], r.custom_tags)])),
+    [rows, ucTags],
+  );
+  const tagOptions = useMemo(() => tagOptionsOf(tagsByBinding.values()), [tagsByBinding]);
 
   // Reset the schema filter if it falls out of range after a catalog change.
   useEffect(() => {
@@ -201,11 +195,11 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
       if (catalogFilter !== ALL && catalog !== catalogFilter) return false;
       if (schemaFilter !== ALL && schema !== schemaFilter) return false;
       if (ownerFilter !== ALL && (r.table.owner ?? "") !== ownerFilter) return false;
-      if (!tagPairsMatchFilter(r.custom_tags ?? [], tagFilter)) return false;
+      if (!tagsMatchSelection(tagsByBinding.get(r.table.binding_id) ?? new Map(), tagFilter)) return false;
       if (q && !r.table.table_fqn.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [rows, search, catalogFilter, schemaFilter, ownerFilter, tagFilter]);
+  }, [rows, search, catalogFilter, schemaFilter, ownerFilter, tagFilter, tagsByBinding]);
 
   const grouped = useMemo((): Map<string, MonitoredTableSummaryOut[]> => {
     if (groupBy === "none") {
@@ -351,7 +345,7 @@ export function TablesPicker({ selected, onChange, disabledKeys, onRowsLoaded, p
             ))}
           </SelectContent>
         </Select>
-        <LabelFilter available={availableTags} selected={tagFilter} onChange={setTagFilter} className={FILTER_TRIGGER_CLASS} />
+        <TagFilter options={tagOptions} selected={tagFilter} onChange={setTagFilter} />
 
         <Input
           placeholder={t("monitoredTables.searchTablesPlaceholder")}

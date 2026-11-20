@@ -30,6 +30,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_data_product_service,
     get_entitlement_service,
     get_monitored_table_service,
+    get_monitored_table_uc_tags,
     get_obo_ws,
     get_preview_sql_executor,
     get_registry_service,
@@ -172,6 +173,12 @@ USER_EMAIL = "viewer@example.com"
 
 
 @pytest.fixture
+def uc_tags() -> dict[str, dict[str, str]]:
+    """Unity Catalog tags by table FQN, as the Global Results dependency returns them; none by default."""
+    return {}
+
+
+@pytest.fixture
 def client(
     sql_mock,
     monitored_tables_mock,
@@ -185,6 +192,7 @@ def client(
     entitlement_mock,
     run_sets_mock,
     wake_mock,
+    uc_tags,
     app_config,
 ) -> TestClient:
     from databricks_labs_dqx_app.backend.routes.v1.dq_results import router
@@ -207,6 +215,7 @@ def client(
     app.dependency_overrides[get_entitlement_service] = lambda: entitlement_mock
     app.dependency_overrides[get_run_set_service] = lambda: run_sets_mock
     app.dependency_overrides[get_scheduler_wake_marker] = lambda: wake_mock
+    app.dependency_overrides[get_monitored_table_uc_tags] = lambda: uc_tags
     return TestClient(app)
 
 
@@ -447,6 +456,31 @@ class TestTableResults:
         shaping = [c[0][0] for c in sql_mock.query_dicts.call_args_list if SHAPING_VIEW_NAME in c[0][0]]
         assert shaping
         assert all("evaluated_row_count" in stmt for stmt in shaping)
+
+    def test_table_results_ignore_unity_catalog_tag_picks_but_apply_rule_tags(self, client, sql_mock):
+        sql_dispatch(
+            sql_mock,
+            check_rows=[
+                check_row("fin", errors=10, total=100, tags={"domain": "finance"}),
+                check_row("plain", errors=0, total=100),
+            ],
+        )
+        url = f"/api/v1/dq-results/table/{FQN}"
+        uc_only = client.get(url, params={"tag": ["table:tier=gold"]}).json()
+        assert {g["label"] for g in uc_only["by_rule"]} == {"fin", "plain"}
+        mixed = client.get(url, params={"tag": ["table:tier=gold", "rule:domain=finance"]}).json()
+        assert [g["label"] for g in mixed["by_rule"]] == ["fin"]
+
+    def test_table_results_filter_by_the_column_tags_rules_map(self, client, sql_mock, registry_mock):
+        registry_mock.get_rules_many.return_value = {
+            "r-loc": MagicMock(user_metadata={"slot_tags": {"country": ["class.location"]}}),
+        }
+        sql_dispatch(
+            sql_mock,
+            check_rows=[check_row("loc", rule_id="r-loc"), check_row("plain", rule_id="r-plain")],
+        )
+        body = client.get(f"/api/v1/dq-results/table/{FQN}", params={"tag": ["column:class.location"]}).json()
+        assert [g["label"] for g in body["by_rule"]] == ["loc"]
 
     def test_breakdowns_use_as_of_run_attribution_from_the_view_rows(self, client, sql_mock, monitored_tables_mock):
         sql_dispatch(
@@ -918,7 +952,7 @@ class TestGlobalResults:
         bogus = client.get("/api/v1/dq-results/global", params={"outcome": ["bogus"]}).json()
         assert {g["label"] for g in bogus["by_rule"]} == {"c1", "c2"}
 
-    def test_global_tag_facet_filters_by_key_and_value(self, client, sql_mock):
+    def test_global_tag_facet_filters_by_tag_id_and_value(self, client, sql_mock):
         sql_dispatch(
             sql_mock,
             check_rows=[
@@ -927,20 +961,63 @@ class TestGlobalResults:
                 check_row("plain", errors=0, total=100),
             ],
         )
-        body = client.get("/api/v1/dq-results/global", params={"tag": ["domain=finance"]}).json()
+        body = client.get("/api/v1/dq-results/global", params={"tag": ["rule:domain=finance"]}).json()
         assert [g["label"] for g in body["by_rule"]] == ["fin"]
-        missing = client.get("/api/v1/dq-results/global", params={"tag": ["domain="]}).json()
+        any_value = client.get("/api/v1/dq-results/global", params={"tag": ["rule:domain"]}).json()
+        assert {g["label"] for g in any_value["by_rule"]} == {"fin", "cust"}
+        missing = client.get("/api/v1/dq-results/global", params={"tag": ["!rule:domain"]}).json()
         assert [g["label"] for g in missing["by_rule"]] == ["plain"]
-        # Malformed values (no "=" or empty key) are ignored, not an empty scope.
-        bogus = client.get("/api/v1/dq-results/global", params={"tag": ["domain", "=x"]}).json()
+        # Values without a known source or key are ignored, not an empty scope.
+        bogus = client.get(
+            "/api/v1/dq-results/global",
+            params={"tag": ["domain=finance", "rule:=x", "label:domain=finance", "!rule:domain=finance"]},
+        ).json()
         assert {g["label"] for g in bogus["by_rule"]} == {"fin", "cust", "plain"}
 
     def test_global_returns_by_tag_rows_and_reads_the_tags_column(self, client, sql_mock):
         sql_dispatch(sql_mock, check_rows=[check_row("fin", errors=10, total=100, tags={"domain": "finance"})])
         body = client.get("/api/v1/dq-results/global").json()
-        assert {(g["tag_key"], g["label"]) for g in body["by_tag"]} == {("domain", "finance")}
+        assert {(g["tag_key"], g["label"]) for g in body["by_tag"]} == {("rule:domain", "finance")}
         stmt = sql_mock.query_dicts.call_args_list[0][0][0]
         assert "to_json(tags) AS tags_json" in stmt
+
+    def test_global_filters_and_groups_by_the_column_tags_rules_map(self, client, sql_mock, registry_mock):
+        registry_mock.get_rules_many.return_value = {
+            "r-loc": MagicMock(user_metadata={"slot_tags": {"country": ["class.location"]}}),
+        }
+        sql_dispatch(
+            sql_mock,
+            check_rows=[
+                check_row("loc", errors=10, total=100, rule_id="r-loc"),
+                check_row("plain", errors=0, total=100, rule_id="r-plain"),
+            ],
+        )
+        body = client.get("/api/v1/dq-results/global", params={"tag": ["column:class.location"]}).json()
+        assert [g["label"] for g in body["by_rule"]] == ["loc"]
+        assert ("column:class.location", "") in {(g["tag_key"], g["label"]) for g in body["by_tag"]}
+
+    def test_global_filters_and_groups_by_unity_catalog_tags(self, client, sql_mock, uc_tags):
+        gold, plain = f"{FQN}_gold", f"{FQN}_plain"
+        uc_tags.update({gold: {"table:tier": "gold", "catalog:pii": ""}, plain: {}})
+        sql_dispatch(
+            sql_mock,
+            check_rows=[
+                check_row("g", errors=10, total=100, fqn=gold, tags={"domain": "finance"}),
+                check_row("p", errors=0, total=100, fqn=plain),
+            ],
+        )
+        body = client.get("/api/v1/dq-results/global", params={"tag": ["table:tier=gold"]}).json()
+        assert [g["label"] for g in body["by_rule"]] == ["g"]
+        # A key-only Unity Catalog tag is selected by an empty value.
+        key_only = client.get("/api/v1/dq-results/global", params={"tag": ["catalog:pii="]}).json()
+        assert [g["label"] for g in key_only["by_rule"]] == ["g"]
+        everything = client.get("/api/v1/dq-results/global").json()
+        assert {(g["tag_key"], g["label"]) for g in everything["by_tag"]} >= {
+            ("table:tier", "gold"),
+            ("table:tier", None),
+            ("rule:domain", "finance"),
+        }
+        assert everything["tag_options"]["table:tier"] == ["gold", None]
 
     def test_sql_failure_maps_to_500(self, client, sql_mock):
         sql_mock.query_dicts.side_effect = RuntimeError("warehouse down")
@@ -1589,8 +1666,9 @@ class TestFailedRowsShapeAndFilters:
         assert "array('amount')" in stmt
 
     def test_tag_filter_pushes_key_value_and_missing_predicates(self, client, sql_mock):
-        client.get(FAILED_ROWS_URL, params={"tag": ["domain=finance", "domain=", "pii=true"]})
+        client.get(FAILED_ROWS_URL, params={"tag": ["rule:domain=finance", "!rule:domain", "rule:pii"]})
         stmt = _quarantine_stmt(sql_mock)
+        assert "IS NOT NULL" in stmt
         assert (
             "element_at(from_json(to_json(variant_get(f, '$.user_metadata')), 'map<string,string>'), 'domain')" in stmt
         )
@@ -1600,8 +1678,12 @@ class TestFailedRowsShapeAndFilters:
         assert "cast(errors as array<variant>)" in stmt
         assert "cast(warnings as array<variant>)" in stmt
 
+    def test_unity_catalog_tags_are_not_pushed_to_failed_rows(self, client, sql_mock):
+        client.get(FAILED_ROWS_URL, params={"tag": ["table:tier=gold"]})
+        assert "element_at(" not in _quarantine_stmt(sql_mock)
+
     def test_tag_key_and_value_are_sql_escaped(self, client, sql_mock):
-        client.get(FAILED_ROWS_URL, params={"tag": ["owner's=a'b"]})
+        client.get(FAILED_ROWS_URL, params={"tag": ["rule:owner's=a'b"]})
         stmt = _quarantine_stmt(sql_mock)
         assert "'owner''s'" in stmt
         assert "'a''b'" in stmt

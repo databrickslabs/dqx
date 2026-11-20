@@ -28,6 +28,7 @@ from databricks_labs_dqx_app.backend.dependencies import (
     get_draft_run_gate_service,
     get_materializer,
     get_monitored_table_service,
+    get_monitored_table_uc_tags,
     get_monitored_table_version_service,
     get_obo_ws,
     get_pending_application_service,
@@ -71,6 +72,7 @@ from databricks_labs_dqx_app.backend.models import (
     MonitoredTableProfileOut,
     MonitoredTableReviewOut,
     MonitoredTableSummaryOut,
+    MonitoredTableUcTagsOut,
     MonitoredTableVersionChecksOut,
     MonitoredTableVersionOut,
     ApplyProfilingSuggestionsIn,
@@ -236,6 +238,24 @@ def _apply_snapshot_check_counts(
                 summary.check_count = snapshot[1]
                 continue
         summary.check_count = live_counts.get(summary.table.binding_id, 0)
+
+
+@router.get(
+    "/uc-tags",
+    response_model=MonitoredTableUcTagsOut,
+    operation_id="listMonitoredTableUcTags",
+    dependencies=[require_role(*_ALL_ROLES)],
+)
+def list_monitored_table_uc_tags(
+    tags_by_table: Annotated[dict[str, dict[str, str]], Depends(get_monitored_table_uc_tags)],
+) -> MonitoredTableUcTagsOut:
+    """Unity Catalog catalog, schema and table tags of every monitored table.
+
+    Feeds the tag filters of the Tables and Collections pages. Read as the
+    caller, so tags on objects they cannot see are absent. Best-effort: a read
+    failure returns no tags rather than an error.
+    """
+    return MonitoredTableUcTagsOut(tags_by_table=tags_by_table)
 
 
 @router.get(

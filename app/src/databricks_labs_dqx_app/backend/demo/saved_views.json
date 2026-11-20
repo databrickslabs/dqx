@@ -30,14 +30,15 @@
           }
         },
         "filters": {
-          "order": ["groupBy", "search", "catalog", "schema", "owner", "dqScore"],
+          "order": ["groupBy", "search", "catalog", "schema", "owner", "dqScore", "tags"],
           "visibility": {
             "groupBy": true,
             "search": true,
             "catalog": true,
             "schema": true,
             "owner": false,
-            "dqScore": true
+            "dqScore": true,
+            "tags": true
           }
         },
         "values": {
@@ -52,6 +53,26 @@
       "name": "Demo Tables Only",
       "payload": {
         "v": 1,
+        "columns": {
+          "order": [
+            "scoreTrend",
+            "scoreByDimension",
+            "scoreBySeverity",
+            "scoreByTag",
+            "appliedCounts",
+            "failedCounts",
+            "byDimension",
+            "bySeverity",
+            "byTag",
+            "byRule",
+            "byTable",
+            "byColumn"
+          ],
+          "visibility": {
+            "scoreByTag": true,
+            "byTag": true
+          }
+        },
         "filters": {
           "order": [
             "catalog",
@@ -64,8 +85,7 @@
             "outcome",
             "dimension",
             "severity",
-            "tag",
-            "tagKey"
+            "tag"
           ],
           "visibility": {
             "catalog": true,
@@ -78,8 +98,7 @@
             "outcome": true,
             "dimension": false,
             "severity": false,
-            "tag": true,
-            "tagKey": false
+            "tag": true
           }
         },
         "values": {
@@ -165,11 +184,12 @@
           }
         },
         "filters": {
-          "order": ["search", "owner", "dqScore"],
+          "order": ["search", "owner", "dqScore", "tags"],
           "visibility": {
             "search": true,
             "owner": false,
-            "dqScore": true
+            "dqScore": true,
+            "tags": true
           }
         },
         "values": {}

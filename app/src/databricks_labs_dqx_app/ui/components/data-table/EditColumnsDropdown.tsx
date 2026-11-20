@@ -166,6 +166,8 @@ export type EditColumnsDropdownProps<K extends string, F extends string = string
 ) & {
   filters?: SortableToggleListConfig<F>;
   savedViews?: SavedViewsMenuConfig;
+  /** Label of the first list's tab, when it holds something other than columns (Results' page elements). */
+  columnsLabel?: string;
 };
 
 /**
@@ -176,6 +178,7 @@ export type EditColumnsDropdownProps<K extends string, F extends string = string
 export function EditColumnsDropdown<K extends string, F extends string = string>({
   filters,
   savedViews,
+  columnsLabel,
   ...columnProps
 }: EditColumnsDropdownProps<K, F>) {
   const { t } = useTranslation();
@@ -245,7 +248,9 @@ export function EditColumnsDropdown<K extends string, F extends string = string>
                         listView === option ? "text-foreground" : "text-muted-foreground hover:text-foreground",
                       )}
                     >
-                      {option === "columns" ? t("common.editColumnsColumns") : t("common.editColumnsFilters")}
+                      {option === "columns"
+                        ? (columnsLabel ?? t("common.editColumnsColumns"))
+                        : t("common.editColumnsFilters")}
                     </button>
                   ))}
                 </div>

@@ -1,85 +1,91 @@
 import { describe, expect, it } from "bun:test";
 import type { GroupRowOut, TrendPointOut } from "@/lib/api";
+import { selectionFromTokens } from "@/components/tags/tag-filter";
 import {
-  effectiveTagKey,
-  groupsForTagKey,
-  parseTagFacetValue,
-  tagFacetLabel,
-  tagFacetValue,
-  tagFilterOptions,
-  tagKeysFromHistory,
-  tagKeysOf,
-  trendForTagKey,
+  shownTagGroups,
+  shownTagTrend,
+  tagOptionsFromHistory,
+  tagSeriesSelected,
+  tagSeriesToken,
+  toggleTagSeries,
 } from "./tag-results";
 
 const groups: GroupRowOut[] = [
-  { tag_key: "pii", label: "true" },
-  { tag_key: "domain", label: "finance" },
-  { tag_key: "domain", label: "customer" },
-  { tag_key: "domain", label: null },
+  { tag_key: "rule:domain", label: "finance" },
+  { tag_key: "rule:domain", label: "customer" },
+  { tag_key: "rule:domain", label: null },
+  { tag_key: "table:tier", label: "gold" },
 ];
 
-describe("tag facet values", () => {
-  it("round-trips key=value, splitting on the first '='", () => {
-    expect(tagFacetValue("domain", "a=b")).toBe("domain=a=b");
-    expect(parseTagFacetValue("domain=a=b")).toEqual({ key: "domain", value: "a=b" });
-  });
+const history = { "rule:domain": ["customer", "finance", null], "table:tier": ["gold"] };
 
-  it("uses an empty value for checks missing a tag key", () => {
-    expect(tagFacetValue("domain", null)).toBe("domain=");
-    expect(parseTagFacetValue("domain=")).toEqual({ key: "domain", value: null });
-    expect(tagFacetLabel("domain=", "No tag")).toBe("domain = No tag");
-  });
-
-  it("rejects values without a key", () => {
-    expect(parseTagFacetValue("domain")).toBeNull();
-    expect(parseTagFacetValue("=x")).toBeNull();
-  });
-
-  it("labels a value as 'key = value', leaving malformed ones as is", () => {
-    expect(tagFacetLabel("domain=finance")).toBe("domain = finance");
-    expect(tagFacetLabel("bogus")).toBe("bogus");
+describe("series tokens", () => {
+  it("are filter tokens: id=value, or !id for checks without the tag", () => {
+    expect(tagSeriesToken("rule:domain", "a=b")).toBe("rule:domain=a=b");
+    expect(tagSeriesToken("rule:domain", null)).toBe("!rule:domain");
   });
 });
 
-describe("tag keys", () => {
-  it("collects distinct keys across lists, sorted", () => {
-    expect(tagKeysOf(groups, [{ tag_key: "zone", label: "eu" }], undefined)).toEqual(["domain", "pii", "zone"]);
-    expect(tagKeysOf(undefined)).toEqual([]);
-    expect(tagKeysFromHistory({ archived: ["old"] }, groups)).toEqual(["archived", "domain", "pii"]);
-  });
-
-  it("keeps the chosen key while it is in scope, else falls back to the first", () => {
-    expect(effectiveTagKey(["domain", "pii"], "pii")).toBe("pii");
-    expect(effectiveTagKey(["domain", "pii"], "gone")).toBe("domain");
-    expect(effectiveTagKey(["domain"], null)).toBe("domain");
-    expect(effectiveTagKey([], "pii")).toBeNull();
-  });
-});
-
-describe("per-key slices", () => {
-  it("keeps one key's groups, untagged row included", () => {
-    expect(groupsForTagKey(groups, "domain").map((g) => g.label)).toEqual(["finance", "customer", null]);
-    expect(groupsForTagKey(groups, null)).toEqual([]);
-  });
-
-  it("keeps one key's trend points", () => {
-    const points: TrendPointOut[] = [
-      { tag_key: "domain", series: "finance", run_date: "d1" },
-      { tag_key: "pii", series: "true", run_date: "d1" },
-    ];
-    expect(trendForTagKey(points, "pii").map((p) => p.series)).toEqual(["true"]);
-  });
-});
-
-describe("tagFilterOptions", () => {
-  it("offers historical and missing values, sorted by label", () => {
-    expect(tagFilterOptions({ domain: ["customer", "finance", null], pii: ["true"], retired: ["old"] }, "No tag")).toEqual([
-      { value: "domain=customer", label: "domain = customer" },
-      { value: "domain=finance", label: "domain = finance" },
-      { value: "domain=", label: "domain = No tag" },
-      { value: "pii=true", label: "pii = true" },
-      { value: "retired=old", label: "retired = old" },
+describe("shown series follow the tag filter", () => {
+  it("show every tag value, but no Untagged rows, when no tag is picked", () => {
+    expect(shownTagGroups(groups, new Map()).map((g) => g.label)).toEqual([
+      "rule:domain=finance",
+      "rule:domain=customer",
+      "table:tier=gold",
     ]);
+  });
+
+  it("show the values of a ticked key, or just the picked values", () => {
+    expect(shownTagGroups(groups, selectionFromTokens(["rule:domain"])).map((g) => g.label)).toEqual([
+      "rule:domain=finance",
+      "rule:domain=customer",
+    ]);
+    expect(shownTagGroups(groups, selectionFromTokens(["!rule:domain", "table:tier=gold"])).map((g) => g.label)).toEqual([
+      "!rule:domain",
+      "table:tier=gold",
+    ]);
+  });
+
+  it("filters trend points the same way, keyed by token, and charts nothing until tags are picked", () => {
+    const points: TrendPointOut[] = [
+      { tag_key: "rule:domain", series: "finance", run_date: "d1" },
+      { tag_key: "table:tier", series: "gold", run_date: "d1" },
+    ];
+    expect(shownTagTrend(points, selectionFromTokens(["table:tier"])).map((p) => p.series)).toEqual([
+      "table:tier=gold",
+    ]);
+    expect(shownTagTrend(points, new Map())).toEqual([]);
+  });
+
+  it("highlights only explicitly picked series", () => {
+    expect(tagSeriesSelected(new Map(), "rule:domain=finance")).toBe(false);
+    expect(tagSeriesSelected(selectionFromTokens(["rule:domain"]), "rule:domain=finance")).toBe(true);
+    expect(tagSeriesSelected(selectionFromTokens(["!rule:domain"]), "!rule:domain")).toBe(true);
+  });
+});
+
+describe("clicking a series", () => {
+  it("toggles that tag value in the filter", () => {
+    expect(toggleTagSeries(new Map(), history, "rule:domain=finance")).toEqual(["rule:domain=finance"]);
+    expect(toggleTagSeries(selectionFromTokens(["rule:domain"]), history, "rule:domain=finance")).toEqual([
+      "rule:domain=customer",
+    ]);
+    expect(toggleTagSeries(new Map(), history, "!rule:domain")).toEqual(["!rule:domain"]);
+  });
+
+  it("leaves the filter alone for an unknown tag", () => {
+    expect(toggleTagSeries(new Map(), history, "rule:gone=x")).toEqual([]);
+  });
+});
+
+describe("tagOptionsFromHistory", () => {
+  it("lists every value of every tag, Untagged included", () => {
+    expect(tagOptionsFromHistory(history)).toEqual([
+      { id: "rule:domain", value: "customer" },
+      { id: "rule:domain", value: "finance" },
+      { id: "rule:domain", value: null },
+      { id: "table:tier", value: "gold" },
+    ]);
+    expect(tagOptionsFromHistory(undefined)).toEqual([]);
   });
 });

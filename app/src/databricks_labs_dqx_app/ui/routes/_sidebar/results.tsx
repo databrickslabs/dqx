@@ -23,6 +23,7 @@ import { EMPTY_FILTERS } from "@/components/monitored-tables/BindingResultsTab";
 import { monitoredTableOwner } from "@/components/monitored-tables/MonitoredTablesTable";
 import {
   GLOBAL_RESULTS_FILTERS,
+  RESULTS_ELEMENT_LABEL_KEYS,
   buildGlobalResultsViewDefs,
 } from "@/components/results/global-results-view";
 import { AskGenieButton } from "@/components/results/AskGenieButton";
@@ -147,6 +148,8 @@ function GlobalResultsContent() {
     [baseResults, owners, products, topFilterOptions],
   );
   const views = useSavedViews(SavedViewPage.global_results, viewDefs);
+  const elements = views.columnLayout;
+  const visibleElements = useMemo(() => (elements ? new Set(elements.visibleKeys) : undefined), [elements]);
   return (
     <FadeIn>
       <div className="space-y-6">
@@ -172,22 +175,30 @@ function GlobalResultsContent() {
             // Item 35: top-level facet dropdowns (Tables / Dimensions /
             // Severities / Rules) just below the overall score card.
             showTopLevelFilters
-            // Saved views own which bubbles show and every filter value
-            // (Edit View is Filters-only here — no columns).
-            topFilterLayout={views.filterLayout.visibleKeys.filter((key) => key !== "tagKey")}
+            // Saved views own which elements and bubbles show and every
+            // filter value. The elements ride on the view's column layout;
+            // their order is fixed (all pinned, so no drag handles).
+            topFilterLayout={views.filterLayout.visibleKeys}
             topFilterValues={views.values}
             onTopFilterChange={views.setValue}
             topFilterOptions={topFilterOptions}
+            visibleElements={visibleElements}
             editViewSlot={
-              <EditColumnsDropdown
-                filters={{
-                  ...filterLayoutMenuConfig(views.filterLayout, (key) =>
-                    key === "tagKey" ? t("resultsUi.tagKeySelectAria") : t(GLOBAL_RESULTS_FILTERS[key].labelKey),
-                  ),
-                  order: views.filterLayout.order.filter((key) => key !== "tagKey"),
-                }}
-                savedViews={views.menuConfig}
-              />
+              elements && (
+                <EditColumnsDropdown
+                  columnsLabel={t("resultsUi.editViewElements")}
+                  order={elements.colOrder}
+                  labelOf={(key) => t(RESULTS_ELEMENT_LABEL_KEYS[key])}
+                  toggleableOf={() => true}
+                  pinnedOf={() => true}
+                  isChecked={(key) => elements.visibleKeys.includes(key)}
+                  onToggle={elements.toggleColumn}
+                  onDragEnd={elements.handleDragEnd}
+                  sensors={elements.sensors}
+                  filters={filterLayoutMenuConfig(views.filterLayout, (key) => t(GLOBAL_RESULTS_FILTERS[key].labelKey))}
+                  savedViews={views.menuConfig}
+                />
+              )
             }
             onBaseByTable={preverifyByTable}
             // No runPickerSlot: the picker is omitted (see the module

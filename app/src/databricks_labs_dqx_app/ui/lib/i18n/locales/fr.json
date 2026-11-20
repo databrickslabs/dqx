@@ -1538,18 +1538,28 @@
     "currentNotInCatalog": "La valeur actuelle {{value}} n'est pas dans le catalogue.",
     "clickToToggle": "cliquez pour basculer"
   },
-  "labelFilter": {
-    "allLabels": "Toutes les étiquettes",
-    "labelsCount": "{{count}} étiquettes",
-    "searchLabels": "Rechercher des étiquettes…",
-    "noLabelsFound": "Aucune étiquette trouvée dans la vue actuelle.",
-    "noMatches": "Aucun résultat pour « {{query}} ».",
-    "selectedSuffix": "sélectionnée(s)",
+  "tagFilter": {
+    "allTags": "Tous les tags",
+    "searchTags": "Rechercher des tags…",
+    "noTags": "Aucun tag trouvé",
+    "untagged": "Sans tag",
+    "noValue": "Sans valeur",
+    "selectedCount_one": "{{count}} tag",
+    "selectedCount_other": "{{count}} tags",
+    "keyValuesCount_one": "{{key}} : {{count}} valeur",
+    "keyValuesCount_other": "{{key}} : {{count}} valeurs",
+    "showValues": "Afficher les valeurs de {{key}}",
+    "sourceCatalog": "Tags de catalogue",
+    "sourceSchema": "Tags de schéma",
+    "sourceTable": "Tags de table",
+    "sourceRule": "Tags de règle",
     "clear": "Effacer",
-    "anyValue": "Toutes",
-    "toggleValues": "Afficher ou masquer les valeurs",
-    "valuesSelected_one": "{{count}} valeur sélectionnée",
-    "valuesSelected_other": "{{count}} valeurs sélectionnées"
+    "sourceColumn": "Tags de colonne",
+    "sourceNameRule": "Tag de règle",
+    "sourceNameColumn": "Tag de colonne",
+    "sourceNameTable": "Tag de table",
+    "sourceNameSchema": "Tag de schéma",
+    "sourceNameCatalog": "Tag de catalogue"
   },
   "roleManagement": {
     "title": "Gestion des rôles",
@@ -2082,7 +2092,7 @@
     "filterDimensions": "Dimensions",
     "filterSeverities": "Sévérités",
     "filterOwners": "Propriétaires",
-    "filterLabels": "Libellés"
+    "filterLabels": "Étiquettes"
   },
   "monitoredTables": {
     "breadcrumb": "Tables",
@@ -2574,7 +2584,8 @@
     "groupByCatalog": "Catalogue",
     "groupBySchema": "Schéma",
     "groupUnknown": "Inconnu",
-    "filterSearch": "Recherche"
+    "filterSearch": "Recherche",
+    "filterTags": "Tags"
   },
   "dataProducts": {
     "title": "Collections",
@@ -2812,7 +2823,8 @@
     "bulkSucceeded_one": "{{msg}} ({{count}} collection)",
     "bulkSucceeded_other": "{{msg}} ({{count}} collections)",
     "bulkPartial": "{{ok}} réussi(s), {{fail}} échec(s){{reason}}",
-    "filterSearch": "Recherche"
+    "filterSearch": "Recherche",
+    "filterTags": "Tags"
   },
   "permissions": {
     "title": "Autorisations",
@@ -3090,13 +3102,11 @@
     "filterLabelSeverity": "Criticité",
     "chipTag": "Tag : {{value}}",
     "filterLabelTag": "Tag",
-    "filterAllTags": "Tous les tags",
-    "filterSearchTags": "Rechercher des tags…",
-    "filterNoTags": "Aucun tag",
-    "scoreByTagTitle": "Score par tag : {{key}}",
-    "byTagTitle": "Par tag : {{key}}",
-    "untaggedSeries": "Sans tag",
-    "tagKeySelectAria": "Tag à afficher"
+    "scoreByTagTitle": "Score par tag",
+    "byTagTitle": "Par tag",
+    "editViewElements": "Éléments",
+    "tagHeader": "Tag",
+    "scoreByTagPickTags": "Choisissez des tags dans le filtre Tag, ou cliquez sur des lignes de Par tag, pour les afficher."
   },
   "genie": {
     "iconTitle": "Databricks Genie",

@@ -52,27 +52,41 @@ import {
 import { usePassThresholdEnabled } from "@/hooks/use-pass-threshold-enabled";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { FilterToolbar } from "@/components/data-table/FilterToolbar";
-import { DQ_SCORE_BUCKETS, FILTER_TRIGGER_CLASS } from "@/components/data-table/filter-bar";
+import {
+  DQ_SCORE_BUCKETS,
+  DQ_SCORE_FILTER_ALL,
+  FILTER_TRIGGER_CLASS,
+  FILTER_TRIGGER_PICKED_CLASS,
+  dqScoreTriggerText,
+} from "@/components/data-table/filter-bar";
 import type { ViewValue, ViewValues } from "@/components/data-table/saved-views";
 import {
   collectionTableFqns,
   filtersFromViewValues,
   topFilterParams,
   viewValueChanges,
+  ALL_RESULTS_ELEMENTS,
+  GLOBAL_RESULTS_FILTERS,
   type GlobalResultsFilterKey,
   type GlobalResultsFilterOptionValues,
-  type GlobalResultsViewKey,
+  type ResultsElementKey,
 } from "@/components/results/global-results-view";
 import {
-  effectiveTagKey,
-  groupsForTagKey,
-  parseTagFacetValue,
-  tagFacetLabel,
-  tagFacetValue,
-  tagFilterOptions,
-  tagKeysFromHistory,
-  trendForTagKey,
+  shownTagGroups,
+  shownTagTrend,
+  tagOptionsFromHistory,
+  tagSeriesSelected,
+  toggleTagSeries,
 } from "@/components/results/tag-results";
+import { TagFilter, useTagLabels } from "@/components/tags/TagFilter";
+import { cn } from "@/lib/utils";
+import {
+  selectionFromTokens,
+  selectionToTokens,
+  tagTokenLabel,
+  tokensOfOptions,
+  type TagOption,
+} from "@/components/tags/tag-filter";
 
 // The multi-table results composition, extracted from the reviewed
 // `components/data-products/ProductResultsTab.tsx` (itself a 1:1 port of
@@ -313,7 +327,7 @@ export interface TopFilterOptionLists {
   rule: FacetFilterOption[];
   dimension: FacetFilterOption[];
   severity: FacetFilterOption[];
-  tag: FacetFilterOption[];
+  tag: TagOption[];
 }
 
 /**
@@ -332,7 +346,6 @@ export function topFilterOptionLists(
   base: EntityResultsOut | undefined,
   filters: Pick<MultiFilters, "catalog" | "schema">,
   collectionFqns: ReadonlySet<string> | null = null,
-  missingTagLabel = "Untagged",
 ): TopFilterOptionLists {
   const allTableFqns = (base?.by_table ?? [])
     .map((g) => g.label)
@@ -372,7 +385,7 @@ export function topFilterOptionLists(
     ),
     dimension: labelOptions(base?.by_dimension),
     severity: labelOptions(base?.by_severity),
-    tag: tagFilterOptions(base?.tag_options, missingTagLabel),
+    tag: tagOptionsFromHistory(base?.tag_options),
   };
 }
 
@@ -424,9 +437,9 @@ export function globalResultsValuesReconciler(
  */
 export function baseFilterOptionValues(
   base: EntityResultsOut | undefined,
-): Pick<GlobalResultsFilterOptionValues, keyof TopFilterOptionLists> & { tagKey: readonly string[] | null } {
+): Pick<GlobalResultsFilterOptionValues, keyof TopFilterOptionLists> {
   if (!base) {
-    return { catalog: null, schema: null, table: null, rule: null, dimension: null, severity: null, tag: null, tagKey: null };
+    return { catalog: null, schema: null, table: null, rule: null, dimension: null, severity: null, tag: null };
   }
   const lists = topFilterOptionLists(base, { catalog: [], schema: [] });
   const values = (opts: FacetFilterOption[]) => opts.map((o) => o.value);
@@ -437,9 +450,25 @@ export function baseFilterOptionValues(
     rule: values(lists.rule),
     dimension: values(lists.dimension),
     severity: values(lists.severity),
-    tag: values(lists.tag),
-    tagKey: tagKeysFromHistory(base.tag_options, base.by_tag),
+    tag: tokensOfOptions(lists.tag),
   };
+}
+
+/** The elements of the Over time section (it hides when none of them shows). */
+const OVER_TIME_ELEMENTS: readonly ResultsElementKey[] = [
+  "scoreTrend",
+  "scoreByDimension",
+  "scoreBySeverity",
+  "scoreByTag",
+  "appliedCounts",
+  "failedCounts",
+];
+
+/** Two side-by-side elements; when one is hidden the other takes the full width. */
+function PairGrid({ items }: { items: React.ReactNode[] }) {
+  const shown = items.filter(Boolean);
+  if (shown.length === 0) return null;
+  return <div className={cn("grid gap-6", shown.length > 1 && "md:grid-cols-2")}>{shown}</div>;
 }
 
 /** Bubbles shown when the caller passes no layout (the shipped defaults). */
@@ -447,7 +476,7 @@ const DEFAULT_TOP_FILTERS: readonly GlobalResultsFilterKey[] = ["catalog", "sche
 
 /** Static i18n keys per multi-select bubble (so the extractor sees them). */
 const TOP_FILTER_COPY: Record<
-  Exclude<GlobalResultsFilterKey, "dqScore">,
+  Exclude<GlobalResultsFilterKey, "dqScore" | "tag">,
   { all: string; search: string; none: string }
 > = {
   catalog: { all: "resultsUi.filterAllCatalogs", search: "resultsUi.filterSearchCatalogs", none: "resultsUi.filterNoCatalogs" },
@@ -471,7 +500,6 @@ const TOP_FILTER_COPY: Record<
     search: "resultsUi.filterSearchSeverities",
     none: "resultsUi.filterNoSeverities",
   },
-  tag: { all: "resultsUi.filterAllTags", search: "resultsUi.filterSearchTags", none: "resultsUi.filterNoTags" },
 };
 
 /** Facet → chip-label i18n key (static keys so the extractor sees them). */
@@ -550,7 +578,7 @@ export interface MultiTableResultsSectionProps {
    *  Omitted elsewhere — the other surfaces keep their local filter state. */
   topFilterLayout?: readonly GlobalResultsFilterKey[];
   topFilterValues?: ViewValues;
-  onTopFilterChange?: (key: GlobalResultsViewKey, value: ViewValue) => void;
+  onTopFilterChange?: (key: GlobalResultsFilterKey, value: ViewValue) => void;
   /** Owner / Collection bubble options and collection membership (id → FQNs). */
   topFilterOptions?: {
     owners: FacetFilterOption[];
@@ -559,6 +587,8 @@ export interface MultiTableResultsSectionProps {
   };
   /** Node right-aligned on the filter-bubble row (the Edit View menu). */
   editViewSlot?: React.ReactNode;
+  /** The page elements to render (Global Results' Edit View); every element when omitted. */
+  visibleElements?: ReadonlySet<ResultsElementKey>;
 }
 
 /**
@@ -585,8 +615,10 @@ export function MultiTableResultsSection({
   onTopFilterChange,
   topFilterOptions,
   editViewSlot,
+  visibleElements = ALL_RESULTS_ELEMENTS,
 }: MultiTableResultsSectionProps) {
   const { t } = useTranslation();
+  const shows = (element: ResultsElementKey) => visibleElements.has(element);
   // Belt-and-suspenders: the backend returns no breaches when the feature is
   // disabled (Task 2), but we also hide all breach UI client-side to avoid
   // any stale-cache flash when the setting was recently changed.
@@ -640,9 +672,6 @@ export function MultiTableResultsSection({
   const [countChartsOpen, setCountChartsOpen] = useState(false);
   const [ruleColOpen, setRuleColOpen] = useState(true);
   const [invalidSamplesOpen, setInvalidSamplesOpen] = useState(true);
-  // The tag key the Score by tag chart and By tag box show (one key at a
-  // time; null = the first key in scope). Shared by both widgets.
-  const [chosenTagKey, setChosenTagKey] = useState<string | null>(null);
 
   // The FILTERED trends: cross-filtered by the active facet chips (dqlake's
   // product tab re-scopes its trends on the chips, unlike the monitored-table
@@ -878,60 +907,32 @@ export function MultiTableResultsSection({
   // set is remapped the same way to stay matched.
   const tableFacet = buildFacet(results?.by_table, baseResults?.by_table);
 
-  // Rule tags: keys come from the history options and the current rows so the key list does
-  // not vanish under a filter. Within one key a check has one value, so the
-  // key's rows partition the scope like By dimension. The facet value is
-  // `key=value`; an empty value selects checks without that key.
-  const tagKeys = tagKeysFromHistory(baseResults?.tag_options, baseResults?.by_tag, results?.by_tag);
-  const savedTagKey = controlledValues && typeof controlledValues.tagKey === "string" ? controlledValues.tagKey : null;
-  const tagKey = effectiveTagKey(tagKeys, controlledValues ? savedTagKey : chosenTagKey);
+  // Tags: the top tag filter drives the Score by tag chart and the By tag
+  // box. With no tag picked they show every tag value; otherwise the picked
+  // values (a ticked key shows all of its values, "Untagged" the checks
+  // without the tag). Rows and series are keyed by their filter token, so
+  // clicking one toggles that tag value in the filter.
+  const tagSelection = selectionFromTokens(filters.tag);
+  const tagLabels = useTagLabels();
   const tagFacetRows = buildFacet(
-    groupsForTagKey(results?.by_tag, tagKey),
-    groupsForTagKey(baseResults?.by_tag, tagKey),
+    shownTagGroups(results?.by_tag, tagSelection),
+    shownTagGroups(baseResults?.by_tag, tagSelection),
   );
   const tagFacet = {
-    ...tagFacetRows,
-    mutedLabels: [
-      ...tagFacetRows.mutedLabels,
-      ...(!applicableOnly && hasActiveFilter &&
-      groupsForTagKey(baseResults?.by_tag, tagKey).some((r) => r.label === null) &&
-      !groupsForTagKey(results?.by_tag, tagKey).some((r) => r.label === null)
-        ? [t("resultsUi.untaggedSeries")]
-        : []),
-    ],
+    mutedLabels: tagFacetRows.mutedLabels.map((token) => tagTokenLabel(token, tagLabels)),
     rows: tagFacetRows.rows.map((r) => ({
       ...r,
-      label: r.label ?? t("resultsUi.untaggedSeries"),
-      value: tagKey === null ? null : tagFacetValue(tagKey, r.label),
+      label: r.label === null ? null : tagTokenLabel(r.label, tagLabels),
+      value: r.label,
     })),
   };
-  // Use the facet value as the chart's internal series key. This keeps a real
-  // tag value named "Untagged" separate from the missing-value series.
-  const untaggedSeries = t("resultsUi.untaggedSeries");
-  const tagTrend = trendForTagKey(trends?.trend_by_tag, tagKey).map((p) =>
-    ({ ...p, series: tagFacetValue(tagKey ?? "", p.series ?? null) }),
-  );
-  const onTagSeriesClick = (series: string) => {
-    if (tagKey !== null) onRowToggle("tag", series);
-  };
-  const tagKeySelect =
-    tagKeys.length > 1 ? (
-      <Select value={tagKey ?? undefined} onValueChange={(key) => {
-        if (onTopFilterChange) onTopFilterChange("tagKey", key);
-        else setChosenTagKey(key);
-      }}>
-        <SelectTrigger className="h-7 w-auto gap-1 text-xs" aria-label={t("resultsUi.tagKeySelectAria")}>
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {tagKeys.map((k) => (
-            <SelectItem key={k} value={k} className="text-xs">
-              {k}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    ) : null;
+  const tagRowSelected = tagFacet.rows
+    .map((r) => r.value)
+    .filter((token): token is string => token !== null && tagSeriesSelected(tagSelection, token));
+  const tagTrend = shownTagTrend(trends?.trend_by_tag, tagSelection);
+  const hasTags = Object.keys(baseResults?.tag_options ?? {}).length > 0;
+  const onTagToggle = (token: string) =>
+    onFacetFilterChange("tag", toggleTagSeries(tagSelection, baseResults?.tag_options, token));
 
   // Rule name → breach criticality for the failing-records cell hover's ⚠.
   // Keyed by the by_rule row label (what failures carry as rule_name); only
@@ -964,7 +965,7 @@ export function MultiTableResultsSection({
     // Schema chips show the bare schema name (the catalog has its own chip).
     if (facet === "schema") return friendlySchemaName(value);
     if (facet === "outcome") return value === "failed" ? t("resultsUi.outcomeFailed") : t("resultsUi.outcomePassed");
-    if (facet === "tag") return tagFacetLabel(value, t("resultsUi.untaggedSeries"));
+    if (facet === "tag") return tagTokenLabel(value, tagLabels);
     return value;
   };
   const chips = (
@@ -982,7 +983,7 @@ export function MultiTableResultsSection({
     topFilterOptions?.collectionMembers ?? new Map<string, readonly string[]>(),
     filters.collection,
   );
-  const topOptions = topFilterOptionLists(baseResults, filters, collectionFqns, t("resultsUi.untaggedSeries"));
+  const topOptions = topFilterOptionLists(baseResults, filters, collectionFqns);
 
   // Setting the Tables dropdown drives the `table` facet directly (multi-select
   // filter). It intentionally does NOT touch `selectedTable` — that single
@@ -1130,6 +1131,7 @@ export function MultiTableResultsSection({
       searchPlaceholder={t(copy.search)}
       emptyText={t(copy.none)}
       ariaLabel={t(copy.all)}
+      label={t(GLOBAL_RESULTS_FILTERS[key].labelKey)}
     />
   );
   const renderTopFilter = (key: GlobalResultsFilterKey): React.ReactNode => {
@@ -1155,9 +1157,17 @@ export function MultiTableResultsSection({
       case "rule":
       case "dimension":
       case "severity":
-      case "tag":
         return facetBubble(key, TOP_FILTER_COPY[key], topOptions[key], filters[key], (v) =>
           onFacetFilterChange(key, v),
+        );
+      case "tag":
+        return (
+          <TagFilter
+            key={key}
+            options={topOptions.tag}
+            selected={tagSelection}
+            onChange={(next) => onFacetFilterChange("tag", selectionToTokens(next))}
+          />
         );
       case "outcome":
         return facetBubble(
@@ -1177,8 +1187,13 @@ export function MultiTableResultsSection({
             value={filters.scoreBucket}
             onValueChange={(v) => setFilters((f) => ({ ...f, scoreBucket: v }))}
           >
-            <SelectTrigger className={FILTER_TRIGGER_CLASS} aria-label={t("resultsUi.filterLabelDqScore")}>
-              <SelectValue />
+            <SelectTrigger
+              className={cn(FILTER_TRIGGER_CLASS, filters.scoreBucket !== DQ_SCORE_FILTER_ALL && FILTER_TRIGGER_PICKED_CLASS)}
+              aria-label={t("resultsUi.filterLabelDqScore")}
+            >
+              <SelectValue>
+                {dqScoreTriggerText(t, filters.scoreBucket, t("resultsUi.filterLabelDqScore"))}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               {DQ_SCORE_BUCKETS.map((b) => (
@@ -1257,79 +1272,97 @@ export function MultiTableResultsSection({
         </FadeIn>
       )}
 
+      {OVER_TIME_ELEMENTS.some(shows) && (
       <FadeIn delay={0.12}>
       <CollapsibleSection title={t("resultsUi.overTimeSection")} defaultOpen>
         <div className="space-y-6">
-          <ChartFrame>
-            <ScoreTrendChart
-              data={perTable}
-              colorMap={tableColorMap}
-              overall={overallPoints}
-              overallLabel={t("resultsUi.averageSeries")}
-              title={t("resultsUi.averageDqScoreTitle")}
-              breachMarkers={overallBreachMarkers}
-            />
-          </ChartFrame>
-          <div className="grid gap-6 md:grid-cols-2">
+          {shows("scoreTrend") && (
             <ChartFrame>
               <ScoreTrendChart
-                data={toTrendSeries(trends?.trend_by_dimension)}
-                colorMap={dimColors}
-                title={t("resultsUi.scoreByDimensionTitle")}
-                onSeriesClick={(s) => onRowToggle("dimension", s)}
-                collapsed={!scoreBreakdownOpen}
-                onToggleCollapse={() => setScoreBreakdownOpen((o) => !o)}
+                data={perTable}
+                colorMap={tableColorMap}
+                overall={overallPoints}
+                overallLabel={t("resultsUi.averageSeries")}
+                title={t("resultsUi.averageDqScoreTitle")}
+                breachMarkers={overallBreachMarkers}
               />
             </ChartFrame>
-            <ChartFrame>
-              <ScoreTrendChart
-                data={toTrendSeries(trends?.trend_by_severity)}
-                colorMap={sevColors}
-                title={t("resultsUi.scoreBySeverityTitle")}
-                onSeriesClick={(s) => onRowToggle("severity", s)}
-                collapsed={!scoreBreakdownOpen}
-                onToggleCollapse={() => setScoreBreakdownOpen((o) => !o)}
-              />
-            </ChartFrame>
-          </div>
-          {/* Score by tag: one series per value of the chosen tag key. Shown
-              only when some check in scope carries a tag. */}
-          {tagKey !== null && (
+          )}
+          <PairGrid
+            items={[
+              shows("scoreByDimension") && (
+                <ChartFrame key="scoreByDimension">
+                  <ScoreTrendChart
+                    data={toTrendSeries(trends?.trend_by_dimension)}
+                    colorMap={dimColors}
+                    title={t("resultsUi.scoreByDimensionTitle")}
+                    onSeriesClick={(s) => onRowToggle("dimension", s)}
+                    collapsed={!scoreBreakdownOpen}
+                    onToggleCollapse={() => setScoreBreakdownOpen((o) => !o)}
+                  />
+                </ChartFrame>
+              ),
+              shows("scoreBySeverity") && (
+                <ChartFrame key="scoreBySeverity">
+                  <ScoreTrendChart
+                    data={toTrendSeries(trends?.trend_by_severity)}
+                    colorMap={sevColors}
+                    title={t("resultsUi.scoreBySeverityTitle")}
+                    onSeriesClick={(s) => onRowToggle("severity", s)}
+                    collapsed={!scoreBreakdownOpen}
+                    onToggleCollapse={() => setScoreBreakdownOpen((o) => !o)}
+                  />
+                </ChartFrame>
+              ),
+            ]}
+          />
+          {/* Score by tag: one series per tag value the top tag filter shows
+              (every value when no tag is picked). Only when some check in
+              scope carries a tag. */}
+          {shows("scoreByTag") && hasTags && (
             <div data-testid="trend-by-tag">
               <ChartFrame>
                 <ScoreTrendChart
                   data={toTrendSeries(tagTrend)}
-                  title={t("resultsUi.scoreByTagTitle", { key: tagKey })}
-                  headerRight={tagKeySelect}
-                  onSeriesClick={onTagSeriesClick}
-                  seriesLabel={(series) => parseTagFacetValue(series)?.value ?? untaggedSeries}
+                  title={t("resultsUi.scoreByTagTitle")}
+                  onSeriesClick={onTagToggle}
+                  seriesLabel={(token) => tagTokenLabel(token, tagLabels)}
+                  legend
+                  emptyText={t("resultsUi.scoreByTagPickTags")}
                 />
               </ChartFrame>
             </div>
           )}
-          <div className="grid gap-6 md:grid-cols-2">
-            <ChartFrame>
-              <ScoreTrendChart
-                mode="count"
-                countData={rulesChecksTestsSeries}
-                title={t("resultsUi.appliedCountsTitle")}
-                collapsed={!countChartsOpen}
-                onToggleCollapse={() => setCountChartsOpen((o) => !o)}
-              />
-            </ChartFrame>
-            <ChartFrame>
-              <ScoreTrendChart
-                mode="count"
-                countData={failuresSeries}
-                title={t("resultsUi.failedCountsTitle")}
-                collapsed={!countChartsOpen}
-                onToggleCollapse={() => setCountChartsOpen((o) => !o)}
-              />
-            </ChartFrame>
-          </div>
+          <PairGrid
+            items={[
+              shows("appliedCounts") && (
+                <ChartFrame key="appliedCounts">
+                  <ScoreTrendChart
+                    mode="count"
+                    countData={rulesChecksTestsSeries}
+                    title={t("resultsUi.appliedCountsTitle")}
+                    collapsed={!countChartsOpen}
+                    onToggleCollapse={() => setCountChartsOpen((o) => !o)}
+                  />
+                </ChartFrame>
+              ),
+              shows("failedCounts") && (
+                <ChartFrame key="failedCounts">
+                  <ScoreTrendChart
+                    mode="count"
+                    countData={failuresSeries}
+                    title={t("resultsUi.failedCountsTitle")}
+                    collapsed={!countChartsOpen}
+                    onToggleCollapse={() => setCountChartsOpen((o) => !o)}
+                  />
+                </ChartFrame>
+              ),
+            ]}
+          />
         </div>
       </CollapsibleSection>
       </FadeIn>
+      )}
 
       <FadeIn delay={0.18}>
       <CollapsibleSection
@@ -1353,44 +1386,52 @@ export function MultiTableResultsSection({
               other boxes cross-filter to that table while the By table box
               itself keeps its rows (the server self-excludes the facet). */}
           <div className="grid gap-6 md:grid-cols-2">
-            <DimensionBreakdown
-              title={t("resultsUi.byDimensionTitle")}
-              valueHeader={t("resultsUi.dimensionHeader")}
-              rows={orderByRegistry(dimFacet.rows, dimNames)}
-              mutedLabels={dimFacet.mutedLabels}
-              loading={breakdownRefetching}
-              colorMap={dimColors}
-              selected={filters.dimension}
-              onSelect={(label) => onRowToggle("dimension", label)}
-              breachEnabled={thresholdEnabled}
-            />
-            <DimensionBreakdown
-              title={t("resultsUi.bySeverityTitle")}
-              valueHeader={t("resultsUi.severityHeader")}
-              rows={orderByRegistry(sevFacet.rows, sevNames)}
-              mutedLabels={sevFacet.mutedLabels}
-              loading={breakdownRefetching}
-              colorMap={sevColors}
-              selected={filters.severity}
-              onSelect={(label) => onRowToggle("severity", label)}
-              breachEnabled={thresholdEnabled}
-            />
-            {tagKey !== null && (
-              <div className="md:col-span-2" data-testid="breakdown-by-tag">
+            {/* A box whose pair partner is hidden takes the full width. */}
+            {shows("byDimension") && (
+              <div className={cn(!shows("bySeverity") && "md:col-span-2")}>
                 <DimensionBreakdown
-                  title={t("resultsUi.byTagTitle", { key: tagKey })}
-                  valueHeader={tagKey}
-                  headerRight={tagKeySelect}
-                  rows={tagFacet.rows}
-                  mutedLabels={tagFacet.mutedLabels}
+                  title={t("resultsUi.byDimensionTitle")}
+                  valueHeader={t("resultsUi.dimensionHeader")}
+                  rows={orderByRegistry(dimFacet.rows, dimNames)}
+                  mutedLabels={dimFacet.mutedLabels}
                   loading={breakdownRefetching}
-                  selected={filters.tag}
-                  onSelect={(value) => onRowToggle("tag", value)}
+                  colorMap={dimColors}
+                  selected={filters.dimension}
+                  onSelect={(label) => onRowToggle("dimension", label)}
                   breachEnabled={thresholdEnabled}
                 />
               </div>
             )}
-            {!hideRuleBreakdown && (
+            {shows("bySeverity") && (
+              <div className={cn(!shows("byDimension") && "md:col-span-2")}>
+                <DimensionBreakdown
+                  title={t("resultsUi.bySeverityTitle")}
+                  valueHeader={t("resultsUi.severityHeader")}
+                  rows={orderByRegistry(sevFacet.rows, sevNames)}
+                  mutedLabels={sevFacet.mutedLabels}
+                  loading={breakdownRefetching}
+                  colorMap={sevColors}
+                  selected={filters.severity}
+                  onSelect={(label) => onRowToggle("severity", label)}
+                  breachEnabled={thresholdEnabled}
+                />
+              </div>
+            )}
+            {shows("byTag") && hasTags && (
+              <div className="md:col-span-2" data-testid="breakdown-by-tag">
+                <DimensionBreakdown
+                  title={t("resultsUi.byTagTitle")}
+                  valueHeader={t("resultsUi.tagHeader")}
+                  rows={tagFacet.rows}
+                  mutedLabels={tagFacet.mutedLabels}
+                  loading={breakdownRefetching}
+                  selected={tagRowSelected}
+                  onSelect={onTagToggle}
+                  breachEnabled={thresholdEnabled}
+                />
+              </div>
+            )}
+            {!hideRuleBreakdown && shows("byRule") && (
               <div className="md:col-span-2" data-testid="breakdown-by-rule">
                 <DimensionBreakdown
                   title={t("resultsUi.byRuleTitle")}
@@ -1427,7 +1468,8 @@ export function MultiTableResultsSection({
                 />
               </div>
             )}
-            <div data-testid="breakdown-by-table">
+            {shows("byTable") && (
+            <div data-testid="breakdown-by-table" className={cn(!shows("byColumn") && "md:col-span-2")}>
               <DimensionBreakdown
                 title={t("resultsUi.byTableTitle")}
                 valueHeader={t("resultsUi.tableHeader")}
@@ -1470,7 +1512,9 @@ export function MultiTableResultsSection({
                 }}
               />
             </div>
-            <div data-testid="breakdown-by-column">
+            )}
+            {shows("byColumn") && (
+            <div data-testid="breakdown-by-column" className={cn(!shows("byTable") && "md:col-span-2")}>
               <DimensionBreakdown
                 title={t("resultsUi.byColumnTitle")}
                 valueHeader={t("resultsUi.columnHeader")}
@@ -1489,6 +1533,7 @@ export function MultiTableResultsSection({
                 breachEnabled={thresholdEnabled}
               />
             </div>
+            )}
           </div>
 
           {/* E2: filtering to a single table reveals its invalid samples. */}

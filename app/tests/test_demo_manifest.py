@@ -72,6 +72,18 @@ def test_no_email_validation_rule_is_seeded():
         assert ct.tag != "class.email_address", f"{ct.column}: email tag must not be seeded"
 
 
+def test_object_tags_cover_every_level_and_target_real_tables_and_columns():
+    assert {tag.level for tag in m.OBJECT_TAGS} == {"catalog", "schema", "table", "column"}
+    tables = {table.name: table for table in m.TABLES}
+    table_tags = [tag for tag in m.OBJECT_TAGS if tag.level == "table"]
+    assert {tag.table for tag in table_tags} == set(tables)
+    assert len({tag.value for tag in table_tags}) > 1
+    for tag in m.OBJECT_TAGS:
+        assert tag.key and tag.value and not tag.key.startswith("class.")
+        if tag.level == "column":
+            assert tag.column in tables[tag.table].columns
+
+
 def test_column_tags_target_real_columns():
     for ct in m.COLUMN_TAGS:
         table = next(t for t in m.TABLES if t.name == ct.table)

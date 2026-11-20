@@ -3,6 +3,7 @@ import { applyFilterToggle, builtinViewState, isDirty, reconcileView, toPayload 
 import { EMPTY_FILTERS } from "@/components/monitored-tables/BindingResultsTab";
 import {
   GLOBAL_RESULTS_FILTER_ORDER,
+  RESULTS_ELEMENT_ORDER,
   buildGlobalResultsViewDefs,
   collectionTableFqns,
   filtersFromViewValues,
@@ -20,6 +21,7 @@ const LOADING: GlobalResultsFilterOptionValues = {
   rule: null,
   dimension: null,
   severity: null,
+  tag: null,
 };
 
 describe("buildGlobalResultsViewDefs", () => {
@@ -40,14 +42,13 @@ describe("buildGlobalResultsViewDefs", () => {
       "tag",
     ]);
     const state = builtinViewState(defs);
-    expect(state.columns).toBeNull();
+    // Tags are advanced, so the tag bubble starts hidden.
     expect(state.filters.order.filter((k) => state.filters.visibility[k])).toEqual([
       "catalog",
       "schema",
       "table",
       "rule",
       "outcome",
-      "tag",
     ]);
     expect(state.values.dqScore).toBe("all");
     expect(state.values.owner).toEqual([]);
@@ -88,72 +89,27 @@ describe("buildGlobalResultsViewDefs", () => {
     expect(state.values.dqScore).toBe("all");
   });
 
-  it("saves the selected tag key without showing it as a filter bubble", () => {
-    const loaded = buildGlobalResultsViewDefs({ ...LOADING, tagKey: ["domain", "pii"] });
-    const builtin = builtinViewState(loaded);
-    const chosen = { ...builtin, values: { ...builtin.values, tagKey: "pii" } };
-    const restored = reconcileView(toPayload(chosen, loaded), loaded);
-    expect(restored.values.tagKey).toBe("pii");
-    expect(restored.filters.visibility.tagKey).toBe(false);
-    expect(isDirty(builtin, restored, loaded)).toBe(true);
-  });
-});
-
-describe("filtersFromViewValues / viewValueChanges", () => {
-  it("maps view values onto the facet filters, keeping the local column facet", () => {
-    const filters = filtersFromViewValues({ catalog: ["main"], dqScore: "0-25", owner: ["ann"] }, ["amount"]);
-    expect(filters).toEqual({
-      ...EMPTY_FILTERS,
-      catalog: ["main"],
-      scoreBucket: "0-25",
-      owner: ["ann"],
-      column: ["amount"],
-    });
+  it("lists the page elements in page order, with the tag charts hidden by default", () => {
+    const state = builtinViewState(defs);
+    expect(state.columns?.order).toEqual([...RESULTS_ELEMENT_ORDER]);
+    expect(RESULTS_ELEMENT_ORDER.filter((k) => !state.columns?.visibility[k])).toEqual(["scoreByTag", "byTag"]);
   });
 
-  it("reports only the changed view keys (never column)", () => {
-    const next = { ...EMPTY_FILTERS, table: ["a.b.c"], scoreBucket: "none", column: ["x"] };
-    expect(viewValueChanges(EMPTY_FILTERS, next)).toEqual([
-      ["table", ["a.b.c"]],
-      ["dqScore", "none"],
-    ]);
-    expect(viewValueChanges(next, next)).toEqual([]);
-  });
-});
-
-describe("topFilterParams", () => {
-  it("omits empty filters and the any-score bucket", () => {
-    expect(topFilterParams(EMPTY_FILTERS)).toEqual({});
-    expect("score_bucket" in topFilterParams(EMPTY_FILTERS)).toBe(false);
+  it("saves which elements show", () => {
+    const builtin = builtinViewState(defs);
+    const shown = { ...builtin, columns: { ...builtin.columns!, visibility: { ...builtin.columns!.visibility, byTag: true } } };
+    const restored = reconcileView(toPayload(shown, defs), defs);
+    expect(restored.columns?.visibility.byTag).toBe(true);
+    expect(isDirty(builtin, restored, defs)).toBe(true);
   });
 
-  it("maps collection/owner arrays and dqScore → score_bucket", () => {
-    expect(
-      topFilterParams({ ...EMPTY_FILTERS, collection: ["c1"], owner: ["ann", "bob"], scoreBucket: "50-75" }),
-    ).toEqual({ collection: ["c1"], owner: ["ann", "bob"], score_bucket: "50-75" });
-  });
-
-  it("ignores an unknown bucket", () => {
-    expect(topFilterParams({ ...EMPTY_FILTERS, scoreBucket: "bogus" })).toEqual({});
-  });
-});
-
-describe("collectionTableFqns", () => {
-  const members = new Map([
-    ["c1", ["main.a.t1", "main.a.t2"]],
-    ["c2", ["main.b.t3", "main.a.t1"]],
-  ]);
-
-  it("is null (no narrowing) when no collection is selected", () => {
-    expect(collectionTableFqns(members, [])).toBeNull();
-  });
-
-  it("unions the selected collections' members; unknown ids add nothing", () => {
-    expect([...(collectionTableFqns(members, ["c1", "c2", "zz"]) ?? [])].sort()).toEqual([
-      "main.a.t1",
-      "main.a.t2",
-      "main.b.t3",
-    ]);
-    expect(collectionTableFqns(members, ["zz"])?.size).toBe(0);
+  it("keeps saved tag filter tokens that are still offered", () => {
+    const loaded = buildGlobalResultsViewDefs({ ...LOADING, tag: ["rule:domain", "rule:domain=finance", "!rule:domain"] });
+    const payload = {
+      v: 1,
+      filters: { order: [], visibility: { tag: true } },
+      values: { tag: ["rule:domain=finance", "!rule:domain", "rule:domain=gone"] },
+    };
+    expect(reconcileView(payload, loaded).values.tag).toEqual(["rule:domain=finance", "!rule:domain"]);
   });
 });

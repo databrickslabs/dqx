@@ -13,6 +13,9 @@
  */
 export const FILTER_TRIGGER_CLASS = "h-8 w-36 text-xs";
 
+/** Added once a bubble has a pick, so its "<filter>: <value>" text can widen the bubble (up to a cap). */
+export const FILTER_TRIGGER_PICKED_CLASS = "w-auto min-w-36 max-w-64";
+
 /**
  * DQ-score bucket filter shared by the Monitored Tables and Table Spaces
  * overviews (P25 item 91). The percentage boundaries match dqlake's
@@ -21,6 +24,15 @@ export const FILTER_TRIGGER_CLASS = "h-8 w-36 text-xs";
  * sentinel. Buckets are ordered high→low for the dropdown, matching dqlake.
  */
 export const DQ_SCORE_FILTER_ALL = "all";
+
+/**
+ * Trigger text of a DQ score bubble: the "any" label when unset, else
+ * "<label>: <bucket>" so the bubble says what it filters.
+ */
+export function dqScoreTriggerText(t: (key: string) => string, value: string, label: string): string {
+  const bucket = DQ_SCORE_BUCKETS.find((b) => b.value === value) ?? DQ_SCORE_BUCKETS[0];
+  return bucket.value === DQ_SCORE_FILTER_ALL ? t(bucket.labelKey) : `${label}: ${t(bucket.labelKey)}`;
+}
 
 export const DQ_SCORE_BUCKETS: readonly { value: string; labelKey: string }[] = [
   { value: DQ_SCORE_FILTER_ALL, labelKey: "common.dqScoreFilter.any" },

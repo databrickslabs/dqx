@@ -11,7 +11,7 @@ import {
 import { Check, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TruncatedLabel } from "@/components/data-table/TruncatedLabel";
-import { FILTER_TRIGGER_CLASS } from "@/components/data-table/filter-bar";
+import { FILTER_TRIGGER_CLASS, FILTER_TRIGGER_PICKED_CLASS } from "@/components/data-table/filter-bar";
 
 export interface SearchableSelectOption {
   value: string;
@@ -25,6 +25,8 @@ interface SearchableSelectProps {
   /** Label for the sentinel "all / no filter" option, always shown first and
    *  never filtered out (e.g. "All owners"). */
   allLabel: string;
+  /** What the bubble filters ("Owner"); once a value is picked the trigger reads "Owner: ana". */
+  label?: string;
   /** Sentinel value representing "no filter". Defaults to `"all"`. */
   allValue?: string;
   searchPlaceholder: string;
@@ -53,6 +55,7 @@ export function SearchableSelect({
   onChange,
   options,
   allLabel,
+  label,
   allValue = "all",
   searchPlaceholder,
   emptyText,
@@ -65,8 +68,9 @@ export function SearchableSelect({
 
   const selectedLabel = useMemo(() => {
     if (value === allValue) return allLabel;
-    return options.find((o) => o.value === value)?.label ?? value;
-  }, [value, allValue, allLabel, options]);
+    const picked = options.find((o) => o.value === value)?.label ?? value;
+    return label ? `${label}: ${picked}` : picked;
+  }, [value, allValue, allLabel, label, options]);
 
   // `shouldFilter={false}` — own substring match on the label, so cmdk's
   // fuzzy scoring doesn't reorder the (already sorted) option list. The "all"
@@ -95,6 +99,7 @@ export function SearchableSelect({
           className={cn(
             "border-input dark:bg-input/30 dark:hover:bg-input/50 focus-visible:border-ring focus-visible:ring-ring/50 flex items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-1 whitespace-nowrap shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50",
             FILTER_TRIGGER_CLASS,
+            value !== allValue && FILTER_TRIGGER_PICKED_CLASS,
             className,
           )}
         >

@@ -99,8 +99,8 @@ export type MultiFilters = {
   schema: string[];
   /** "passed" / "failed" check outcome (Global Results only). */
   outcome: string[];
-  /** Rule tags as `key=value` values (the API's `tag` param) — the
-   *  multi-table surfaces only. Same key ORs, different keys AND. */
+  /** Tag filter tokens (the API's `tag` param, see components/tags/tag-filter.ts) — the
+   *  multi-table surfaces only. Same tag ORs, different tags AND. */
   tag: string[];
   /** Table owners (monitoredTableOwner identity) — Global Results only. */
   owner: string[];

@@ -645,6 +645,27 @@ async def get_discovery_service(
     return DiscoveryService(ws=obo_ws, user_id=user_id, sql=obo_sql)
 
 
+async def get_monitored_table_uc_tags(
+    discovery: Annotated[DiscoveryService, Depends(get_discovery_service)],
+    monitored_tables: Annotated[MonitoredTableService, Depends(get_monitored_table_service)],
+) -> dict[str, dict[str, str]]:
+    """Unity Catalog catalog, schema and table tags of every monitored table, keyed by table FQN.
+
+    Each value maps a tag id (``catalog:<key>``, ``schema:<key>``, ``table:<key>``)
+    to its value. Read on-behalf-of the caller, so only objects they can see
+    have tags, and cached per user for a few minutes. Best-effort: a failure
+    yields an empty map, so the tag filters show no Unity Catalog tags rather
+    than breaking the page.
+    """
+    try:
+        universe = await asyncio.to_thread(monitored_tables.list_table_universe)
+        fqns = tuple(sorted({row.table_fqn for row in universe}))
+        return await discovery.list_object_tags_async(fqns)
+    except Exception:
+        logger.warning("Failed to read Unity Catalog tags for monitored tables", exc_info=True)
+        return {}
+
+
 async def get_catalog_discovery_service(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     user_id: Annotated[str, Depends(get_obo_user_id)],

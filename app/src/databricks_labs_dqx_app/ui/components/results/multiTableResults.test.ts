@@ -165,11 +165,11 @@ describe("topFilterOptionLists / baseFilterOptionValues (Global Results bubbles)
     by_dimension: [{ label: "Validity" }, { label: "Completeness" }],
     by_severity: [{ label: "High" }],
     by_tag: [
-      { tag_key: "domain", label: "finance" },
-      { tag_key: "domain", label: null },
-      { tag_key: "pii", label: "true" },
+      { tag_key: "rule:domain", label: "finance" },
+      { tag_key: "rule:domain", label: null },
+      { tag_key: "table:pii", label: "true" },
     ],
-    tag_options: { domain: ["finance", "historical", null], pii: ["true"] },
+    tag_options: { "rule:domain": ["finance", "historical", null], "table:pii": ["true"] },
   } as unknown as EntityResultsOut;
 
   it("narrows table options to the selected collections' members", () => {
@@ -195,15 +195,22 @@ describe("topFilterOptionLists / baseFilterOptionValues (Global Results bubbles)
     expect(lists.severity.map((o) => o.value)).toEqual(["High"]);
   });
 
-  it("offers historical and missing tag values", () => {
+  it("offers historical and missing tag values, and sanitises against their tokens", () => {
     expect(topFilterOptionLists(base, { catalog: [], schema: [] }).tag).toEqual([
-      { value: "domain=finance", label: "domain = finance" },
-      { value: "domain=historical", label: "domain = historical" },
-      { value: "domain=", label: "domain = Untagged" },
-      { value: "pii=true", label: "pii = true" },
+      { id: "rule:domain", value: "finance" },
+      { id: "rule:domain", value: "historical" },
+      { id: "rule:domain", value: null },
+      { id: "table:pii", value: "true" },
     ]);
     expect(baseFilterOptionValues(undefined).tag).toBeNull();
-    expect(baseFilterOptionValues(base).tagKey).toEqual(["domain", "pii"]);
+    expect([...(baseFilterOptionValues(base).tag ?? [])].sort()).toEqual([
+      "!rule:domain",
+      "rule:domain",
+      "rule:domain=finance",
+      "rule:domain=historical",
+      "table:pii",
+      "table:pii=true",
+    ]);
   });
 
   it("is all-null while the base rows load, else the full option universe", () => {

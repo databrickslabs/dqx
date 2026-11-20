@@ -213,6 +213,26 @@ class ColumnTagSpec:
     tag: str
 
 
+@dataclass(frozen=True)
+class ObjectTagSpec:
+    """A plain (non-governed) Unity Catalog tag applied to a demo object.
+
+    Args:
+        level: what the tag is on: the demo catalog, the demo schema, a demo
+            table, or a column of one.
+        key: the tag key.
+        value: the tag value.
+        table: the tagged table (table and column levels only).
+        column: the tagged column (column level only).
+    """
+
+    level: Literal["catalog", "schema", "table", "column"]
+    key: str
+    value: str
+    table: str = ""
+    column: str = ""
+
+
 # --------------------------------------------------------------------------- #
 # Source tables (columns must match what datagen creates).
 # --------------------------------------------------------------------------- #
@@ -723,6 +743,27 @@ SCHEDULES: tuple[ScheduleSpec, ...] = (
 COLUMN_TAGS: tuple[ColumnTagSpec, ...] = (
     ColumnTagSpec(table="customers", column="country_code", tag="class.location"),
     ColumnTagSpec(table="payments", column="card_last4", tag="class.credit_card"),
+)
+
+# --------------------------------------------------------------------------- #
+# Plain Unity Catalog tags on the demo catalog, schema, tables and columns, so
+# the Tables, Collections and Results tag filters have every level to show.
+# Every demo table gets a `layer` value, and the values split the tables into
+# groups. The column tags sit next to the governed column tags above. Keys and
+# values are ones common tag policies allow (a workspace may restrict a key to a
+# value list); a tag a workspace rejects is skipped and logged by the seeder.
+# --------------------------------------------------------------------------- #
+OBJECT_TAGS: tuple[ObjectTagSpec, ...] = (
+    ObjectTagSpec(level="catalog", key="environment", value="dev"),
+    ObjectTagSpec(level="schema", key="owner_team", value="analytics"),
+    ObjectTagSpec(level="table", table="customers", key="layer", value="gold"),
+    ObjectTagSpec(level="table", table="orders", key="layer", value="gold"),
+    ObjectTagSpec(level="table", table="payments", key="layer", value="silver"),
+    ObjectTagSpec(level="table", table="shipments", key="layer", value="silver"),
+    ObjectTagSpec(level="table", table="products", key="layer", value="bronze"),
+    ObjectTagSpec(level="column", table="customers", column="first_name", key="personal_data", value="name"),
+    ObjectTagSpec(level="column", table="customers", column="last_name", key="personal_data", value="name"),
+    ObjectTagSpec(level="column", table="customers", column="phone", key="personal_data", value="phone"),
 )
 
 

@@ -1,73 +1,80 @@
 import type { GroupRowOut, TrendPointOut } from "@/lib/api";
-import type { FacetFilterOption } from "@/components/results/ResultsFacetFilters";
+import {
+  groupTagOptions,
+  selectionToTokens,
+  toggleValue,
+  valueSelected,
+  type TagOption,
+  type TagSelection,
+} from "@/components/tags/tag-filter";
 
-// Rule tags on the multi-table Results surfaces. The API returns by_tag /
-// trend_by_tag rows for EVERY tag key in scope, each carrying its tag_key;
-// the UI shows one key at a time. The tag facet value is `key=value` — the
-// format of the API's repeatable `tag` param.
+// Tags on the multi-table Results surfaces. The API returns by_tag /
+// trend_by_tag rows for EVERY tag in scope, each carrying its tag id as
+// tag_key: rule tags, plus on Global Results the tables' Unity Catalog
+// catalog, schema and table tags and the column tags the rules map. The top
+// tag filter decides which series the tag chart and box show: the picked
+// values (a ticked key shows all of its values). With nothing picked the box
+// shows every tag value and the chart shows none.
+//
+// A series is keyed by its filter token (see tag-filter.ts): `<id>=<value>`,
+// or `!<id>` for the checks without the tag.
 
-/** Empty value selects checks missing this key (rule tags never have empty values). */
-export function tagFacetValue(key: string, value: string | null): string {
-  return `${key}=${value ?? ""}`;
+export type TagHistory = Record<string, Array<string | null>> | undefined;
+
+/** Filter options from the scoped run history, including "Untagged" per tag. */
+export function tagOptionsFromHistory(history: TagHistory): TagOption[] {
+  return Object.entries(history ?? {}).flatMap(([id, values]) => values.map((value) => ({ id, value })));
 }
 
-/** Split a tag facet value on its FIRST "=" (mirrors the backend); null when malformed. */
-export function parseTagFacetValue(raw: string): { key: string; value: string | null } | null {
-  const i = raw.indexOf("=");
-  if (i <= 0) return null;
-  return { key: raw.slice(0, i), value: raw.slice(i + 1) || null };
+export function tagSeriesToken(id: string, value: string | null): string {
+  return value === null ? `!${id}` : `${id}=${value}`;
 }
 
-/** Display form of a tag facet value: "domain = finance". */
-export function tagFacetLabel(raw: string, missingLabel = "Untagged"): string {
-  const parsed = parseTagFacetValue(raw);
-  return parsed ? `${parsed.key} = ${parsed.value ?? missingLabel}` : raw;
+/** The series a chart point or box row belongs to; null when it carries no tag id. */
+function seriesOf(tagKey: string | null | undefined, value: string | null | undefined): string | null {
+  return tagKey ? tagSeriesToken(tagKey, value ?? null) : null;
 }
 
-/** Include keys that only occur in older runs, beyond the latest-run groups. */
-export function tagKeysFromHistory(
-  options: Record<string, Array<string | null>> | undefined,
-  ...groupLists: Array<GroupRowOut[] | undefined>
-): string[] {
-  return [...new Set([...Object.keys(options ?? {}), ...tagKeysOf(...groupLists)])].sort((a, b) => a.localeCompare(b));
+/** True when the (tag id, value) series is shown under *selection*: every tagged value when nothing is picked. */
+export function tagSeriesShown(selection: TagSelection, id: string, value: string | null): boolean {
+  return selection.size === 0 ? value !== null : valueSelected(selection, id, value);
 }
 
-/** Distinct tag keys across the given by_tag lists, sorted. */
-export function tagKeysOf(...groupLists: Array<GroupRowOut[] | undefined>): string[] {
-  const keys = new Set<string>();
-  for (const groups of groupLists) {
-    for (const g of groups ?? []) if (g.tag_key) keys.add(g.tag_key);
-  }
-  return [...keys].sort((a, b) => a.localeCompare(b));
+/** True when the series *token* is picked in *selection* (never with an empty selection). */
+export function tagSeriesSelected(selection: TagSelection, token: string): boolean {
+  const missing = token.startsWith("!");
+  const body = missing ? token.slice(1) : token;
+  const eq = body.indexOf("=");
+  if (missing) return valueSelected(selection, body, null);
+  return eq !== -1 && valueSelected(selection, body.slice(0, eq), body.slice(eq + 1));
 }
 
-/** The tag key to show: the chosen key while it is still in scope, else the first key (null when none). */
-export function effectiveTagKey(keys: readonly string[], chosen: string | null): string | null {
-  if (chosen !== null && keys.includes(chosen)) return chosen;
-  return keys[0] ?? null;
+/** The by_tag rows shown under *selection*, each labelled with its series token (unique across tags). */
+export function shownTagGroups(groups: GroupRowOut[] | undefined, selection: TagSelection): GroupRowOut[] {
+  return (groups ?? [])
+    .filter((g) => g.tag_key && tagSeriesShown(selection, g.tag_key, g.label ?? null))
+    .map((g) => ({ ...g, label: seriesOf(g.tag_key, g.label) }));
 }
 
-/** The by_tag groups of one tag key. */
-export function groupsForTagKey(groups: GroupRowOut[] | undefined, key: string | null): GroupRowOut[] {
-  return key === null ? [] : (groups ?? []).filter((g) => g.tag_key === key);
+/**
+ * The trend_by_tag points shown under *selection*, with *series* set to the
+ * series token. Unlike the By tag box the chart shows nothing until tags are
+ * picked: a line per value of every tag is too many to read.
+ */
+export function shownTagTrend(points: TrendPointOut[] | undefined, selection: TagSelection): TrendPointOut[] {
+  if (selection.size === 0) return [];
+  return (points ?? [])
+    .filter((p) => p.tag_key && tagSeriesShown(selection, p.tag_key, p.series ?? null))
+    .map((p) => ({ ...p, series: seriesOf(p.tag_key, p.series) }));
 }
 
-/** The trend_by_tag points of one tag key. */
-export function trendForTagKey(points: TrendPointOut[] | undefined, key: string | null): TrendPointOut[] {
-  return key === null ? [] : (points ?? []).filter((p) => p.tag_key === key);
-}
-
-/** Tag filter options from the scoped run history, including missing values. */
-export function tagFilterOptions(
-  options: Record<string, Array<string | null>> | undefined,
-  missingLabel = "Untagged",
-): FacetFilterOption[] {
-  const byValue = new Map<string, FacetFilterOption>();
-  for (const [key, values] of Object.entries(options ?? {})) {
-    for (const tagValue of values) {
-      const value = tagFacetValue(key, tagValue);
-      if (!byValue.has(value)) byValue.set(value, { value, label: tagFacetLabel(value, missingLabel) });
-    }
-  }
-  return [...byValue.values()].sort((a, b) => a.label.localeCompare(b.label));
+/** The filter tokens after clicking a series: toggles that tag value in the selection. */
+export function toggleTagSeries(selection: TagSelection, history: TagHistory, token: string): string[] {
+  const missing = token.startsWith("!");
+  const body = missing ? token.slice(1) : token;
+  const eq = body.indexOf("=");
+  const id = missing || eq === -1 ? body : body.slice(0, eq);
+  const group = groupTagOptions(tagOptionsFromHistory(history)).find((g) => g.id === id);
+  if (!group) return selectionToTokens(selection);
+  return selectionToTokens(toggleValue(selection, group, missing ? null : body.slice(eq + 1)));
 }

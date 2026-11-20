@@ -1158,6 +1158,17 @@ class TagPairOut(BaseModel):
     value: str
 
 
+class MonitoredTableUcTagsOut(BaseModel):
+    """Unity Catalog tags of the monitored tables, for the Studio tag filters.
+
+    *tags_by_table* maps a table FQN to its tags: each tag id (``catalog:<key>``,
+    ``schema:<key>`` or ``table:<key>``) maps to the tag value, ``""`` for a
+    key-only tag. Column tags are not included.
+    """
+
+    tags_by_table: dict[str, dict[str, str]] = Field(default_factory=dict)
+
+
 class MonitoredTableSummaryOut(BaseModel):
     """A monitored table plus lightweight list-view counters, for ``listMonitoredTables``.
 

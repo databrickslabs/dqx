@@ -31,6 +31,8 @@ from databricks_labs_dqx_app.backend.services.dq_results_service import (
     annotate_trend_versions,
     compute_entity_results,
     parse_check_rows,
+    rule_column_tags,
+    with_current_tags,
 )
 
 FQN = "main.sales.orders"
@@ -105,7 +107,7 @@ def expand_asof(rows: list[CheckResultRow]) -> list[CheckResultRow]:
 
 
 class TestParseCheckRows:
-    def test_parses_tags_json_keeping_only_non_empty_string_entries(self):
+    def test_parses_tags_json_into_rule_tag_ids_keeping_only_non_empty_strings(self):
         base = {"input_location": FQN, "run_id": "r1", "run_date": "d", "input_row_count": "10"}
         rows = parse_check_rows(
             [
@@ -114,7 +116,30 @@ class TestParseCheckRows:
                 {**base, "check_name": "c3", "tags_json": None},
             ]
         )
-        assert [r.tags for r in rows] == [{"domain": "finance"}, {}, {}]
+        assert [r.tags for r in rows] == [{"rule:domain": "finance"}, {}, {}]
+
+    def test_with_current_tags_adds_table_and_rule_column_tags_and_keeps_rule_tags(self):
+        base = {"input_location": FQN, "run_id": "r1", "run_date": "d", "input_row_count": "10"}
+        rows = parse_check_rows(
+            [
+                {**base, "check_name": "c1", "registry_rule_id": "r-1", "tags_json": json.dumps({"domain": "finance"})},
+                {**base, "input_location": "main.other.t", "check_name": "c2", "tags_json": None},
+            ]
+        )
+        tagged = with_current_tags(
+            rows, {FQN: {"table:tier": "gold", "schema:pii": ""}}, {"r-1": {"column:class.location": ""}}
+        )
+        assert [r.tags for r in tagged] == [
+            {"table:tier": "gold", "schema:pii": "", "column:class.location": "", "rule:domain": "finance"},
+            {},
+        ]
+
+    def test_rule_column_tags_reads_slot_tags_as_column_tag_ids(self):
+        assert rule_column_tags({"country": ["class.location"], "code": ["class.tier=gold", "class.location=x"]}) == {
+            "column:class.location": "",
+            "column:class.tier": "gold",
+        }
+        assert rule_column_tags({}) == {}
 
     def test_parses_statement_shaped_strings_with_attribution(self):
         rows = parse_check_rows(
@@ -709,6 +734,12 @@ class TestTagResults:
         facets = ResultFacets(tags=(("domain", "finance"), ("domain", "customer")))
         out = compute_entity_results(self._rows(), facets)
         assert {g.label for g in out.by_rule} == {"fin", "cust"}
+
+    def test_any_value_tag_facet_matches_every_value_of_the_key(self):
+        out = compute_entity_results(self._rows(), ResultFacets(tags_any=("domain",)))
+        assert {g.label for g in out.by_rule} == {"fin", "cust"}
+        narrowed = compute_entity_results(self._rows(), ResultFacets(tags_any=("domain",), tags=(("pii", "true"),)))
+        assert [g.label for g in narrowed.by_rule] == ["fin"]
 
     def test_tag_facet_ands_different_keys(self):
         facets = ResultFacets(tags=(("domain", "finance"), ("pii", "true")))

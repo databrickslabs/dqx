@@ -25,21 +25,33 @@ average DQ score across its member tables. Below the score, breakdowns split the
 results by **dimension**, **severity**, **rule**, and **column**, so you can see
 where quality is slipping.
 
-On the Results page, **Score by tag** shows how checks with each value of a
-selected rule-label key performed over time. Choose the key above the chart or
-the **By tag** breakdown, then select a value to filter the results. **Untagged**
-selects checks without that key. The tag filter also narrows a selected table's
-column breakdown and failed records. Tags are saved with each run, so changing a
-rule's labels later does not rewrite earlier scores; values from older runs
-remain available in the filter. A check with multiple label keys contributes
-to each key's breakdown, so totals across different keys overlap. Saved Results
-views remember the selected tag key and tag filters. These charts use rule
-labels; Unity Catalog table and column tags are separate.
-
 A check is **flagged as failing** when its pass rate drops below its
 [pass threshold](/docs/studio/monitoring/assign-rules#quality-thresholds) (the
 `< 70%` badge) — that's separate from the numeric score, which always uses the
 raw pass rate.
+
+### Filter and score by tag
+
+The **Tags** filter on the Results, Tables, Collections and Rules pages lists
+the tags that apply there: rule tags, and the Unity Catalog tags of your
+catalogs, schemas and tables, grouped by where each tag comes from. Click a
+tag key to see its values, or tick its checkbox to match any of them. Values
+of one key match if any of them does; picks under different keys must all
+match. A picked filter names its source, such as **Table tag · layer: gold**. On Results, **Untagged** matches
+checks without the tag. Results also lists **column tags**: the Unity Catalog
+tags a rule ties to the columns it checks, not the columns' own tags.
+
+On Results, the **By tag** breakdown shows every tag value, or only the values
+picked in the Tags filter. The **Score by tag** chart draws a line, with a
+legend, for each picked value. Click a row or line to add or remove it from
+the filter. Rule tags are saved with each run, so editing a rule's tags later
+does not change earlier scores. Unity Catalog and column tags are read as they
+are today, so past runs are grouped by the current tags. A check counts toward every tag it
+carries, so totals across tags overlap.
+
+The Tags filter and the tag charts are hidden by default. Use **Edit View** to
+show them, or to hide any chart or breakdown on the Results page, and save the
+layout as a view.
 
 ## Investigate and act on a failure {#investigate-and-act-on-a-failure}
 
