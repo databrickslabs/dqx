@@ -48,7 +48,7 @@ from databricks.sdk.retries import retried
 from databricks.labs.pytester.fixtures.baseline import factory
 
 from databricks.labs.dqx import check_funcs
-from databricks.labs.dqx.actions import lineage as lineage_module
+from databricks.labs.dqx import utils
 from databricks.labs.dqx.actions.alert import DQAlert
 from databricks.labs.dqx.actions.base import ActionContext, ActionServices, ActionStatus
 from databricks.labs.dqx.actions.delivery import WebhookClient
@@ -130,8 +130,8 @@ def patched_lineage_constants(
     every read (recursive CTE upstream/downstream walks and column-lineage join) without touching
     internal implementation.
     """
-    monkeypatch.setattr(lineage_module, "LINEAGE_TABLE_LINEAGE", stub_system_tables.table_lineage)
-    monkeypatch.setattr(lineage_module, "LINEAGE_COLUMN_LINEAGE", stub_system_tables.column_lineage)
+    monkeypatch.setattr(utils, "SYSTEM_ACCESS_TABLE_LINEAGE", stub_system_tables.table_lineage)
+    monkeypatch.setattr(utils, "SYSTEM_ACCESS_COLUMN_LINEAGE", stub_system_tables.column_lineage)
     return stub_system_tables
 
 
