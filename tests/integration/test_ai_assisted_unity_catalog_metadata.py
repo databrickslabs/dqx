@@ -114,10 +114,12 @@ def test_generate_rules_with_unity_catalog_metadata(
     )
 
     generator = DQGenerator(ws, spark, llm_model_config=llm_model_config)
+    input_config = InputConfig(location=source_table.full_name)
+    uc_metadata = generator.collect_unity_catalog_metadata(input_config, config=config_factory())
     checks = generator.generate_dq_rules_ai_assisted(
         user_input=USER_INPUT,
-        input_config=InputConfig(location=source_table.full_name),
-        unity_catalog_metadata_config=config_factory(),
+        input_config=input_config,
+        uc_metadata=uc_metadata,
     )
     assert len(checks) > 0, "AI-assisted generation should yield at least one rule"
     assert not DQEngineCore.validate_checks(checks).has_errors

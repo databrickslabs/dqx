@@ -20,6 +20,7 @@ systems) is not recorded in *system.access.*_lineage*.
 
 import json
 import logging
+from dataclasses import dataclass, field
 from functools import partial
 from typing import Any
 
@@ -53,13 +54,78 @@ from databricks.labs.dqx.utils import (
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "UnityCatalogMetadata",
     "collect_table_comments",
     "collect_table_tags",
     "collect_column_upstream_lineage",
     "collect_upstream_table_lineage",
     "collect_external_upstream_lineage",
-    "build_schema_json",
+    "build_unity_catalog_metadata",
 ]
+
+
+@dataclass(frozen=True)
+class UnityCatalogMetadata:
+    """Externally-assembled Unity Catalog context for AI-assisted rule generation.
+
+    Mirrors the schema JSON shape consumed by the LLM one-to-one: each field maps to a
+    top-level key in the serialised payload, included only when present. Callers can:
+
+    - Pass the record straight to *DQGenerator.generate_dq_rules_ai_assisted* as *uc_metadata*.
+    - Inspect / modify any field — columns, lineage, external sources — then call
+      :meth:`json` to render the schema JSON for the LLM prompt.
+    - Skip the collector entirely and pass *None* when they want LLM-side schema inference
+      from a business description.
+
+    Produced by :meth:`DQGenerator.collect_unity_catalog_metadata`. Observability
+    measurements (per-table size breakdown) are a separate concern — computed on demand by
+    ``measure_schema_prompt`` from the serialised JSON.
+
+    Attributes:
+        columns: Column entries as ``[{"name","type", optional "comment","tags"}, ...]``.
+            The LLM always sees this list; other fields are only emitted when non-*None*.
+        table: Fully-qualified table name when enrichment ran; *None* for the baseline
+            "columns-only" shape emitted when *UnityCatalogMetadataConfig* is not supplied.
+        table_comment: Table-level comment when enrichment collected one.
+        table_tags: Table-level tags as ``[{"key","value"}, ...]``.
+        column_upstream_lineage: Column-lineage edges as
+            ``[{"predecessor","source_table","source_column","target_column","depth"}, ...]``.
+        upstream_tables: Upstream tables as
+            ``[{"name","depth", optional "comment","tags","columns"}, ...]``.
+        external_lineage: External-lineage sources as
+            ``[{"source_kind","source_name","system_type","entity_type","columns","properties"}, ...]``.
+    """
+
+    columns: list[dict[str, Any]] = field(default_factory=list)
+    table: str | None = None
+    table_comment: str | None = None
+    table_tags: list[dict[str, str]] | None = None
+    column_upstream_lineage: list[dict[str, Any]] | None = None
+    upstream_tables: list[dict[str, Any]] | None = None
+    external_lineage: list[dict[str, Any]] | None = None
+
+    def json(self) -> str:
+        """Serialise to the schema JSON string consumed by the LLM as ``schema_info``.
+
+        Fields set to *None* are omitted from the payload so the baseline "columns-only"
+        shape stays minimal; *columns* is always emitted (as ``[]`` when empty).
+        """
+        payload: dict[str, Any] = {}
+        if self.table is not None:
+            payload["table"] = self.table
+        payload["columns"] = self.columns
+        if self.table_comment is not None:
+            payload["table_comment"] = self.table_comment
+        if self.table_tags is not None:
+            payload["table_tags"] = self.table_tags
+        if self.column_upstream_lineage is not None:
+            payload["column_upstream_lineage"] = self.column_upstream_lineage
+        if self.upstream_tables is not None:
+            payload["upstream_tables"] = self.upstream_tables
+        if self.external_lineage is not None:
+            payload["external_lineage"] = self.external_lineage
+        return json.dumps(payload)
+
 
 _TABLE_TAGS_TABLE = "system.information_schema.table_tags"
 _COLUMN_TAGS_TABLE = "system.information_schema.column_tags"
@@ -421,24 +487,37 @@ def collect_external_upstream_lineage(
 
     object_info = ExternalLineageObject(table=ExternalLineageTable(name=f"{catalog}.{schema}.{table_name}"))
 
-    results: list[dict[str, Any]] = []
     try:
-        for info in ws.external_lineage.list_external_lineage_relationships(
+        iterator = ws.external_lineage.list_external_lineage_relationships(
             object_info=object_info,
             lineage_direction=LineageDirection.UPSTREAM,
             page_size=page_size,
-        ):
-            if len(results) >= max_relationships:
-                break
-            record = _external_lineage_record(info)
-            if record is not None:
-                results.append(record)
+        )
+        return _drain_external_lineage(iterator, max_relationships)
     except Exception as exc:  # broad catch: SDK listing failures are non-fatal
         logger.warning(
             f"collect_external_upstream_lineage: SDK listing failed for "
             f"'{sanitize_for_logging(source_table)}': {sanitize_for_logging(str(exc))}"
         )
         return []
+
+
+def _drain_external_lineage(iterator: Any, max_relationships: int) -> list[dict[str, Any]]:
+    """Drain up to *max_relationships* entries from the SDK iterator.
+
+    Extracted from *collect_external_upstream_lineage* to keep that function's ``try``
+    block small (pylint *too-many-try-statements*).
+    """
+    results: list[dict[str, Any]] = []
+    budget_used = 0
+    for info in iterator:
+        if budget_used >= max_relationships:
+            break
+        budget_used += 1
+        record = _external_lineage_record(info)
+        if record is None:
+            continue
+        results.append(record)
     return results
 
 
@@ -450,7 +529,7 @@ def _merge_tags(column_entries: list[dict[str, Any]], column_tags: dict[str, lis
             entry["tags"] = tags
 
 
-def build_schema_json(
+def build_unity_catalog_metadata(
     *,
     table_full_name: str,
     column_dicts: list[dict[str, Any]],
@@ -458,33 +537,32 @@ def build_schema_json(
     spark: SparkSession | None,
     config: UnityCatalogMetadataConfig,
     table_info: TableInfo | None = None,
-) -> str:
-    """Render the enriched schema JSON for the LLM prompt.
+) -> UnityCatalogMetadata:
+    """Build the enriched Unity Catalog metadata record for the LLM prompt.
 
-    Called by both *get_table_column_metadata* and *get_column_metadata*: the two share this
-    single rendering path so the LLM prompt is identical regardless of whether the schema
-    was discovered via the UC SDK or via Spark. Each sub-feature is skipped (not emitted as
-    an empty key) when it is disabled on *config* or when its dependency (ws / spark) is
-    missing.
+    Produces a :class:`UnityCatalogMetadata` whose top-level fields map one-to-one onto the
+    schema JSON the LLM consumes; call :meth:`UnityCatalogMetadata.json` to serialise.
+    Each enrichment sub-feature is skipped (field stays *None*) when it is disabled on
+    *config* or when its dependency (ws / spark) is missing.
 
     *column_dicts* is the baseline list of ``{"name","type"}`` dicts the caller already
     computed from either SDK or Spark; this helper enriches it in place with ``comment`` and
     ``tags`` per column.
 
     *table_info* is an optional already-fetched *TableInfo* for the seed table. When the
-    caller has one in hand (the enriched UC path in *DQGenerator._get_schema_info* fetches
+    caller has one in hand (the enriched UC path in *collect_unity_catalog_metadata* fetches
     it once to derive *column_dicts*), passing it through here skips the second
     *ws.tables.get* call that the comment enrichment would otherwise make.
 
     *table_full_name* is normalised once via *_normalize_three_part_name* so every
     downstream enrichment (comments, tags, lineage, external lineage) sees the same
-    canonical lowercase identifier. On a malformed name the baseline JSON is still
-    emitted (with the raw name as ``"table"``) so the LLM prompt stays well-formed.
+    canonical lowercase identifier. On a malformed name the baseline metadata is still
+    emitted (with the raw name as ``table``) so the LLM prompt stays well-formed.
     """
     try:
         normalised_name = _normalize_three_part_name(table_full_name)
     except InvalidParameterError as exc:
-        logger.warning(f"build_schema_json: {sanitize_for_logging(str(exc))}")
+        logger.warning(f"build_unity_catalog_metadata: {sanitize_for_logging(str(exc))}")
         normalised_name = table_full_name
 
     base_columns = [dict(c) for c in column_dicts]
@@ -497,7 +575,15 @@ def build_schema_json(
     _enrich_with_lineage(result, base_columns, ws=ws, spark=spark, table_full_name=normalised_name, config=config)
     _enrich_with_external_lineage(result, ws=ws, table_full_name=normalised_name, config=config)
 
-    return json.dumps(result)
+    return UnityCatalogMetadata(
+        table=result["table"],
+        columns=result["columns"],
+        table_comment=result.get("table_comment"),
+        table_tags=result.get("table_tags"),
+        column_upstream_lineage=result.get("column_upstream_lineage"),
+        upstream_tables=result.get("upstream_tables"),
+        external_lineage=result.get("external_lineage"),
+    )
 
 
 def _enrich_with_comments(
@@ -534,7 +620,7 @@ def _enrich_with_tags(
     if not config.include_tags:
         return
     if spark is None:
-        logger.warning("build_schema_json: SparkSession not provided; skipping tags enrichment")
+        logger.warning("build_unity_catalog_metadata: SparkSession not provided; skipping tags enrichment")
         return
     tags = collect_table_tags(spark, table_full_name)
     if tags["table_tags"]:
@@ -555,7 +641,9 @@ def _enrich_with_lineage(
     if config.column_upstream_lineage is None:
         return
     if spark is None:
-        logger.warning("build_schema_json: SparkSession not provided; skipping column upstream lineage enrichment")
+        logger.warning(
+            "build_unity_catalog_metadata: SparkSession not provided; skipping column upstream lineage enrichment"
+        )
         return
     seed = [c["name"] for c in base_columns]
     column_edges = collect_column_upstream_lineage(spark, table_full_name, seed, config=config.column_upstream_lineage)
@@ -576,7 +664,7 @@ def _collect_upstream_tables(
     table_edges: list[dict[str, Any]],
     ws: WorkspaceClient | None,
 ) -> list[Any]:
-    """Collect distinct upstream table entries concurrently"""
+    """Collect distinct upstream table entries concurrently."""
     table_min_depth: dict[str, int] = {}
     for edge in table_edges:
         name = edge["target_table"]
@@ -614,7 +702,9 @@ def _enrich_with_external_lineage(
     if config.external_lineage is None:
         return
     if ws is None:
-        logger.warning("build_schema_json: WorkspaceClient not provided; skipping external lineage enrichment")
+        logger.warning(
+            "build_unity_catalog_metadata: WorkspaceClient not provided; skipping external lineage enrichment"
+        )
         return
     external = collect_external_upstream_lineage(ws, table_full_name, config=config.external_lineage)
     if external:

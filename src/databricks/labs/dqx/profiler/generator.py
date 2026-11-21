@@ -25,22 +25,17 @@ from databricks.labs.dqx.geo.check_funcs import (
     POINT_TYPE,
     POLYGON_TYPE,
 )
-from databricks.labs.dqx.io import STORAGE_PATH_PATTERN
+from databricks.labs.dqx.io import STORAGE_PATH_PATTERN, read_input_data
 from databricks.labs.dqx.profiler.common import val_maybe_to_str, val_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.errors import InvalidConfigError, MissingParameterError
-from databricks.labs.dqx.profiler.unity_catalog_metadata import build_schema_json
-from databricks.labs.dqx.utils import (
-    extract_column_dicts,
-    get_table_column_metadata,
-    sanitize_for_logging,
-)
+from databricks.labs.dqx.profiler.unity_catalog_metadata import UnityCatalogMetadata, build_unity_catalog_metadata
+from databricks.labs.dqx.utils import extract_column_dicts, sanitize_for_logging
 
 # Conditional imports for LLM-assisted rules generation
 try:
     from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
-    from databricks.labs.dqx.llm.llm_utils import get_column_dicts, get_column_metadata
 
     LLM_ENABLED = True
 except ImportError:
@@ -157,28 +152,24 @@ class DQGenerator(DQEngineBase):
         user_input: str = "",
         summary_stats: dict | None = None,
         input_config: InputConfig | None = None,
-        unity_catalog_metadata_config: UnityCatalogMetadataConfig | None = None,
+        uc_metadata: UnityCatalogMetadata | None = None,
     ) -> list[dict]:
         """
-        Generates data quality rules using LLM based on natural language input.
+        Generates data quality rules using LLM based on natural language input and externally-assembled context.
+
+        Four independent context inputs — all optional, combined in the prompt when
+        supplied.
 
         Args:
             user_input: Optional Natural language description of data quality requirements.
             summary_stats: Optional summary statistics of the input data.
             input_config: Optional input config providing input data location as a path or fully qualified table name
                 to infer schema. If not provided, LLM will be used to guess the table schema.
-            unity_catalog_metadata_config: Optional *UnityCatalogMetadataConfig* that opts into
-                attaching Unity Catalog table / column comments, tags, bounded column upstream
-                lineage, and bounded external upstream lineage to the LLM schema prompt.
-                Instantiating ``UnityCatalogMetadataConfig()`` enables every enrichment with
-                sensible defaults; set the ``column_upstream_lineage`` or ``external_lineage``
-                sub-model to ``None`` to disable just that walk. Lineage walks require Spark
-                access to ``system.access.column_lineage`` / ``system.access.table_lineage``
-                (DBR 17+ for recursive-CTE support), tag reads require privileges on
-                ``system.information_schema.*_tags``, and external-lineage listing requires
-                permission on the external lineage API. All enrichment paths are non-fatal:
-                missing privileges / unavailable APIs degrade to the baseline schema with a
-                sanitised warning rather than raising.
+            uc_metadata: Prepared Unity Catalog context — call
+                :meth:`collect_unity_catalog_metadata` to build this from an
+                *InputConfig* and optional *UnityCatalogMetadataConfig*. Pass *None* to
+                let the LLM infer a schema from *user_input* alone (or supply
+                *input_config* for a baseline schema without enrichment).
 
         Returns:
             A list of dictionaries representing the generated data quality rules. Rules that fail
@@ -186,12 +177,28 @@ class DQGenerator(DQEngineBase):
             are dropped and logged at *WARNING*; only valid rules are returned.
 
         Raises:
-            MissingParameterError: If DSPy compiler is not available.
+            MissingParameterError: If the LLM engine is not available, or if neither
+                *user_input* nor *summary_stats* is provided (*uc_metadata* /
+                *input_config* on their own are context, not intent — the LLM needs a
+                business description or statistics to produce rules).
 
         Note:
             A Spark session is required when using this method with an *input_config* that is not a Unity Catalog
             table (e.g. files or temporary views). Schemas can be read without a Spark Session for tables with a
             valid 3-level name (e.g. catalog.schema.table).
+            **Troubleshooting prompt size.** On every call the engine logs a per-source
+            prompt-size breakdown at INFO (one row per contribution: *user_input*,
+            *available_functions*, *summary_stats*, the seed *source_table*, each
+            *upstream_table* with its hop depth, and each *external_lineage* entry).
+            If the resulting prompt is too large for the target model — exceeding token
+            budgets or model input limits — consult that log entry to see which source
+            dominates, then rebuild *uc_metadata* via *collect_unity_catalog_metadata*
+            with a tighter *UnityCatalogMetadataConfig*: tighten
+            ``column_upstream_lineage.depth`` / ``.max_nodes`` / ``.lookback_days``,
+            tighten ``external_lineage.max_relationships``, or set
+            ``column_upstream_lineage`` or ``external_lineage`` to *None* to disable a
+            whole walk. For custom filtering, inspect and modify fields on the returned
+            *UnityCatalogMetadata* record before passing it back.
         """
         if self.llm_engine is None:
             raise MissingParameterError(
@@ -204,17 +211,14 @@ class DQGenerator(DQEngineBase):
             )
 
         logger.info(f"Generating DQ rules with LLM for input: '{user_input}'")
-        schema_info = (
-            self._get_schema_info(
-                input_config=input_config, unity_catalog_metadata_config=unity_catalog_metadata_config
-            )
-            if input_config
-            else ""
-        )
+        if uc_metadata is None and input_config is not None:
+            uc_metadata = self.collect_unity_catalog_metadata(input_config)
+        schema_info = uc_metadata.json() if uc_metadata else ""
 
-        # Generate rules using pre-initialized LLM compiler
         prediction = self.llm_engine.detect_business_rules_with_llm(
-            user_input=user_input, schema_info=schema_info, summary_stats=summary_stats
+            user_input=user_input,
+            summary_stats=summary_stats,
+            schema_info=schema_info,
         )
 
         # Validate the generated rules and drop any that fail — the LLM occasionally
@@ -233,66 +237,81 @@ class DQGenerator(DQEngineBase):
         )
         return dq_rules
 
-    def _get_schema_info(
+    def collect_unity_catalog_metadata(
         self,
         input_config: InputConfig,
-        *,
-        unity_catalog_metadata_config: UnityCatalogMetadataConfig | None = None,
-    ) -> str:
-        """
-        Gets the input schema as JSON for use as LLM context.
+        config: UnityCatalogMetadataConfig | None = None,
+    ) -> UnityCatalogMetadata:
+        """Collect schema (and optionally UC enrichment) for *input_config* as LLM context.
 
-        The input location determines how the schema is read:
-        * Unity Catalog tables with a 3-level namespace are read using a Databricks workspace client.
-        * Storage paths and 2-level (Hive Metastore) table names are read using a Spark session.
+        Single public entry point for assembling the Unity Catalog context the LLM sees
+        via *generate_dq_rules_ai_assisted*. The input location determines how the
+        baseline schema is read:
+
+        * Unity Catalog tables with a 3-level namespace are read via the workspace client.
+        * Storage paths and 2-level (Hive Metastore) table names are read via Spark.
+
+        When *config* is set, the call is further enriched with the UC metadata the config
+        enables (table / column comments, tags, column upstream lineage, upstream-table
+        lineage, external lineage). When *config* is *None*, the returned record carries
+        only the baseline columns. Callers may inspect / modify any field on the returned
+        record (or call :meth:`UnityCatalogMetadata.json` to see the exact JSON the LLM
+        will consume) before passing it back to *generate_dq_rules_ai_assisted*.
 
         Args:
             input_config: Input config providing the input data location.
-            unity_catalog_metadata_config: Optional Unity Catalog enrichment config forwarded
-                to both metadata helpers so comments / tags / lineage can be attached to the
-                prompt.
+            config: Optional *UnityCatalogMetadataConfig* enabling table / column comments,
+                tags, and lineage enrichment. *None* returns baseline schema only. Enrichment
+                is skipped (with a warning) when *input_config.location* is not a 3-level
+                UC name.
 
         Returns:
-            A JSON string containing the column metadata with columns wrapped in a "columns" key.
+            A *UnityCatalogMetadata* record with the structured schema the LLM will see.
+            Observability measurements (per-table prompt-size breakdown) are a separate
+            concern computed on demand via *measure_schema_prompt*.
 
         Raises:
-            InvalidConfigError: If the input location is neither a table name nor a storage path.
+            InvalidConfigError: If *input_config.location* is empty or is neither a table
+                name nor a storage path.
         """
         location = input_config.location
         if not location:
             raise InvalidConfigError("Input location not configured")
 
-        if unity_catalog_metadata_config is not None and not UC_TABLE_PATTERN.match(location):
+        if config is not None and not UC_TABLE_PATTERN.match(location):
             logger.warning(
                 f"Skipping Unity Catalog metadata enrichment for '{sanitize_for_logging(location)}': "
                 "enrichment requires a 3-level Unity Catalog table name (catalog.schema.table)"
             )
-            unity_catalog_metadata_config = None
+            config = None
 
         if UC_TABLE_PATTERN.match(location):
             logger.info(f"Using WorkspaceClient to determine the schema info for '{sanitize_for_logging(location)}'")
-            if unity_catalog_metadata_config is None:
-                return get_table_column_metadata(self.ws, location)
             table_info = self.ws.tables.get(location.replace("`", ""))
-            return build_schema_json(
+            column_dicts = extract_column_dicts(table_info)
+            if config is None:
+                return UnityCatalogMetadata(columns=column_dicts)
+            return build_unity_catalog_metadata(
                 table_full_name=location,
-                column_dicts=extract_column_dicts(table_info),
+                column_dicts=column_dicts,
                 ws=self.ws,
                 spark=self.spark,
-                config=unity_catalog_metadata_config,
+                config=config,
                 table_info=table_info,
             )
 
         if TABLE_PATTERN.match(location) or STORAGE_PATH_PATTERN.match(location):
             logger.info(f"Using a SparkSession to determine the schema info for '{sanitize_for_logging(location)}'")
-            if unity_catalog_metadata_config is None:
-                return get_column_metadata(self.spark, input_config)
-            return build_schema_json(
+            df = read_input_data(self.spark, input_config)
+            column_dicts = [{"name": field.name, "type": field.dataType.simpleString()} for field in df.schema.fields]
+            if config is None:
+                return UnityCatalogMetadata(columns=column_dicts)
+            return build_unity_catalog_metadata(
                 table_full_name=location,
-                column_dicts=get_column_dicts(self.spark, input_config),
+                column_dicts=column_dicts,
                 ws=self.ws,
                 spark=self.spark,
-                config=unity_catalog_metadata_config,
+                config=config,
             )
 
         raise InvalidConfigError(

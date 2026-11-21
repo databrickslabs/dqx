@@ -23,7 +23,6 @@ __all__ = [
     "create_optimizer_training_set",
     "create_optimizer_training_set_with_stats",
     "get_column_metadata",
-    "get_column_dicts",
     "extract_json_rules",
 ]
 
@@ -269,13 +268,10 @@ def get_column_metadata(spark: SparkSession, input_config: InputConfig) -> str:
     Returns:
         str: A JSON string containing the column metadata with columns wrapped in a "columns" key.
     """
-    return json.dumps({"columns": get_column_dicts(spark, input_config)})
-
-
-def get_column_dicts(spark: SparkSession, input_config: InputConfig) -> list[dict[str, str]]:
-    """Return the ``[{"name","type"}]`` column list for ``input_config`` using Spark."""
     df = read_input_data(spark, input_config)
-    return [{"name": field.name, "type": field.dataType.simpleString()} for field in df.schema.fields]
+    columns = [{"name": field.name, "type": field.dataType.simpleString()} for field in df.schema.fields]
+    schema_info = {"columns": columns}
+    return json.dumps(schema_info)
 
 
 def _load_training_examples() -> list[dict[str, Any]]:
