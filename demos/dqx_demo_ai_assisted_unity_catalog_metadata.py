@@ -25,7 +25,14 @@
 
 # COMMAND ----------
 
-%pip install 'databricks-labs-dqx[llm]' dbldatagen
+dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
+
+if dbutils.widgets.get("test_library_ref") != "":
+    %pip install 'databricks-labs-dqx[llm] @ {dbutils.widgets.get("test_library_ref")}' dbldatagen
+else:
+    %pip install 'databricks-labs-dqx[llm]' dbldatagen
+
+# COMMAND ----------
 
 %restart_python
 
@@ -133,9 +140,7 @@ spark.sql(
 # MAGIC %md
 # MAGIC ## Baseline — generate rules without Unity Catalog metadata
 # MAGIC
-# MAGIC `unity_catalog_metadata_config=None` is the default. At this point the tables have no
-# MAGIC comments, no tags, and no external lineage, so the LLM has only column names + types
-# MAGIC to work with.
+# MAGIC Pass the table location as `input_config` to include its column names and types in the prompt.
 
 # COMMAND ----------
 
@@ -219,7 +224,7 @@ from databricks.sdk.service.catalog import (
     SystemType,
 )
 
-EXTERNAL_METADATA_NAME = "dqx_demo_sap_sd_invoices"
+EXTERNAL_METADATA_NAME = f"dqx_demo_sap_sd_invoices_{demo_schema_name}"
 external_metadata_created = False
 external_relationship_created = False
 

@@ -51,7 +51,6 @@ from databricks.labs.dqx.utils import (
     ViewColumnSeeds,
     escape_sql_string_literal,
     quote_column_name,
-    sql_str_literal,
     walk_column_lineage,
     walk_table_lineage,
 )
@@ -503,19 +502,6 @@ def _empty_lineage_df(spark: SparkSession) -> DataFrame:
     return spark.createDataFrame([], LINEAGE_TABLE_SCHEMA)
 
 
-def _sql_str_literal(value: str) -> str:
-    """Wrap a Python string as a single-quoted SQL string literal, escaped by *escape_sql_string_literal*.
-
-    The backslash is doubled, so a value ending in a backslash (e.g. a path-style *input_location*)
-    cannot escape the closing quote and produce a malformed — and potentially injectable — literal.
-    The single quote is escaped as ``\\'``: a doubled ``''`` is concatenated away by Spark, so the
-    lookup would silently miss a table such as ``o'brien``. Used by the lineage queries where
-    parameter markers cannot be applied — e.g. inside ``INTERVAL n DAYS`` — and the table name has
-    to be inlined as a literal.
-    """
-    return f"'{escape_sql_string_literal(value)}'"
-
-
 def _fully_qualified_identifier(name: str) -> str:
     """Backtick-quote each dot-separated segment of a UC name for use as a SQL identifier.
 
@@ -544,7 +530,7 @@ def _document_table(*, spark: SparkSession, location: str, safe_name: str) -> No
         return
     table_ident = _fully_qualified_identifier(location)
     try:
-        spark.sql(f"COMMENT ON TABLE {table_ident} IS {sql_str_literal(LINEAGE_TABLE_COMMENT)}")
+        spark.sql(f"COMMENT ON TABLE {table_ident} IS '{escape_sql_string_literal(LINEAGE_TABLE_COMMENT)}'")
     except Exception as exc:  # broad catch: table-comment application is best-effort
         logger.warning(
             f"CollectLineageAction '{safe_name}' failed to set table comment on "
@@ -556,7 +542,7 @@ def _document_table(*, spark: SparkSession, location: str, safe_name: str) -> No
             continue
         column_ident = f"{table_ident}.{quote_column_name(field.name)}"
         try:
-            spark.sql(f"COMMENT ON COLUMN {column_ident} IS {sql_str_literal(comment)}")
+            spark.sql(f"COMMENT ON COLUMN {column_ident} IS '{escape_sql_string_literal(comment)}'")
         except Exception as exc:  # broad catch: per-column comment application is best-effort
             logger.warning(
                 f"CollectLineageAction '{safe_name}' failed to set column comment on "
@@ -762,7 +748,7 @@ def _walk_lineage(
     sanitised warning, rather than escaping to the outer *CollectLineageAction.execute*
     broad-catch (which would turn the whole action into *CONFIG_ERROR*).
 
-    *table_full_name* is inlined as a single-quoted SQL string literal via *sql_str_literal*
+    *table_full_name* is inlined as a single-quoted SQL string literal using *escape_sql_string_literal*
     (escapes embedded quotes). *search.depth* is an optional validated Pydantic int (>= 1 when
     set); *search.lookback_days* and *search.max_nodes* are validated Pydantic ints (>= 1).
 

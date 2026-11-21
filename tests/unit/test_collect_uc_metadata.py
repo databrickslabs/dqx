@@ -54,12 +54,17 @@ def test_uc_table_no_config_returns_baseline_schema(uc_workspace_client):
     uc_workspace_client.tables.get.assert_called_once_with("main.default.users")
 
 
-def test_backticked_uc_table_still_routes_through_workspace_client(uc_workspace_client):
-    result = collect_unity_catalog_metadata(
-        InputConfig(location="`my-catalog`.`my-schema`.users"), ws=uc_workspace_client, spark=None
-    )
+@pytest.mark.parametrize(
+    ("location", "expected_name"),
+    [
+        ("Main.Sales.Users", "main.sales.users"),
+        ("`My-Catalog`.`My-Schema`.Users", "my-catalog.my-schema.users"),
+    ],
+)
+def test_uc_table_name_is_normalized_before_workspace_lookup(uc_workspace_client, location, expected_name):
+    result = collect_unity_catalog_metadata(InputConfig(location=location), ws=uc_workspace_client, spark=None)
     assert result["columns"] == UC_COLUMNS
-    uc_workspace_client.tables.get.assert_called_once_with("my-catalog.my-schema.users")
+    uc_workspace_client.tables.get.assert_called_once_with(expected_name)
 
 
 def test_three_level_hive_metastore_uses_workspace_client(uc_workspace_client, mock_spark):

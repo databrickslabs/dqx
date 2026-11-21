@@ -423,6 +423,22 @@ def test_run_dqx_ai_assisted_quality_checks_generation(ws, make_notebook, make_j
     run_job_and_validate(ws, job.job_id, "dqx_demo_ai_assisted_checks_generation")
 
 
+def test_run_dqx_demo_ai_assisted_unity_catalog_metadata(ws, make_notebook, make_schema, make_job, library_ref):
+    schema = make_schema(catalog_name=TEST_CATALOG).name
+    task_key = "dqx_demo_ai_assisted_unity_catalog_metadata"
+    path = Path(__file__).parent.parent.parent / "demos" / f"{task_key}.py"
+    with open(path, "rb") as f:
+        notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
+
+    parameters = {"demo_catalog": TEST_CATALOG, "demo_schema": schema, "test_library_ref": library_ref}
+    if model_name := os.getenv("DQX_TEST_LLM_MODEL"):
+        parameters["model_name"] = model_name
+    notebook_task = NotebookTask(notebook_path=notebook.as_fuse().as_posix(), base_parameters=parameters)
+    job = make_job(tasks=[Task(task_key=task_key, notebook_task=notebook_task)])
+
+    run_job_and_validate(ws, job.job_id, task_key)
+
+
 def test_run_dqx_demo_datacontract_odcs(ws, make_notebook, make_job, library_ref):
     """Test the ODCS v3.x data contract demo notebook."""
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_datacontract_odcs.py"

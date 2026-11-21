@@ -207,6 +207,32 @@ def test_collect_column_upstream_lineage_walks_multiple_hops_without_cycles(spar
     assert hops == {(gold, silver, "invoice_id", 1), (silver, bronze, "invoice_id", 2), (gold, gold, "original_id", 1)}
 
 
+def test_duplicate_lineage_events_do_not_consume_max_nodes_budget(spark, stub_system_tables):
+    schema = f"{TEST_CATALOG}.{stub_system_tables.schema.name}"
+    gold, silver, bronze = (f"{schema}.invoices_{layer}" for layer in ("gold", "silver", "bronze"))
+    spark.sql(
+        f"INSERT INTO {stub_system_tables.table_lineage} VALUES "
+        f"('{silver}', '{gold}', current_timestamp()), "
+        f"('{silver}', '{gold}', current_timestamp() - INTERVAL 1 MINUTE), "
+        f"('{bronze}', '{gold}', current_timestamp()), "
+        f"('{bronze}', '{gold}', current_timestamp() - INTERVAL 1 MINUTE)"
+    )
+    spark.sql(
+        f"INSERT INTO {stub_system_tables.column_lineage} VALUES "
+        f"('{silver}', 'invoice_id', '{gold}', 'invoice_id', current_timestamp()), "
+        f"('{silver}', 'invoice_id', '{gold}', 'invoice_id', current_timestamp() - INTERVAL 1 MINUTE), "
+        f"('{bronze}', 'invoice_id', '{gold}', 'invoice_id', current_timestamp()), "
+        f"('{bronze}', 'invoice_id', '{gold}', 'invoice_id', current_timestamp() - INTERVAL 1 MINUTE)"
+    )
+
+    config = ColumnUpstreamLineageConfig(depth=2, lookback_days=1, max_nodes=2)
+    table_edges = collect_upstream_table_lineage(spark, gold, config=config)
+    column_edges = collect_column_upstream_lineage(spark, gold, ["invoice_id"], config=config)
+
+    assert {(edge["target_table"], edge["depth"]) for edge in table_edges} == {(silver, 1), (bronze, 1)}
+    assert {(edge["source_table"], edge["depth"]) for edge in column_edges} == {(silver, 1), (bronze, 1)}
+
+
 def test_collect_external_upstream_lineage_returns_sap_metadata(
     ws, make_schema, make_table, make_external_metadata, make_external_lineage_relationship
 ):

@@ -17,7 +17,6 @@ from databricks.labs.dqx.utils import (
     ViewColumnSeeds,
     get_column_name_or_alias,
     is_sql_query_safe,
-    sql_str_literal,
     to_utc,
     safe_filter_expr,
     sanitize_for_logging,
@@ -1059,21 +1058,8 @@ def test_replace_template_substitutes_in_a_single_pass():
 
 
 # ---------------------------------------------------------------------------
-# Shared lineage SQL helpers (sql_str_literal + walk_table_lineage + walk_column_lineage).
+# Shared lineage SQL helpers (walk_table_lineage and walk_column_lineage).
 # ---------------------------------------------------------------------------
-
-
-def test_sql_str_literal_escapes_single_quote():
-    # Spark's default escapedStringLiterals=false drops ANSI quote-doubling ("''"),
-    # so sql_str_literal must emit backslash-quote ("\\'") for apostrophes to round-trip.
-    assert sql_str_literal("o'brien_id") == "'o\\'brien_id'"
-    assert sql_str_literal("o'brien_id") != "'o''brien_id'"
-
-
-def test_sql_str_literal_escapes_backslash_before_quote():
-    # Backslash is doubled first; otherwise the backslash it inserts for the quote-escape
-    # gets re-escaped and the resulting literal is malformed.
-    assert sql_str_literal("foo\\'bar") == "'foo\\\\\\'bar'"
 
 
 def _capture_sql(mock_spark: Any) -> str:

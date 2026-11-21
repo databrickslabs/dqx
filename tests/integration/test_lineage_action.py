@@ -1109,7 +1109,7 @@ def test_source_table_with_special_characters_is_escaped(
     """A source table / input_location with a backslash or single quote must be inlined as a SQL
     string literal that decodes back to the same name.
 
-    Without the backslash escape in *_sql_str_literal* the trailing ``\\`` escapes the literal's
+    Without the backslash escape in *escape_sql_string_literal* the trailing ``\\`` escapes the literal's
     closing quote, the recursive-CTE query fails to parse, the read is swallowed by the walker's
     broad except, and the edge is silently dropped. A quote doubled as ``''`` instead of ``\\'``
     is concatenated away, so the walk looks up the wrong table. Seeding goes through

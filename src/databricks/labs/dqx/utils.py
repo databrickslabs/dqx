@@ -1019,30 +1019,6 @@ def get_file_extension(file_path: str | os.PathLike) -> str:
 # ---------------------------------------------------------------------------
 
 
-def sql_str_literal(value: str) -> str:
-    """Escape and wrap a Python string as a single-quoted Spark SQL literal.
-
-    Spark's default *spark.sql.parser.escapedStringLiterals* is *false*, which means ANSI
-    quote-doubling (``''``) is **not** honoured — the parser silently drops the pair, so
-    ``'o''brien'`` is read as two adjacent literals ``'o'`` and ``'brien'``. The correct
-    escape is backslash + quote (``\\'``). The backslash is doubled **first** so the
-    quote-escape it introduces is not itself re-escaped; without this a value ending in a
-    backslash (e.g. a Windows path) would escape the closing quote and produce a malformed
-    — and potentially injectable — literal.
-
-    This is the single DQX helper for inlining string literals into Spark SQL on paths
-    where parameter markers are unavailable (e.g. inside ``INTERVAL n DAYS`` and after
-    ``LIMIT``). Pure and side-effect free.
-
-    Args:
-        value: Python string to inline.
-
-    Returns:
-        The *value* wrapped in single quotes with backslashes and single quotes escaped.
-    """
-    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
-
-
 SYSTEM_ACCESS_TABLE_LINEAGE = "system.access.table_lineage"
 SYSTEM_ACCESS_COLUMN_LINEAGE = "system.access.column_lineage"
 
@@ -1051,7 +1027,7 @@ class InlineColumnSeeds(BaseModel):
     """Seed set for *walk_column_lineage*'s profiler path.
 
     Produces an inlined ``IN ('a', 'b', …)`` filter against the column-lineage anchor;
-    each entry is escaped via *sql_str_literal* so user-supplied column names cannot
+    each entry is escaped via *escape_sql_string_literal* so user-supplied column names cannot
     inject SQL. Immutable: the model is frozen once constructed.
     """
 
@@ -1107,7 +1083,7 @@ def walk_table_lineage(
     Args:
         spark: SparkSession used to issue the recursive-CTE query.
         table: Fully qualified Unity Catalog name of the anchor table. Escaped via
-            *sql_str_literal* before interpolation — callers do not need to pre-escape.
+            *escape_sql_string_literal* before interpolation — callers do not need to pre-escape.
         direction: ``"upstream"`` or ``"downstream"``; chooses which side of the lineage
             edge seeds the walk.
         depth: Max hops from the anchor (``>= 1``). *None* opts into an unbounded walk.
@@ -1123,10 +1099,10 @@ def walk_table_lineage(
     """
     key_source = "target_table_full_name" if direction == "upstream" else "source_table_full_name"
     key_other = "source_table_full_name" if direction == "upstream" else "target_table_full_name"
-    table_literal = sql_str_literal(table)
+    table_literal = f"'{escape_sql_string_literal(table)}'"
     depth_predicate = f"e.depth < {int(depth)} AND " if depth is not None else ""
-    # nosec B608: identifiers + validated ints only; the anchor table name is escaped and
-    # wrapped by *sql_str_literal* before interpolation. *depth* (when set), *lookback_days*,
+    # nosec B608: the anchor table name is escaped and single-quoted before interpolation.
+    # *depth* (when set), *lookback_days*,
     # and *max_nodes* are expected to be Pydantic-validated ints (>= 1) interpolated as bare
     # constants.
     query = (
@@ -1192,7 +1168,7 @@ def walk_column_lineage(
     Args:
         spark: SparkSession used to issue the recursive-CTE query.
         table: Fully qualified Unity Catalog name of the anchor table. Escaped via
-            *sql_str_literal* before interpolation.
+            *escape_sql_string_literal* before interpolation.
         direction: ``"upstream"`` or ``"downstream"``.
         depth: Max hops from the anchor (``>= 1``); *None* for an unbounded walk.
         lookback_days: *INTERVAL* window over *event_time*. Pydantic-validated by the
@@ -1213,11 +1189,11 @@ def walk_column_lineage(
         anchor_key, anchor_col_key = "source_table_full_name", "source_column_name"
         frontier_key, frontier_col_key = "target_table_full_name", "target_column_name"
 
-    table_literal = sql_str_literal(table)
+    table_literal = f"'{escape_sql_string_literal(table)}'"
     depth_predicate = f"e.depth < {int(depth)} AND " if depth is not None else ""
 
     if isinstance(column_seed, InlineColumnSeeds):
-        seed_in = ", ".join(sql_str_literal(c) for c in column_seed.columns)
+        seed_in = ", ".join(f"'{escape_sql_string_literal(column)}'" for column in column_seed.columns)
         anchor_col_filter = f"{anchor_col_key} IN ({seed_in})"
         revisit_guard = ""
     else:
@@ -1229,7 +1205,7 @@ def walk_column_lineage(
         )
 
     # nosec B608: identifiers + validated ints only; the anchor table name and every
-    # *InlineColumnSeeds* entry are wrapped by *sql_str_literal*. The *ViewColumnSeeds*
+    # *InlineColumnSeeds* entry are escaped with *escape_sql_string_literal*. The *ViewColumnSeeds*
     # view name is a caller-owned internal identifier (UUID-suffixed when minted by
     # DQX actions). *depth* (when set), *lookback_days*, and *max_nodes* are expected
     # to be Pydantic-validated ints (>= 1) interpolated as bare constants.
@@ -1278,7 +1254,6 @@ def walk_column_lineage(
 
 
 __all__ = [
-    "sql_str_literal",
     "SYSTEM_ACCESS_TABLE_LINEAGE",
     "SYSTEM_ACCESS_COLUMN_LINEAGE",
     "InlineColumnSeeds",

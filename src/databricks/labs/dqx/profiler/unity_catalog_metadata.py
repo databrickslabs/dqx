@@ -8,7 +8,7 @@ The recursive-CTE walkers for *collect_column_upstream_lineage* and
 *collect_upstream_table_lineage* are upstream-only collectors invoked from the
 profiler/LLM path. They delegate to *utils.walk_column_lineage* /
 *utils.walk_table_lineage* for CTE construction (bounded *depth*, *lookback_days* window,
-per-member + tail ``LIMIT``, in-CTE full-path cycle guard, and *sql_str_literal*-escaped
+per-member + tail ``LIMIT``, in-CTE full-path cycle guard, and *escape_sql_string_literal*-escaped
 identifiers). Lineage / tag / comment / external-lineage failures degrade to empty structures and log via
 *sanitize_for_logging* (CWE-117).
 
@@ -356,7 +356,7 @@ def collect_column_upstream_lineage(
     ``e.depth < N`` predicate from *config.depth* (omitted when *None* → unbounded).
 
     *seed_columns* is inlined as an ``IN (...)`` filter against *target_column_name*;
-    each entry is escaped via *sql_str_literal* so user-supplied column names cannot
+    each entry is escaped via *escape_sql_string_literal* so user-supplied column names cannot
     inject SQL. Empty or whitespace-only entries are dropped; the walk short-circuits to
     an empty list when no usable seeds remain.
 
@@ -658,7 +658,8 @@ def collect_unity_catalog_metadata(
         )
     if UC_TABLE_PATTERN.match(location):
         logger.info(f"Using WorkspaceClient to determine the schema info for '{sanitize_for_logging(location)}'")
-        table_info = ws.tables.get(location.replace("`", ""))
+        table_name = _normalize_three_part_name(location)
+        table_info = ws.tables.get(table_name)
         column_dicts = [
             SourceColumn(name=column["name"], type=column["type"]) for column in extract_column_dicts(table_info)
         ]
@@ -667,7 +668,7 @@ def collect_unity_catalog_metadata(
         if spark is None:
             raise MissingParameterError("A Spark session is required for Unity Catalog metadata enrichment")
         return build_unity_catalog_metadata(
-            table_full_name=location,
+            table_full_name=table_name,
             column_dicts=column_dicts,
             ws=ws,
             spark=spark,
