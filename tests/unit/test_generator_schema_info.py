@@ -1,30 +1,22 @@
-import json
+"""End-to-end integration tests for *DQGenerator.generate_dq_rules_ai_assisted*.
+
+Exercises the public signature and the plumbing from the generator into the LLM engine:
+*user_input*, *summary_stats*, and *uc_metadata* are three independent context inputs,
+combined in the prompt when supplied. Location resolution (reading schemas from UC vs.
+Spark, enrichment via *UnityCatalogMetadataConfig*) lives in *test_collect_uc_metadata.py*.
+"""
+
 from types import SimpleNamespace
 
 import pytest
-from databricks.sdk.service.catalog import ColumnInfo, TableInfo
 
-from databricks.labs.dqx.config import InputConfig
-from databricks.labs.dqx.errors import InvalidConfigError
+from databricks.labs.dqx.errors import MissingParameterError
 from databricks.labs.dqx.profiler.generator import DQGenerator
-
-UC_COLUMNS = {"columns": [{"name": "user_id", "type": "string"}, {"name": "age", "type": "int"}]}
-
-
-@pytest.fixture
-def uc_workspace_client(mock_workspace_client):
-    """Workspace client returning a two-column Unity Catalog table."""
-    mock_workspace_client.tables.get.return_value = TableInfo(
-        columns=[
-            ColumnInfo(name="user_id", type_text="string"),
-            ColumnInfo(name="age", type_text="int"),
-        ]
-    )
-    return mock_workspace_client
+from databricks.labs.dqx.profiler.unity_catalog_metadata import UnityCatalogMetadata
 
 
 def _stub_llm_engine(captured: dict) -> SimpleNamespace:
-    """LLM engine double that records into *captured* the schema context it was given."""
+    """LLM engine double that records every kwarg the generator forwarded to the engine."""
 
     def detect_business_rules_with_llm(**kwargs) -> SimpleNamespace:
         captured.update(kwargs)
@@ -33,101 +25,67 @@ def _stub_llm_engine(captured: dict) -> SimpleNamespace:
     return SimpleNamespace(detect_business_rules_with_llm=detect_business_rules_with_llm)
 
 
-def test_generate_for_uc_table_reads_schema_without_spark(uc_workspace_client):
-    """Generating rules for a Unity Catalog table must not require a Spark session."""
-    captured = {}
-    generator = DQGenerator(workspace_client=uc_workspace_client, spark=None)
-    generator.llm_engine = _stub_llm_engine(captured)
-
-    generator.generate_dq_rules_ai_assisted(
-        user_input="age must be positive", input_config=InputConfig(location="main.default.users")
-    )
-
-    assert json.loads(captured["schema_info"]) == UC_COLUMNS
-    uc_workspace_client.tables.get.assert_called_once_with("main.default.users")
-
-
-def test_generate_for_backticked_uc_table_reads_schema_without_spark(uc_workspace_client):
-    """Special-char UC names are still UC tables, so they must take the workspace client path."""
-    captured = {}
-    generator = DQGenerator(workspace_client=uc_workspace_client, spark=None)
-    generator.llm_engine = _stub_llm_engine(captured)
-
-    generator.generate_dq_rules_ai_assisted(
-        user_input="age must be positive", input_config=InputConfig(location="`my-catalog`.`my-schema`.users")
-    )
-
-    assert json.loads(captured["schema_info"]) == UC_COLUMNS
-    uc_workspace_client.tables.get.assert_called_once_with("my-catalog.my-schema.users")
-
-
-def test_generate_for_three_level_hive_metastore_table_uses_workspace_client(uc_workspace_client, mock_spark):
-    """A 3-level hive_metastore name is a valid UC namespace, so it is read via the workspace client, not Spark."""
-    captured = {}
-    generator = DQGenerator(workspace_client=uc_workspace_client, spark=mock_spark)
-    generator.llm_engine = _stub_llm_engine(captured)
-
-    generator.generate_dq_rules_ai_assisted(
-        user_input="age must be positive", input_config=InputConfig(location="hive_metastore.default.users")
-    )
-
-    assert json.loads(captured["schema_info"]) == UC_COLUMNS
-    uc_workspace_client.tables.get.assert_called_once_with("hive_metastore.default.users")
-    assert not mock_spark.read.options.called
-
-
-@pytest.mark.parametrize("location", ["not a location", "users", "main..users"])
-def test_generate_rejects_unsupported_input_location(mock_workspace_client, location):
-    """An unclassifiable location fails with a clear error instead of falling through to Spark."""
+def test_generate_forwards_uc_metadata_schema_json_to_engine(mock_workspace_client):
+    captured: dict = {}
     generator = DQGenerator(workspace_client=mock_workspace_client, spark=None)
-    generator.llm_engine = _stub_llm_engine({})
-
-    with pytest.raises(InvalidConfigError, match="Invalid input location"):
-        generator.generate_dq_rules_ai_assisted(
-            user_input="age must be positive", input_config=InputConfig(location=location)
-        )
-
-    assert not mock_workspace_client.tables.get.called
-
-
-def test_generate_for_storage_path_reads_schema_with_spark(mock_workspace_client, mock_spark):
-    """A storage path cannot be resolved through Unity Catalog, so Spark reads it."""
-    captured = {}
-    mock_spark.read.options.return_value.load.return_value.schema.fields = []
-    generator = DQGenerator(workspace_client=mock_workspace_client, spark=mock_spark)
     generator.llm_engine = _stub_llm_engine(captured)
 
+    uc_metadata = UnityCatalogMetadata(
+        table="main.default.users",
+        columns=[{"name": "id", "type": "string"}],
+    )
     generator.generate_dq_rules_ai_assisted(
-        user_input="age must be positive",
-        input_config=InputConfig(location="s3://bucket/data", format="parquet"),
+        user_input="id must be unique",
+        uc_metadata=uc_metadata,
     )
 
-    assert json.loads(captured["schema_info"]) == {"columns": []}
-    assert not mock_workspace_client.tables.get.called
+    assert captured["schema_info"] == '{"table": "main.default.users", "columns": [{"name": "id", "type": "string"}]}'
+    assert captured["user_input"] == "id must be unique"
+    assert captured["summary_stats"] is None
 
 
-def test_generate_for_two_level_table_name_reads_schema_with_spark(mock_workspace_client, mock_spark):
-    """Two-level names resolve against the session catalog, which only Spark can do."""
-    captured = {}
-    mock_spark.read.options.return_value.table.return_value.schema.fields = []
-    generator = DQGenerator(workspace_client=mock_workspace_client, spark=mock_spark)
+def test_generate_forwards_all_three_context_inputs_when_present(mock_workspace_client):
+    """user_input, summary_stats, and uc_metadata are combined — not mutually exclusive."""
+    captured: dict = {}
+    generator = DQGenerator(workspace_client=mock_workspace_client, spark=None)
     generator.llm_engine = _stub_llm_engine(captured)
 
+    uc_metadata = UnityCatalogMetadata(columns=[])
+    stats = {"profile": {"metrics": {"count": 100}}}
     generator.generate_dq_rules_ai_assisted(
-        user_input="age must be positive", input_config=InputConfig(location="default.users")
+        user_input="generate rules",
+        summary_stats=stats,
+        uc_metadata=uc_metadata,
     )
 
-    assert json.loads(captured["schema_info"]) == {"columns": []}
-    assert not mock_workspace_client.tables.get.called
+    assert captured["user_input"] == "generate rules"
+    assert captured["summary_stats"] == stats
+    assert captured["schema_info"] == '{"columns": []}'
 
 
-def test_generate_without_input_config_sends_no_schema(mock_workspace_client):
-    """With no input config the LLM infers the schema, so neither backend is consulted."""
-    captured = {}
+def test_generate_without_uc_metadata_passes_empty_schema_info(mock_workspace_client):
+    """With *uc_metadata=None* the engine receives schema_info=\"\" (LLM-side inference)."""
+    captured: dict = {}
     generator = DQGenerator(workspace_client=mock_workspace_client, spark=None)
     generator.llm_engine = _stub_llm_engine(captured)
 
     generator.generate_dq_rules_ai_assisted(user_input="age must be positive")
 
     assert captured["schema_info"] == ""
-    assert not mock_workspace_client.tables.get.called
+
+
+def test_generate_rejects_uc_metadata_only_calls(mock_workspace_client):
+    """*uc_metadata* on its own is context, not intent — raise instead of silently returning []."""
+    generator = DQGenerator(workspace_client=mock_workspace_client, spark=None)
+    generator.llm_engine = _stub_llm_engine({})
+
+    with pytest.raises(MissingParameterError, match="summary statistics or user input"):
+        generator.generate_dq_rules_ai_assisted(uc_metadata=UnityCatalogMetadata(columns=[]))
+
+
+def test_generate_rejects_fully_empty_calls(mock_workspace_client):
+    generator = DQGenerator(workspace_client=mock_workspace_client, spark=None)
+    generator.llm_engine = _stub_llm_engine({})
+
+    with pytest.raises(MissingParameterError, match="summary statistics or user input"):
+        generator.generate_dq_rules_ai_assisted()

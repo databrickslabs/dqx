@@ -4,15 +4,17 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, create_autospec
 import pyspark.sql.functions as F
 import pytest
-from pyspark.sql import Column
+from pyspark.sql import Column, SparkSession
 from pyspark.sql.types import IntegerType, StringType, StructField, StructType
 
 from databricks.labs.dqx.io import read_input_data, get_reference_dataframes
 from databricks.labs.dqx.utils import (
     escape_sql_string_literal,
+    InlineColumnSeeds,
+    ViewColumnSeeds,
     get_column_name_or_alias,
     is_sql_query_safe,
     to_utc,
@@ -32,6 +34,8 @@ from databricks.labs.dqx.utils import (
     normalize_column_expr,
     get_template_placeholders,
     replace_template,
+    walk_column_lineage,
+    walk_table_lineage,
 )
 from databricks.labs.dqx.rule import normalize_bound_args
 from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError, UnsafeSqlQueryError
@@ -1051,3 +1055,158 @@ def test_get_template_placeholders_tolerates_whitespace():
 
 def test_replace_template_substitutes_in_a_single_pass():
     assert replace_template("{{ a }} {{b}}", {"a": "{{ b }}", "b": "x"}) == "{{ b }} x"
+
+
+# ---------------------------------------------------------------------------
+# Shared lineage SQL helpers (walk_table_lineage and walk_column_lineage).
+# ---------------------------------------------------------------------------
+
+
+def _capture_sql(mock_spark: Any) -> str:
+    assert mock_spark.sql.call_count == 1
+    return mock_spark.sql.call_args.args[0]
+
+
+def test_walk_table_lineage_upstream_sql_shape():
+    spark = create_autospec(SparkSession)
+    walk_table_lineage(spark, table="cat.sch.tbl", direction="upstream", depth=5, lookback_days=30, max_nodes=100)
+    query = _capture_sql(spark)
+    assert "FROM system.access.table_lineage" in query
+    assert "'cat.sch.tbl'" in query
+    # Upstream direction: the anchor is matched on target_table_full_name.
+    assert "WHERE target_table_full_name = 'cat.sch.tbl'" in query
+    assert "array_contains(e.path, t.source_table_full_name)" in query
+    # LIMIT appears at the anchor + recursive member + tail (three total).
+    assert query.count("LIMIT 100") == 3
+    assert "e.depth < 5 AND " in query
+
+
+def test_walk_table_lineage_dedupes_events_before_limit():
+    spark = create_autospec(SparkSession)
+    walk_table_lineage(spark, table="cat.sch.tbl", direction="upstream", depth=5, lookback_days=30, max_nodes=100)
+    query = _capture_sql(spark)
+    # Anchor + recursive member + tail → three SELECT DISTINCTs.
+    assert query.count("SELECT DISTINCT") == 3
+    assert "edges(anchor, neighbour, depth, path)" in query
+    assert ", event_time " not in query
+    assert ", t.event_time" not in query
+
+
+def test_walk_table_lineage_downstream_sql_shape():
+    spark = create_autospec(SparkSession)
+    walk_table_lineage(spark, table="cat.sch.tbl", direction="downstream", depth=5, lookback_days=30, max_nodes=100)
+    query = _capture_sql(spark)
+    # Downstream direction: the anchor is matched on source_table_full_name.
+    assert "WHERE source_table_full_name = 'cat.sch.tbl'" in query
+    assert "array_contains(e.path, t.target_table_full_name)" in query
+
+
+def test_walk_table_lineage_omits_depth_predicate_when_none():
+    spark = create_autospec(SparkSession)
+    walk_table_lineage(spark, table="cat.sch.tbl", direction="upstream", depth=None, lookback_days=30, max_nodes=100)
+    query = _capture_sql(spark)
+    # The recursive-member depth predicate must drop out entirely when depth is None.
+    assert "e.depth <" not in query
+
+
+def test_walk_column_lineage_inline_seeds_sql_shape():
+    spark = create_autospec(SparkSession)
+    walk_column_lineage(
+        spark,
+        table="cat.sch.tbl",
+        direction="upstream",
+        depth=2,
+        lookback_days=30,
+        max_nodes=50,
+        column_seed=InlineColumnSeeds(columns=["amount", "o'brien_id"]),
+    )
+    query = _capture_sql(spark)
+    assert "FROM system.access.column_lineage" in query
+    # Regression for review comment #1: the apostrophe is escaped as \', not doubled.
+    assert "IN ('amount', 'o\\'brien_id')" in query
+    # Upstream column lineage: the seed set filters on target_column_name.
+    assert "target_column_name IN ('amount', 'o\\'brien_id')" in query
+    assert (
+        "array(array(target_table_full_name, target_column_name), array(source_table_full_name, source_column_name)) AS path"
+        in query
+    )
+    assert "AND (source_table_full_name <> target_table_full_name OR source_column_name <> target_column_name)" in query
+    assert "NOT array_contains(e.path, array(t.source_table_full_name, t.source_column_name))" in query
+    # Inline-seeds path does NOT emit the actions-side revisit guard subquery.
+    assert "SELECT col_name FROM" not in query
+
+
+def test_walk_column_lineage_view_seeds_sql_shape():
+    spark = create_autospec(SparkSession)
+    walk_column_lineage(
+        spark,
+        table="cat.sch.tbl",
+        direction="upstream",
+        depth=2,
+        lookback_days=30,
+        max_nodes=50,
+        column_seed=ViewColumnSeeds(view_name="_dqx_failed_columns_deadbeef"),
+    )
+    query = _capture_sql(spark)
+    assert "IN (SELECT col_name FROM _dqx_failed_columns_deadbeef)" in query
+    # Actions-side revisit guard: the recursive member must drop the (anchor_table, failed_col)
+    # pair so cycles back to the seed are not re-expanded.
+    assert "NOT (t.source_table_full_name = 'cat.sch.tbl'" in query
+    assert "t.source_column_name IN (SELECT col_name FROM _dqx_failed_columns_deadbeef)" in query
+
+
+def test_walk_column_lineage_dedupes_events_before_limit():
+    spark = create_autospec(SparkSession)
+    walk_column_lineage(
+        spark,
+        table="cat.sch.tbl",
+        direction="upstream",
+        depth=2,
+        lookback_days=30,
+        max_nodes=50,
+        column_seed=InlineColumnSeeds(columns=["amount"]),
+    )
+    query = _capture_sql(spark)
+    assert query.count("SELECT DISTINCT") == 3
+    assert "depth, path) AS" in query
+    assert ", event_time " not in query
+    assert ", t.event_time" not in query
+
+
+def test_walk_table_lineage_orders_before_each_limit():
+    """Each LIMIT must be preceded by an ORDER BY so truncation is deterministic."""
+    spark = create_autospec(SparkSession)
+    walk_table_lineage(spark, table="cat.sch.tbl", direction="upstream", depth=5, lookback_days=30, max_nodes=100)
+    query = _capture_sql(spark)
+    # One ORDER BY per LIMIT: anchor, recursive, tail.
+    assert query.count("ORDER BY") == 3
+    assert query.count("LIMIT 100") == 3
+    # Every LIMIT must sit immediately after an ORDER BY clause.
+    remainder = query
+    for _ in range(3):
+        idx = remainder.find("LIMIT 100")
+        assert idx >= 0
+        assert "ORDER BY" in remainder[:idx]
+        remainder = remainder[idx + len("LIMIT 100") :]
+
+
+def test_walk_column_lineage_orders_before_each_limit():
+    spark = create_autospec(SparkSession)
+    walk_column_lineage(
+        spark,
+        table="cat.sch.tbl",
+        direction="upstream",
+        depth=2,
+        lookback_days=30,
+        max_nodes=50,
+        column_seed=InlineColumnSeeds(columns=["amount"]),
+    )
+    query = _capture_sql(spark)
+    assert query.count("ORDER BY") == 3
+    assert query.count("LIMIT 50") == 3
+    remainder = query
+    for _ in range(3):
+        idx = remainder.find("LIMIT 50")
+        assert idx >= 0
+        assert "ORDER BY" in remainder[:idx]
+        remainder = remainder[idx + len("LIMIT 50") :]

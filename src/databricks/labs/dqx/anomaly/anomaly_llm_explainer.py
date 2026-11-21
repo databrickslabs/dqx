@@ -130,6 +130,24 @@ _CONFIDENCE_HIGH_BELOW = 0.05
 _CONFIDENCE_MIXED_BELOW = 0.15
 
 
+def _sql_string_literal(value: str) -> str:
+    """Escape a string for safe interpolation inside a single-quoted Spark SQL literal.
+
+    Spark's parser honours backslash escapes inside string literals by default
+    (*spark.sql.parser.escapedStringLiterals* is false), so both replacements are required:
+
+      * the backslash must be doubled, or the parser consumes it;
+      * the single quote must be escaped as ``\\'``, **not** doubled as ``''``. ANSI doubling is
+        not honoured in this mode — Spark drops the pair outright, so a *redact_columns* entry
+        named ``cust'id`` would be embedded as ``custid``, silently fail to match the real column,
+        and leak that column's (potentially PII) values to the LLM.
+
+    Used for *redact_columns* values — already validated as non-empty strings — before they are
+    embedded in the pattern-key SQL built by *pattern_spark_expr*. Uses *escape_sql_string_literal*.
+    """
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
 def _build_ai_query_response_format() -> str:
     """Build the ai_query ``responseFormat`` JSON schema from *_PROMPT_OUTPUT_FIELDS*.
 

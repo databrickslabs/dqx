@@ -1,0 +1,924 @@
+"""Unity Catalog metadata enrichment for AI-assisted rule generation.
+
+Collects table + column comments, tags, bounded column-upstream lineage, and bounded external
+upstream lineage for a source UC table and renders them as JSON that the LLM schema prompt
+can consume.
+
+The recursive-CTE walkers for *collect_column_upstream_lineage* and
+*collect_upstream_table_lineage* are upstream-only collectors invoked from the
+profiler/LLM path. They delegate to *utils.walk_column_lineage* /
+*utils.walk_table_lineage* for CTE construction (bounded *depth*, *lookback_days* window,
+per-member + tail ``LIMIT``, in-CTE full-path cycle guard, and *escape_sql_string_literal*-escaped
+identifiers). Lineage / tag / comment / external-lineage failures degrade to empty structures and log via
+*sanitize_for_logging* (CWE-117).
+
+External lineage is read via the SDK's *ExternalLineageAPI.list_external_lineage_relationships*
+because UC external lineage (non-Databricks sources — SAP, Salesforce, Tableau, custom
+systems) is not recorded in *system.access.*_lineage*.
+"""
+
+import json
+import logging
+from collections.abc import Iterable, Mapping
+from functools import partial
+from typing import TypedDict
+
+import pyspark.sql.functions as F
+from pyspark.sql import SparkSession
+
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.catalog import (
+    ExternalLineageInfo,
+    ExternalLineageObject,
+    ExternalLineageRelationshipInfo,
+    ExternalLineageTable,
+    LineageDirection,
+    TableInfo,
+)
+
+from databricks.labs.blueprint.parallel import Threads
+
+from databricks.labs.dqx.config import (
+    ColumnUpstreamLineageConfig,
+    ExternalLineageConfig,
+    InputConfig,
+    TABLE_PATTERN,
+    UC_TABLE_PATTERN,
+    UnityCatalogMetadataConfig,
+)
+from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError, MissingParameterError
+from databricks.labs.dqx.io import STORAGE_PATH_PATTERN, read_input_data
+from databricks.labs.dqx.utils import (
+    InlineColumnSeeds,
+    extract_column_dicts,
+    sanitize_for_logging,
+    walk_column_lineage,
+    walk_table_lineage,
+)
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "NamedColumn",
+    "UpstreamColumn",
+    "SourceColumn",
+    "SourceSchema",
+    "TableTags",
+    "ColumnLineageEdge",
+    "TableLineageEdge",
+    "UpstreamTableIdentity",
+    "UpstreamTable",
+    "ExternalLineageRecord",
+    "MetadataEnrichment",
+    "UnityCatalogMetadata",
+    "serialize_unity_catalog_metadata",
+    "collect_unity_catalog_metadata",
+    "collect_table_comments",
+    "collect_table_tags",
+    "collect_column_upstream_lineage",
+    "collect_upstream_table_lineage",
+    "collect_external_upstream_lineage",
+    "build_unity_catalog_metadata",
+]
+
+
+class NamedColumn(TypedDict):
+    """A column identified by its name."""
+
+    name: str
+
+
+class UpstreamColumn(NamedColumn, total=False):
+    """An upstream column with optional comments and tags."""
+
+    comment: str
+    tags: list[dict[str, str]]
+
+
+class SourceColumn(UpstreamColumn):
+    """A source table column with its data type and optional enrichment."""
+
+    type: str
+
+
+class TableTags(TypedDict):
+    """Tags for a table and its columns, grouped by column name."""
+
+    table_tags: list[dict[str, str]]
+    column_tags: dict[str, list[dict[str, str]]]
+
+
+class ColumnLineageEdge(TypedDict):
+    """A column-level lineage hop from the source column to the target column."""
+
+    predecessor: str
+    source_table: str
+    source_column: str
+    target_column: str
+    depth: int
+
+
+class TableLineageEdge(TypedDict):
+    """A hop from the previous table to an upstream table."""
+
+    predecessor: str
+    target_table: str
+    depth: int
+
+
+class UpstreamTableIdentity(TypedDict):
+    """An upstream table name and its distance from the source table."""
+
+    name: str
+    depth: int
+
+
+class UpstreamTable(UpstreamTableIdentity, total=False):
+    """An upstream table with optional comments, tags, and column metadata."""
+
+    comment: str
+    tags: list[dict[str, str]]
+    columns: list[UpstreamColumn]
+
+
+class ExternalLineageRecord(TypedDict):
+    """An external upstream source with its column mappings and relationship properties."""
+
+    source_kind: str
+    source_name: str
+    system_type: str | None
+    entity_type: str | None
+    columns: list[dict[str, str]]
+    properties: dict[str, str] | None
+
+
+class MetadataEnrichment(TypedDict, total=False):
+    """Optional Unity Catalog metadata added to the baseline source schema."""
+
+    table_comment: str
+    table_tags: list[dict[str, str]]
+    column_upstream_lineage: list[ColumnLineageEdge]
+    upstream_tables: list[UpstreamTable]
+    external_lineage: list[ExternalLineageRecord]
+
+
+class SourceSchema(TypedDict):
+    """The columns that make up a source schema."""
+
+    columns: list[SourceColumn]
+
+
+class UnityCatalogMetadata(SourceSchema, MetadataEnrichment, total=False):
+    """Source schema and optional Unity Catalog context for AI-assisted rule generation.
+
+    Pass the dictionary to *DQGenerator.generate_dq_rules_ai_assisted* as *uc_metadata*.
+    Call *serialize_unity_catalog_metadata* to render the schema JSON for the LLM prompt.
+
+    Attributes:
+        columns: Source column names, data types, and optional comments and tags.
+        table: Optional fully qualified name of the source table.
+    """
+
+    table: str
+
+
+def serialize_unity_catalog_metadata(metadata: UnityCatalogMetadata) -> str:
+    """Serialize the source schema and populated enrichment fields for the LLM prompt."""
+    fields: Mapping[str, object] = metadata
+    payload: dict[str, object] = {}
+    if (table := metadata.get("table")) is not None:
+        payload["table"] = table
+    payload["columns"] = metadata["columns"]
+    for key in ("table_comment", "table_tags", "column_upstream_lineage", "upstream_tables", "external_lineage"):
+        if (value := fields.get(key)) is not None:
+            payload[key] = value
+    return json.dumps(payload)
+
+
+_TABLE_TAGS_TABLE = "system.information_schema.table_tags"
+_COLUMN_TAGS_TABLE = "system.information_schema.column_tags"
+
+
+def _sanitize_text(value: str | None) -> str | None:
+    """Return ``value`` with surrounding whitespace trimmed, or ``None`` for empty/missing."""
+    if value is None:
+        return None
+    trimmed = value.strip()
+    return trimmed or None
+
+
+def _strip(value: str | None) -> str:
+    return (value or "").strip()
+
+
+def _split_three_part_name(name: str) -> tuple[str, str, str]:
+    """Return ``(catalog, schema, table)`` lowercase for a 3-part UC name.
+
+    Unity Catalog identifiers cannot contain dots (see the Databricks SQL reference on
+    identifier naming), so splitting on ``.`` is unambiguous: per-segment backtick
+    stripping is sufficient to unquote a 3-part name. Output is lowercased to match the
+    storage conventions of *system.access.*_lineage* and *system.information_schema.*_tags*,
+    so callers can forward the result directly into SQL literals and column filters.
+
+    Raises:
+        InvalidParameterError: input is not exactly three non-empty segments.
+    """
+    parts = [segment.strip().strip("`").strip().lower() for segment in name.split(".")]
+    if len(parts) != 3 or not all(parts):
+        raise InvalidParameterError(
+            f"Expected 3-part Unity Catalog name 'catalog.schema.table', got {sanitize_for_logging(name)!r}"
+        )
+    return parts[0], parts[1], parts[2]
+
+
+def _normalize_three_part_name(name: str) -> str:
+    """Return canonical lowercase *catalog.schema.table* for a 3-part UC name.
+
+    Thin wrapper over *_split_three_part_name* that rejoins the normalised parts. Used as
+    the single up-front normalisation at every public collector so downstream SQL
+    literals, DataFrame filters, and SDK calls see the same canonical form regardless of
+    whether the caller passed a mixed-case or backtick-quoted identifier.
+
+    Raises:
+        InvalidParameterError: propagated from *_split_three_part_name*.
+    """
+    catalog, schema, table = _split_three_part_name(name)
+    return f"{catalog}.{schema}.{table}"
+
+
+def collect_table_comments(
+    ws: WorkspaceClient,
+    table: str,
+    *,
+    table_info: TableInfo | None = None,
+) -> tuple[str | None, dict[str, str]]:
+    """Return ``(table_comment, {column_name: column_comment})`` for ``table``.
+
+    *table* is normalised via *_normalize_three_part_name* so backtick-quoted and
+    mixed-case names resolve to the same canonical UC identifier before the SDK call.
+    The table comment is ``None`` when missing / whitespace-only; the column map omits
+    columns without a comment. Returns ``(None, {})`` on a malformed name or any SDK
+    read error so the caller can still render a schema prompt.
+
+    Pass *table_info* when the caller has already fetched the *TableInfo* (for example
+    the enriched seed-table path in *DQGenerator._get_schema_info*) to skip the SDK
+    round-trip and reuse the existing payload.
+    """
+    try:
+        normalised = _normalize_three_part_name(table)
+    except InvalidParameterError as exc:
+        logger.warning(f"collect_table_comments: {sanitize_for_logging(str(exc))}")
+        return None, {}
+    if table_info is None:
+        try:
+            table_info = ws.tables.get(normalised)
+        except Exception as exc:  # broad catch: UC read failures are non-fatal for enrichment
+            logger.warning(
+                f"collect_table_comments: failed to read '{sanitize_for_logging(normalised)}': "
+                f"{sanitize_for_logging(str(exc))}"
+            )
+            return None, {}
+    table_comment = _sanitize_text(table_info.comment)
+    column_comments: dict[str, str] = {}
+    for column in table_info.columns or []:
+        name = _strip(column.name)
+        comment = _sanitize_text(column.comment)
+        if name and comment is not None:
+            column_comments[name] = comment
+    return table_comment, column_comments
+
+
+def collect_table_tags(spark: SparkSession, table: str) -> TableTags:
+    """Return UC tags for a 3-part table name via ``system.information_schema.*_tags``.
+
+    Uses the PySpark DataFrame API — ``spark.table(...).filter(...).select(...)`` — so the
+    catalog, schema, and table name are passed as literal column comparisons rather than
+    inlined into a SQL string (SQL-injection safe by construction).
+
+    Returns:
+        ``{"table_tags": [{"key","value"}], "column_tags": {"<col>": [{"key","value"}]}}``.
+        An empty structure is returned on any read error.
+    """
+    empty: TableTags = {"table_tags": [], "column_tags": {}}
+    try:
+        catalog, schema, table_name = _split_three_part_name(table)
+    except InvalidParameterError as exc:
+        logger.warning(f"collect_table_tags: {sanitize_for_logging(str(exc))}")
+        return empty
+    name_filter = (
+        (F.col("catalog_name") == catalog) & (F.col("schema_name") == schema) & (F.col("table_name") == table_name)
+    )
+
+    table_tags: list[dict[str, str]] = []
+    column_tags: dict[str, list[dict[str, str]]] = {}
+
+    try:
+        table_rows = spark.table(_TABLE_TAGS_TABLE).filter(name_filter).select("tag_name", "tag_value").collect()
+        for row in table_rows:
+            table_tags.append({"key": _strip(row["tag_name"]), "value": _strip(row["tag_value"])})
+    except Exception as exc:  # broad catch: tag reads are non-fatal
+        logger.warning(
+            f"collect_table_tags: table tags read failed for '{sanitize_for_logging(table)}': "
+            f"{sanitize_for_logging(str(exc))}"
+        )
+
+    try:
+        column_rows = (
+            spark.table(_COLUMN_TAGS_TABLE).filter(name_filter).select("column_name", "tag_name", "tag_value").collect()
+        )
+        for row in column_rows:
+            column = _strip(row["column_name"])
+            column_tags.setdefault(column, []).append(
+                {"key": _strip(row["tag_name"]), "value": _strip(row["tag_value"])}
+            )
+    except Exception as exc:  # broad catch: tag reads are non-fatal
+        logger.warning(
+            f"collect_table_tags: column tags read failed for '{sanitize_for_logging(table)}': "
+            f"{sanitize_for_logging(str(exc))}"
+        )
+
+    return {"table_tags": table_tags, "column_tags": column_tags}
+
+
+def collect_column_upstream_lineage(
+    spark: SparkSession,
+    source_table: str,
+    seed_columns: list[str],
+    *,
+    config: ColumnUpstreamLineageConfig,
+) -> list[ColumnLineageEdge]:
+    """Walk per-column upstream lineage from ``source_table`` with a recursive CTE.
+
+    Delegates to *utils.walk_column_lineage* with an *InlineColumnSeeds* seed: a single
+    ``WITH RECURSIVE`` against *system.access.column_lineage* with a path-based cycle
+    guard, per-member and tail ``LIMIT``\\s derived from *config.max_nodes*, an
+    ``INTERVAL n DAYS`` lookback from *config.lookback_days*, and an optional
+    ``e.depth < N`` predicate from *config.depth* (omitted when *None* → unbounded).
+
+    *seed_columns* is inlined as an ``IN (...)`` filter against *target_column_name*;
+    each entry is escaped via *escape_sql_string_literal* so user-supplied column names cannot
+    inject SQL. Empty or whitespace-only entries are dropped; the walk short-circuits to
+    an empty list when no usable seeds remain.
+
+    Returns:
+        ``[{"source_table","source_column","target_column","depth","predecessor"}, ...]`` or
+        an empty list on any read failure.
+    """
+    distinct_seeds = sorted({c for c in seed_columns if c})
+    if not distinct_seeds:
+        return []
+
+    try:
+        normalised_table = _normalize_three_part_name(source_table)
+    except InvalidParameterError as exc:
+        logger.warning(f"collect_column_upstream_lineage: {sanitize_for_logging(str(exc))}")
+        return []
+
+    try:
+        rows = walk_column_lineage(
+            spark,
+            table=normalised_table,
+            direction="upstream",
+            depth=config.depth,
+            lookback_days=config.lookback_days,
+            max_nodes=config.max_nodes,
+            column_seed=InlineColumnSeeds(columns=distinct_seeds),
+        ).collect()
+    except Exception as exc:  # broad catch: lineage reads are non-fatal
+        logger.warning(
+            f"collect_column_upstream_lineage: read failed for "
+            f"'{sanitize_for_logging(normalised_table)}': {sanitize_for_logging(str(exc))}"
+        )
+        return []
+
+    return [
+        {
+            "predecessor": _strip(row["predecessor"]),
+            "source_table": _strip(row["frontier_table"]),
+            "source_column": _strip(row["source_column"]),
+            "target_column": _strip(row["target_column"]),
+            "depth": int(row["depth"]),
+        }
+        for row in rows
+    ]
+
+
+def collect_upstream_table_lineage(
+    spark: SparkSession,
+    source_table: str,
+    *,
+    config: ColumnUpstreamLineageConfig,
+) -> list[TableLineageEdge]:
+    """Walk upstream table lineage from ``source_table`` with a recursive CTE.
+
+    Issues a single ``WITH RECURSIVE`` against *system.access.table_lineage* (upstream
+    direction only) with the same guardrails as *collect_column_upstream_lineage*. Used to
+    resolve the set of upstream tables for metadata enrichment.
+
+    Returns:
+        ``[{"predecessor","target_table","depth"}, ...]`` where *target_table* is the upstream
+        neighbour and *predecessor* is the previous hop (equal to *source_table* at depth 1).
+    """
+    try:
+        normalised_table = _normalize_three_part_name(source_table)
+    except InvalidParameterError as exc:
+        logger.warning(f"collect_upstream_table_lineage: {sanitize_for_logging(str(exc))}")
+        return []
+
+    try:
+        rows = walk_table_lineage(
+            spark,
+            table=normalised_table,
+            direction="upstream",
+            depth=config.depth,
+            lookback_days=config.lookback_days,
+            max_nodes=config.max_nodes,
+        ).collect()
+    except Exception as exc:  # broad catch: lineage reads are non-fatal
+        logger.warning(
+            f"collect_upstream_table_lineage: read failed for "
+            f"'{sanitize_for_logging(normalised_table)}': {sanitize_for_logging(str(exc))}"
+        )
+        return []
+    return [
+        {
+            "predecessor": _strip(row["anchor"]),
+            "target_table": _strip(row["neighbour"]),
+            "depth": int(row["depth"]),
+        }
+        for row in rows
+    ]
+
+
+def _external_lineage_record(info: ExternalLineageInfo) -> ExternalLineageRecord | None:
+    """Turn an SDK *ExternalLineageInfo* into a flat record for the LLM prompt.
+
+    Variants are inspected in order (external_metadata_info → table_info → file_info →
+    model_info); the always-present *external_lineage_info* carries the relationship's
+    column mappings and properties. Returns *None* when no variant payload is populated so
+    the caller can skip the entry.
+    """
+    columns, properties = _relationship_columns_and_properties(info.external_lineage_info)
+
+    if info.external_metadata_info is not None:
+        metadata = info.external_metadata_info
+        return {
+            "source_kind": "external_metadata",
+            "source_name": _strip(metadata.name),
+            "system_type": metadata.system_type.value if metadata.system_type is not None else None,
+            "entity_type": _sanitize_text(metadata.entity_type),
+            "columns": columns,
+            "properties": properties,
+        }
+
+    if info.table_info is not None:
+        table = info.table_info
+        full_name = ".".join(
+            part for part in (_strip(table.catalog_name), _strip(table.schema_name), _strip(table.name)) if part
+        )
+        return {
+            "source_kind": "table",
+            "source_name": full_name,
+            "system_type": None,
+            "entity_type": "TABLE",
+            "columns": columns,
+            "properties": properties,
+        }
+
+    if info.file_info is not None:
+        file_info = info.file_info
+        return {
+            "source_kind": "file",
+            "source_name": _strip(file_info.path) or _strip(file_info.securable_name),
+            "system_type": None,
+            "entity_type": _sanitize_text(file_info.securable_type),
+            "columns": columns,
+            "properties": properties,
+        }
+
+    if info.model_info is not None:
+        model_info = info.model_info
+        source_name = _strip(model_info.model_name)
+        if model_info.version is not None:
+            source_name = f"{source_name}@{model_info.version}" if source_name else f"@{model_info.version}"
+        return {
+            "source_kind": "model",
+            "source_name": source_name,
+            "system_type": None,
+            "entity_type": "MODEL",
+            "columns": columns,
+            "properties": properties,
+        }
+
+    return None
+
+
+def _relationship_columns_and_properties(
+    rel: ExternalLineageRelationshipInfo | None,
+) -> tuple[list[dict[str, str]], dict[str, str] | None]:
+    """Extract column mappings and properties from an *ExternalLineageRelationshipInfo*."""
+    columns: list[dict[str, str]] = []
+    properties: dict[str, str] | None = None
+    if rel is None:
+        return columns, properties
+    for pair in rel.columns or []:
+        src = _sanitize_text(pair.source)
+        tgt = _sanitize_text(pair.target)
+        if src and tgt:
+            columns.append({"source": src, "target": tgt})
+    if rel.properties:
+        properties = {_strip(str(k)): _strip(str(v)) for k, v in rel.properties.items()}
+    return columns, properties
+
+
+def collect_external_upstream_lineage(
+    ws: WorkspaceClient,
+    source_table: str,
+    *,
+    config: ExternalLineageConfig,
+) -> list[ExternalLineageRecord]:
+    """Enumerate upstream external relationships for ``source_table``.
+
+    Drives ``ws.external_lineage.list_external_lineage_relationships(..., LineageDirection
+    .UPSTREAM, page_size=min(1000, max_relationships))`` and stops at *config.max_relationships*
+    items so unbounded listings cannot blow up the LLM prompt. Any SDK error (API not
+    enabled, missing permission, pagination failure) returns an empty list and logs a
+    sanitised warning.
+    """
+    max_relationships = int(config.max_relationships)
+    page_size = min(1000, max_relationships)
+    try:
+        catalog, schema, table_name = _split_three_part_name(source_table)
+    except InvalidParameterError as exc:
+        logger.warning(f"collect_external_upstream_lineage: {sanitize_for_logging(str(exc))}")
+        return []
+
+    object_info = ExternalLineageObject(table=ExternalLineageTable(name=f"{catalog}.{schema}.{table_name}"))
+
+    try:
+        iterator = ws.external_lineage.list_external_lineage_relationships(
+            object_info=object_info,
+            lineage_direction=LineageDirection.UPSTREAM,
+            page_size=page_size,
+        )
+        return _drain_external_lineage(iterator, max_relationships)
+    except Exception as exc:  # broad catch: SDK listing failures are non-fatal
+        logger.warning(
+            f"collect_external_upstream_lineage: SDK listing failed for "
+            f"'{sanitize_for_logging(source_table)}': {sanitize_for_logging(str(exc))}"
+        )
+        return []
+
+
+def _drain_external_lineage(
+    iterator: Iterable[ExternalLineageInfo], max_relationships: int
+) -> list[ExternalLineageRecord]:
+    """Drain up to *max_relationships* entries from the SDK iterator.
+
+    Extracted from *collect_external_upstream_lineage* to keep that function's ``try``
+    block small (pylint *too-many-try-statements*).
+    """
+    results: list[ExternalLineageRecord] = []
+    budget_used = 0
+    for info in iterator:
+        if budget_used >= max_relationships:
+            break
+        budget_used += 1
+        record = _external_lineage_record(info)
+        if record is None:
+            continue
+        results.append(record)
+    return results
+
+
+def _merge_tags(column_entries: list[SourceColumn], column_tags: dict[str, list[dict[str, str]]]) -> None:
+    """Attach each column's tag list in-place; omit the key when the column has no tags."""
+    for entry in column_entries:
+        tags = column_tags.get(entry["name"])
+        if tags:
+            entry["tags"] = tags
+
+
+def reads_schema_with_spark(location: str | None) -> bool:
+    """Return whether the location needs Spark for its baseline schema."""
+    return bool(
+        location
+        and not UC_TABLE_PATTERN.match(location)
+        and (TABLE_PATTERN.match(location) or STORAGE_PATH_PATTERN.match(location))
+    )
+
+
+def collect_unity_catalog_metadata(
+    input_config: InputConfig,
+    ws: WorkspaceClient,
+    spark: SparkSession | None,
+    config: UnityCatalogMetadataConfig | None = None,
+) -> UnityCatalogMetadata:
+    """Collect schema (and optionally UC enrichment) for *input_config* as LLM context.
+
+    The input location determines how the baseline schema is read:
+
+    * Unity Catalog tables with a 3-level namespace are read via the workspace client.
+    * Storage paths and 2-level (Hive Metastore) table names are read via Spark.
+
+    When *config* is set, the call is further enriched with the UC metadata the config
+    enables (table / column comments, tags, column upstream lineage, upstream-table
+    lineage, external lineage). When *config* is *None*, the returned record carries
+    only the baseline columns. Callers may inspect / modify any field on the returned
+    record (or call :func:`serialize_unity_catalog_metadata` to see the exact JSON the LLM
+    will consume) before passing it back to *generate_dq_rules_ai_assisted*.
+
+    Args:
+        input_config: Input config providing the input data location.
+        ws: Workspace client used to retrieve Unity Catalog table metadata.
+        spark: Spark session required for Spark-backed schema reads or Unity Catalog enrichment.
+        config: Optional *UnityCatalogMetadataConfig* enabling table / column comments,
+            tags, and lineage enrichment. *None* returns baseline schema only. Enrichment
+            is skipped (with a warning) when *input_config.location* is not a 3-level
+            UC name.
+
+    Returns:
+        A *UnityCatalogMetadata* record with the structured schema the LLM will see.
+        Observability measurements (per-table prompt-size breakdown) are a separate
+        concern computed on demand via *measure_schema_prompt*.
+
+    Raises:
+        InvalidConfigError: If *input_config.location* is empty or is neither a table
+            name nor a storage path.
+        MissingParameterError: If a Spark session is required and *spark* is *None*.
+    """
+    location = input_config.location
+    if not location:
+        raise InvalidConfigError("Input location not configured")
+
+    if config is not None and not UC_TABLE_PATTERN.match(location):
+        logger.warning(
+            f"Skipping Unity Catalog metadata enrichment for '{sanitize_for_logging(location)}': "
+            "enrichment requires a 3-level Unity Catalog table name (catalog.schema.table)"
+        )
+    if UC_TABLE_PATTERN.match(location):
+        logger.info(f"Using WorkspaceClient to determine the schema info for '{sanitize_for_logging(location)}'")
+        table_name = _normalize_three_part_name(location)
+        table_info = ws.tables.get(table_name)
+        column_dicts = [
+            SourceColumn(name=column["name"], type=column["type"]) for column in extract_column_dicts(table_info)
+        ]
+        if config is None:
+            return UnityCatalogMetadata(columns=column_dicts)
+        if spark is None:
+            raise MissingParameterError("A Spark session is required for Unity Catalog metadata enrichment")
+        return build_unity_catalog_metadata(
+            table_full_name=table_name,
+            column_dicts=column_dicts,
+            ws=ws,
+            spark=spark,
+            config=config,
+            table_info=table_info,
+        )
+
+    if reads_schema_with_spark(location):
+        if spark is None:
+            raise MissingParameterError("A Spark session is required to read the input schema")
+        logger.info(f"Using a SparkSession to determine the schema info for '{sanitize_for_logging(location)}'")
+        df = read_input_data(spark, input_config)
+        return UnityCatalogMetadata(
+            columns=[{"name": field.name, "type": field.dataType.simpleString()} for field in df.schema.fields]
+        )
+
+    raise InvalidConfigError(
+        "Invalid input location. It must be a 2 or 3-level table namespace or storage path, "
+        f"given {sanitize_for_logging(location)}"
+    )
+
+
+def build_unity_catalog_metadata(
+    *,
+    table_full_name: str,
+    column_dicts: list[SourceColumn],
+    ws: WorkspaceClient,
+    spark: SparkSession | None,
+    config: UnityCatalogMetadataConfig,
+    table_info: TableInfo | None = None,
+) -> UnityCatalogMetadata:
+    """Build the enriched Unity Catalog metadata record for the LLM prompt.
+
+    Produces a :class:`UnityCatalogMetadata` whose top-level fields map one-to-one onto the
+    schema JSON the LLM consumes; call :func:`serialize_unity_catalog_metadata` to serialise.
+    Each enrichment sub-feature is skipped (field stays *None*) when it is disabled on
+    *config* or when its dependency (ws / spark) is missing.
+
+    *column_dicts* is the baseline list of ``{"name","type"}`` dicts the caller already
+    computed from either SDK or Spark; this helper enriches it in place with ``comment`` and
+    ``tags`` per column.
+
+    *table_info* is an optional already-fetched *TableInfo* for the seed table. When the
+    caller has one in hand (the enriched UC path in *collect_unity_catalog_metadata* fetches
+    it once to derive *column_dicts*), passing it through here skips the second
+    *ws.tables.get* call that the comment enrichment would otherwise make.
+
+    *table_full_name* is normalised once via *_normalize_three_part_name* so every
+    downstream enrichment (comments, tags, lineage, external lineage) sees the same
+    canonical lowercase identifier. On a malformed name the baseline metadata is still
+    emitted (with the raw name as ``table``) so the LLM prompt stays well-formed.
+    """
+    try:
+        normalised_name = _normalize_three_part_name(table_full_name)
+    except InvalidParameterError as exc:
+        logger.warning(f"build_unity_catalog_metadata: {sanitize_for_logging(str(exc))}")
+        normalised_name = table_full_name
+
+    base_columns = [column.copy() for column in column_dicts]
+    result: MetadataEnrichment = {}
+
+    _enrich_with_comments(
+        result, base_columns, ws=ws, table_full_name=normalised_name, config=config, table_info=table_info
+    )
+    _enrich_with_tags(result, base_columns, spark=spark, table_full_name=normalised_name, config=config)
+    _enrich_with_lineage(result, base_columns, ws=ws, spark=spark, table_full_name=normalised_name, config=config)
+    _enrich_with_external_lineage(result, ws=ws, table_full_name=normalised_name, config=config)
+
+    return UnityCatalogMetadata(table=normalised_name, columns=base_columns, **result)
+
+
+def _enrich_with_comments(
+    result: MetadataEnrichment,
+    base_columns: list[SourceColumn],
+    *,
+    ws: WorkspaceClient,
+    table_full_name: str,
+    config: UnityCatalogMetadataConfig,
+    table_info: TableInfo | None = None,
+) -> None:
+    """Attach table + column comments to ``result`` / ``base_columns`` in place."""
+    if not (config.include_table_comment or config.include_column_comments):
+        return
+    table_comment, column_comments = collect_table_comments(ws, table_full_name, table_info=table_info)
+    if config.include_table_comment and table_comment is not None:
+        result["table_comment"] = table_comment
+    if config.include_column_comments:
+        for entry in base_columns:
+            comment = column_comments.get(entry["name"])
+            if comment:
+                entry["comment"] = comment
+
+
+def _enrich_with_tags(
+    result: MetadataEnrichment,
+    base_columns: list[SourceColumn],
+    *,
+    spark: SparkSession | None,
+    table_full_name: str,
+    config: UnityCatalogMetadataConfig,
+) -> None:
+    """Attach table + column tags to ``result`` / ``base_columns`` in place."""
+    if not config.include_tags:
+        return
+    if spark is None:
+        logger.warning("build_unity_catalog_metadata: SparkSession not provided; skipping tags enrichment")
+        return
+    tags = collect_table_tags(spark, table_full_name)
+    if tags["table_tags"]:
+        result["table_tags"] = tags["table_tags"]
+    _merge_tags(base_columns, tags["column_tags"])
+
+
+def _enrich_with_lineage(
+    result: MetadataEnrichment,
+    base_columns: list[SourceColumn],
+    *,
+    ws: WorkspaceClient | None,
+    spark: SparkSession | None,
+    table_full_name: str,
+    config: UnityCatalogMetadataConfig,
+) -> None:
+    """Attach column + upstream-table lineage edges to ``result`` in place."""
+    if config.column_upstream_lineage is None:
+        return
+    if spark is None:
+        logger.warning(
+            "build_unity_catalog_metadata: SparkSession not provided; skipping column upstream lineage enrichment"
+        )
+        return
+    seed = [c["name"] for c in base_columns]
+    column_edges = collect_column_upstream_lineage(spark, table_full_name, seed, config=config.column_upstream_lineage)
+    if column_edges:
+        result["column_upstream_lineage"] = column_edges
+    table_edges = collect_upstream_table_lineage(spark, table_full_name, config=config.column_upstream_lineage)
+    if not table_edges:
+        return
+
+    upstream_tables = _collect_upstream_tables(config, spark, table_edges, ws)
+    if upstream_tables:
+        result["upstream_tables"] = upstream_tables
+
+
+def _collect_upstream_tables(
+    config: UnityCatalogMetadataConfig,
+    spark: SparkSession,
+    table_edges: list[TableLineageEdge],
+    ws: WorkspaceClient | None,
+) -> list[UpstreamTable]:
+    """Collect distinct upstream table entries concurrently."""
+    table_min_depth: dict[str, int] = {}
+    for edge in table_edges:
+        name = edge["target_table"]
+        depth = edge["depth"]
+        existing = table_min_depth.get(name)
+        if existing is None or depth < existing:
+            table_min_depth[name] = depth
+
+    tasks = [
+        partial(
+            _collect_upstream_table_entry,
+            ws=ws,
+            spark=spark,
+            table_full_name=name,
+            depth=depth,
+            config=config,
+        )
+        for name, depth in table_min_depth.items()
+    ]
+    collected, _errors = Threads.gather("collect upstream table enrichment", tasks)
+    # `Threads.gather` returns results in completion order; sort to keep the LLM prompt
+    # deterministic — closer tables first, alphabetical ties.
+    upstream_tables = sorted(collected, key=lambda entry: (entry["depth"], entry["name"]))
+    return upstream_tables
+
+
+def _enrich_with_external_lineage(
+    result: MetadataEnrichment,
+    *,
+    ws: WorkspaceClient | None,
+    table_full_name: str,
+    config: UnityCatalogMetadataConfig,
+) -> None:
+    """Attach upstream external-lineage edges to ``result`` in place."""
+    if config.external_lineage is None:
+        return
+    if ws is None:
+        logger.warning(
+            "build_unity_catalog_metadata: WorkspaceClient not provided; skipping external lineage enrichment"
+        )
+        return
+    external = collect_external_upstream_lineage(ws, table_full_name, config=config.external_lineage)
+    if external:
+        result["external_lineage"] = external
+
+
+def _collect_upstream_table_entry(
+    *,
+    ws: WorkspaceClient | None,
+    spark: SparkSession | None,
+    table_full_name: str,
+    depth: int,
+    config: UnityCatalogMetadataConfig,
+) -> UpstreamTable:
+    """Build an upstream-table enrichment record (comments + tags + columns).
+
+    Mirrors the per-source-table enrichment but keyed to an upstream neighbour discovered by
+    ``collect_upstream_table_lineage``. Missing-dependency branches degrade silently so the
+    overall walk still contributes its structural shape to the prompt.
+    """
+    entry: UpstreamTable = {"name": table_full_name, "depth": depth}
+    _attach_upstream_comments(entry, ws=ws, table_full_name=table_full_name, config=config)
+    _attach_upstream_tags(entry, spark=spark, table_full_name=table_full_name, config=config)
+    return entry
+
+
+def _attach_upstream_comments(
+    entry: UpstreamTable,
+    *,
+    ws: WorkspaceClient | None,
+    table_full_name: str,
+    config: UnityCatalogMetadataConfig,
+) -> None:
+    if ws is None or not (config.include_table_comment or config.include_column_comments):
+        return
+    table_comment, column_comments = collect_table_comments(ws, table_full_name)
+    if config.include_table_comment and table_comment is not None:
+        entry["comment"] = table_comment
+    if config.include_column_comments and column_comments:
+        entry["columns"] = [{"name": name, "comment": value} for name, value in column_comments.items()]
+
+
+def _attach_upstream_tags(
+    entry: UpstreamTable,
+    *,
+    spark: SparkSession | None,
+    table_full_name: str,
+    config: UnityCatalogMetadataConfig,
+) -> None:
+    if spark is None or not config.include_tags:
+        return
+    tags = collect_table_tags(spark, table_full_name)
+    if tags["table_tags"]:
+        entry["tags"] = tags["table_tags"]
+    if not tags["column_tags"]:
+        return
+    cols = entry.setdefault("columns", [])
+    existing = {c["name"]: c for c in cols}
+    for column_name, column_tag_list in tags["column_tags"].items():
+        if column_name in existing:
+            existing[column_name]["tags"] = column_tag_list
+        else:
+            cols.append({"name": column_name, "tags": column_tag_list})
