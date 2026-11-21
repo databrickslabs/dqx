@@ -98,6 +98,31 @@ class PromptBreakdown:
             sources=self.sources + other.sources,
         )
 
+    @staticmethod
+    def from_prompt_parts(
+        available_functions_json: str,
+        user_input: str,
+        schema_info: str,
+        stats_json: str | None,
+    ) -> "PromptBreakdown":
+        """Compose a *PromptBreakdown* from the discrete inputs an LLM rule-gen call will send.
+
+        Sources: *user_input* (when non-empty), *available_functions* always, *summary_stats*
+        (when supplied), merged with the schema-side sources produced by
+        :func:`measure_schema_prompt`.
+        """
+        engine_sources: list[PromptSource] = []
+        if user_input:
+            engine_sources.append(PromptSource(kind="user_input", chars=len(user_input)))
+        engine_sources.append(PromptSource(kind="available_functions", chars=len(available_functions_json)))
+        if stats_json is not None:
+            engine_sources.append(PromptSource(kind="summary_stats", chars=len(stats_json)))
+        engine_breakdown = PromptBreakdown(
+            total_chars=sum(s.chars for s in engine_sources),
+            sources=tuple(engine_sources),
+        )
+        return engine_breakdown.merge(measure_schema_prompt(schema_info))
+
     def render(self) -> str:
         """Return a multi-line table describing each source, sorted by *chars* desc.
 

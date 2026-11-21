@@ -1171,3 +1171,42 @@ def test_walk_column_lineage_dedupes_events_before_limit():
     assert "depth, path) AS" in query
     assert ", event_time " not in query
     assert ", t.event_time" not in query
+
+
+def test_walk_table_lineage_orders_before_each_limit():
+    """Each LIMIT must be preceded by an ORDER BY so truncation is deterministic."""
+    spark = create_autospec(SparkSession)
+    walk_table_lineage(spark, table="cat.sch.tbl", direction="upstream", depth=5, lookback_days=30, max_nodes=100)
+    query = _capture_sql(spark)
+    # One ORDER BY per LIMIT: anchor, recursive, tail.
+    assert query.count("ORDER BY") == 3
+    assert query.count("LIMIT 100") == 3
+    # Every LIMIT must sit immediately after an ORDER BY clause.
+    remainder = query
+    for _ in range(3):
+        idx = remainder.find("LIMIT 100")
+        assert idx >= 0
+        assert "ORDER BY" in remainder[:idx]
+        remainder = remainder[idx + len("LIMIT 100") :]
+
+
+def test_walk_column_lineage_orders_before_each_limit():
+    spark = create_autospec(SparkSession)
+    walk_column_lineage(
+        spark,
+        table="cat.sch.tbl",
+        direction="upstream",
+        depth=2,
+        lookback_days=30,
+        max_nodes=50,
+        column_seed=InlineColumnSeeds(columns=["amount"]),
+    )
+    query = _capture_sql(spark)
+    assert query.count("ORDER BY") == 3
+    assert query.count("LIMIT 50") == 3
+    remainder = query
+    for _ in range(3):
+        idx = remainder.find("LIMIT 50")
+        assert idx >= 0
+        assert "ORDER BY" in remainder[:idx]
+        remainder = remainder[idx + len("LIMIT 50") :]

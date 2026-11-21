@@ -199,3 +199,58 @@ def test_measure_schema_prompt_empty_string_returns_zero_entry():
     breakdown = measure_schema_prompt("")
     assert breakdown.total_chars == 0
     assert len(breakdown.sources) == 1
+
+
+# -- PromptBreakdown.from_prompt_parts --------------------------------------------------
+
+
+def test_from_prompt_parts_includes_engine_and_schema_sources():
+    """The composed breakdown must cover every input *detect_business_rules_with_llm* sends."""
+    available_functions_json = json.dumps([{"name": "is_not_null"}])
+    schema_json = json.dumps({"table": "cat.sch.tbl", "columns": [{"name": "id", "type": "int"}]})
+
+    breakdown = PromptBreakdown.from_prompt_parts(
+        available_functions_json=available_functions_json,
+        user_input="describe table",
+        schema_info=schema_json,
+        stats_json=None,
+    )
+
+    kinds = [s.kind for s in breakdown.sources]
+    assert "user_input" in kinds
+    assert "available_functions" in kinds
+    assert "source_table" in kinds
+    assert "summary_stats" not in kinds
+    # Invariant: total_chars matches sum of source chars.
+    assert breakdown.total_chars == sum(s.chars for s in breakdown.sources)
+
+
+def test_from_prompt_parts_includes_summary_stats_when_supplied():
+    stats_json = json.dumps({"columns": {"id": {"count": 10}}})
+
+    breakdown = PromptBreakdown.from_prompt_parts(
+        available_functions_json="[]",
+        user_input="",
+        schema_info=json.dumps({"columns": []}),
+        stats_json=stats_json,
+    )
+
+    kinds = [s.kind for s in breakdown.sources]
+    # user_input is empty → omitted.
+    assert "user_input" not in kinds
+    assert "available_functions" in kinds
+    assert "summary_stats" in kinds
+
+
+def test_from_prompt_parts_renders_to_table():
+    """Rendered table is what *detect_business_rules_with_llm* logs at INFO; must not raise."""
+    breakdown = PromptBreakdown.from_prompt_parts(
+        available_functions_json="[]",
+        user_input="hi",
+        schema_info=json.dumps({"columns": []}),
+        stats_json=None,
+    )
+    rendered = breakdown.render()
+    assert "LLM prompt size breakdown" in rendered
+    assert "user_input" in rendered
+    assert "available_functions" in rendered

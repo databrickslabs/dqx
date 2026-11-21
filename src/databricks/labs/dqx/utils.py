@@ -1105,6 +1105,9 @@ def walk_table_lineage(
     # *depth* (when set), *lookback_days*,
     # and *max_nodes* are expected to be Pydantic-validated ints (>= 1) interpolated as bare
     # constants.
+    # ORDER BY before each LIMIT makes truncation deterministic — without it Spark picks
+    # arbitrary rows when the result set exceeds *max_nodes*, and two runs can produce
+    # different lineage subsets for the same inputs.
     query = (
         "WITH RECURSIVE edges(anchor, neighbour, depth, path) AS ("
         " ("
@@ -1115,6 +1118,7 @@ def walk_table_lineage(
         f"    AND {key_other} IS NOT NULL "
         f"    AND {key_other} <> {table_literal} "
         f"    AND event_time >= current_timestamp() - INTERVAL {int(lookback_days)} DAYS "
+        f"  ORDER BY neighbour "
         f"  LIMIT {int(max_nodes)} "
         " )"
         "  UNION ALL "
@@ -1126,11 +1130,14 @@ def walk_table_lineage(
         f"  WHERE {depth_predicate}t.{key_other} IS NOT NULL "
         f"    AND NOT array_contains(e.path, t.{key_other}) "
         f"    AND t.event_time >= current_timestamp() - INTERVAL {int(lookback_days)} DAYS "
+        f"  ORDER BY anchor, neighbour "
         f"  LIMIT {int(max_nodes)} "
         " )"
         ") "
         "SELECT DISTINCT anchor, neighbour, depth "
-        f"FROM edges LIMIT {int(max_nodes)}"
+        "FROM edges "
+        "ORDER BY depth, anchor, neighbour "
+        f"LIMIT {int(max_nodes)}"
     )
     return spark.sql(query)
 
@@ -1209,6 +1216,9 @@ def walk_column_lineage(
     # view name is a caller-owned internal identifier (UUID-suffixed when minted by
     # DQX actions). *depth* (when set), *lookback_days*, and *max_nodes* are expected
     # to be Pydantic-validated ints (>= 1) interpolated as bare constants.
+    # ORDER BY before each LIMIT makes truncation deterministic — without it Spark picks
+    # arbitrary rows when the result set exceeds *max_nodes*, and two runs can produce
+    # different lineage subsets for the same inputs.
     query = (
         "WITH RECURSIVE edges("
         "frontier_table, frontier_column, predecessor, "
@@ -1228,6 +1238,7 @@ def walk_column_lineage(
         f"   AND {frontier_col_key} IS NOT NULL "
         f"   AND ({frontier_key} <> {anchor_key} OR {frontier_col_key} <> {anchor_col_key}) "
         f"   AND event_time >= current_timestamp() - INTERVAL {int(lookback_days)} DAYS "
+        f" ORDER BY frontier_table, frontier_column, source_column, target_column "
         f" LIMIT {int(max_nodes)} "
         ") UNION ALL ("
         f" SELECT DISTINCT t.{frontier_key} AS frontier_table, t.{frontier_col_key} AS frontier_column, "
@@ -1244,11 +1255,14 @@ def walk_column_lineage(
         f"   AND NOT array_contains(e.path, array(t.{frontier_key}, t.{frontier_col_key})) "
         f"{revisit_guard}"
         f"   AND t.event_time >= current_timestamp() - INTERVAL {int(lookback_days)} DAYS "
+        f" ORDER BY predecessor, frontier_table, frontier_column, source_column, target_column "
         f" LIMIT {int(max_nodes)} "
         ") ) "
         "SELECT DISTINCT predecessor, frontier_table, frontier_column, "
         "source_column, target_column, depth "
-        f"FROM edges LIMIT {int(max_nodes)}"
+        "FROM edges "
+        "ORDER BY depth, predecessor, frontier_table, frontier_column, source_column, target_column "
+        f"LIMIT {int(max_nodes)}"
     )
     return spark.sql(query)
 
