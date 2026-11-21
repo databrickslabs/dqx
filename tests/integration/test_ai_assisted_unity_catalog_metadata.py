@@ -33,6 +33,7 @@ from databricks.labs.dqx.config import (
 )
 from databricks.labs.dqx.engine import DQEngineCore
 from databricks.labs.dqx.profiler.generator import DQGenerator
+from databricks.labs.dqx.profiler.unity_catalog_metadata import collect_unity_catalog_metadata
 from tests.constants import TEST_CATALOG
 
 
@@ -115,7 +116,7 @@ def test_generate_rules_with_unity_catalog_metadata(
 
     generator = DQGenerator(ws, spark, llm_model_config=llm_model_config)
     input_config = InputConfig(location=source_table.full_name)
-    uc_metadata = generator.collect_unity_catalog_metadata(input_config, config=config_factory())
+    uc_metadata = collect_unity_catalog_metadata(input_config, ws=ws, spark=spark, config=config_factory())
     checks = generator.generate_dq_rules_ai_assisted(
         user_input=USER_INPUT,
         input_config=input_config,

@@ -35,7 +35,7 @@ This approach is particularly useful when you have clear business requirements, 
 It's also useful for generating technical rules without requiring knowledge of DQX-specific syntax.
 
 <Admonition type="tip" title="Enrich the prompt with Unity Catalog metadata (experimental)">
-Call `DQGenerator.collect_unity_catalog_metadata` with a `UnityCatalogMetadataConfig` to
+Call `collect_unity_catalog_metadata` with a `UnityCatalogMetadataConfig` to
 assemble Unity Catalog context — table / column comments, column tags from
 `system.information_schema.*_tags`, bounded column upstream lineage from
 `system.access.column_lineage`, and external upstream lineage (non-Databricks sources such
@@ -45,8 +45,12 @@ The returned `UnityCatalogMetadata` is then passed to `generate_dq_rules_ai_assi
 calls if you need to.
 
 ```python
-uc_metadata = generator.collect_unity_catalog_metadata(
+from databricks.labs.dqx.profiler.unity_catalog_metadata import collect_unity_catalog_metadata
+
+uc_metadata = collect_unity_catalog_metadata(
     input_config=InputConfig(location="main.sales.invoices"),
+    ws=ws,
+    spark=spark,
     config=UnityCatalogMetadataConfig(),
 )
 checks = generator.generate_dq_rules_ai_assisted(user_input=..., uc_metadata=uc_metadata)
@@ -125,13 +129,14 @@ Here's a simple example of generating quality rules from a natural language desc
 
 For better results, you can attach the input data's Unity Catalog schema (and optionally
 UC enrichment) to the prompt by first collecting it with
-`DQGenerator.collect_unity_catalog_metadata` and then passing the returned
+`collect_unity_catalog_metadata` and then passing the returned
 `UnityCatalogMetadata` as `uc_metadata` to `generate_dq_rules_ai_assisted`:
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
     from databricks.labs.dqx.profiler.generator import DQGenerator
+    from databricks.labs.dqx.profiler.unity_catalog_metadata import collect_unity_catalog_metadata
     from databricks.labs.dqx.config import InputConfig
     from databricks.sdk import WorkspaceClient
 
@@ -140,8 +145,10 @@ UC enrichment) to the prompt by first collecting it with
 
     # Step 1: collect the schema for the input data. Passing config=None returns baseline
     # columns only; passing a UnityCatalogMetadataConfig adds comments / tags / lineage.
-    uc_metadata = generator.collect_unity_catalog_metadata(
+    uc_metadata = collect_unity_catalog_metadata(
         input_config=InputConfig(location="catalog1.schema1.customers"),
+        ws=ws,
+        spark=spark,
     )
 
     # Step 2: generate rules against the collected context.
@@ -177,6 +184,7 @@ prompt when supplied.
     ```python
     from databricks.labs.dqx.profiler.profiler import DQProfiler
     from databricks.labs.dqx.profiler.generator import DQGenerator
+    from databricks.labs.dqx.profiler.unity_catalog_metadata import collect_unity_catalog_metadata
     from databricks.labs.dqx.config import InputConfig, UnityCatalogMetadataConfig
     from databricks.sdk import WorkspaceClient
 
@@ -189,8 +197,10 @@ prompt when supplied.
 
     # Step 2 (optional): collect Unity Catalog context for the same table.
     generator = DQGenerator(workspace_client=ws, spark=spark)
-    uc_metadata = generator.collect_unity_catalog_metadata(
+    uc_metadata = collect_unity_catalog_metadata(
         input_config=InputConfig(location="catalog1.schema1.sales_data"),
+        ws=ws,
+        spark=spark,
         config=UnityCatalogMetadataConfig(),
     )
 

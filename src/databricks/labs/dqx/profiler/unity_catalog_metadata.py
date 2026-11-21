@@ -9,8 +9,7 @@ The recursive-CTE walkers for *collect_column_upstream_lineage* and
 profiler/LLM path. They delegate to *utils.walk_column_lineage* /
 *utils.walk_table_lineage* for CTE construction (bounded *depth*, *lookback_days* window,
 per-member + tail ``LIMIT``, in-CTE full-path cycle guard, and *sql_str_literal*-escaped
-identifiers). None of the collectors in this module ever raise outward: lineage / tag /
-comment / external-lineage failures degrade to empty structures and log via
+identifiers). Lineage / tag / comment / external-lineage failures degrade to empty structures and log via
 *sanitize_for_logging* (CWE-117).
 
 External lineage is read via the SDK's *ExternalLineageAPI.list_external_lineage_relationships*
@@ -41,11 +40,16 @@ from databricks.labs.blueprint.parallel import Threads
 from databricks.labs.dqx.config import (
     ColumnUpstreamLineageConfig,
     ExternalLineageConfig,
+    InputConfig,
+    TABLE_PATTERN,
+    UC_TABLE_PATTERN,
     UnityCatalogMetadataConfig,
 )
-from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError, MissingParameterError
+from databricks.labs.dqx.io import STORAGE_PATH_PATTERN, read_input_data
 from databricks.labs.dqx.utils import (
     InlineColumnSeeds,
+    extract_column_dicts,
     sanitize_for_logging,
     walk_column_lineage,
     walk_table_lineage,
@@ -55,6 +59,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "UnityCatalogMetadata",
+    "collect_unity_catalog_metadata",
     "collect_table_comments",
     "collect_table_tags",
     "collect_column_upstream_lineage",
@@ -77,7 +82,7 @@ class UnityCatalogMetadata:
     - Skip the collector entirely and pass *None* when they want LLM-side schema inference
       from a business description.
 
-    Produced by :meth:`DQGenerator.collect_unity_catalog_metadata`. Observability
+    Produced by :func:`collect_unity_catalog_metadata`. Observability
     measurements (per-table size breakdown) are a separate concern — computed on demand by
     ``measure_schema_prompt`` from the serialised JSON.
 
@@ -527,6 +532,94 @@ def _merge_tags(column_entries: list[dict[str, Any]], column_tags: dict[str, lis
         tags = column_tags.get(entry["name"])
         if tags:
             entry["tags"] = tags
+
+
+def reads_schema_with_spark(location: str | None) -> bool:
+    """Return whether the location needs Spark for its baseline schema."""
+    return bool(
+        location
+        and not UC_TABLE_PATTERN.match(location)
+        and (TABLE_PATTERN.match(location) or STORAGE_PATH_PATTERN.match(location))
+    )
+
+
+def collect_unity_catalog_metadata(
+    input_config: InputConfig,
+    ws: WorkspaceClient,
+    spark: SparkSession | None,
+    config: UnityCatalogMetadataConfig | None = None,
+) -> UnityCatalogMetadata:
+    """Collect schema (and optionally UC enrichment) for *input_config* as LLM context.
+
+    The input location determines how the baseline schema is read:
+
+    * Unity Catalog tables with a 3-level namespace are read via the workspace client.
+    * Storage paths and 2-level (Hive Metastore) table names are read via Spark.
+
+    When *config* is set, the call is further enriched with the UC metadata the config
+    enables (table / column comments, tags, column upstream lineage, upstream-table
+    lineage, external lineage). When *config* is *None*, the returned record carries
+    only the baseline columns. Callers may inspect / modify any field on the returned
+    record (or call :meth:`UnityCatalogMetadata.json` to see the exact JSON the LLM
+    will consume) before passing it back to *generate_dq_rules_ai_assisted*.
+
+    Args:
+        input_config: Input config providing the input data location.
+        ws: Workspace client used to retrieve Unity Catalog table metadata.
+        spark: Spark session required for Spark-backed schema reads or Unity Catalog enrichment.
+        config: Optional *UnityCatalogMetadataConfig* enabling table / column comments,
+            tags, and lineage enrichment. *None* returns baseline schema only. Enrichment
+            is skipped (with a warning) when *input_config.location* is not a 3-level
+            UC name.
+
+    Returns:
+        A *UnityCatalogMetadata* record with the structured schema the LLM will see.
+        Observability measurements (per-table prompt-size breakdown) are a separate
+        concern computed on demand via *measure_schema_prompt*.
+
+    Raises:
+        InvalidConfigError: If *input_config.location* is empty or is neither a table
+            name nor a storage path.
+        MissingParameterError: If a Spark session is required and *spark* is *None*.
+    """
+    location = input_config.location
+    if not location:
+        raise InvalidConfigError("Input location not configured")
+
+    if config is not None and not UC_TABLE_PATTERN.match(location):
+        logger.warning(
+            f"Skipping Unity Catalog metadata enrichment for '{sanitize_for_logging(location)}': "
+            "enrichment requires a 3-level Unity Catalog table name (catalog.schema.table)"
+        )
+    if UC_TABLE_PATTERN.match(location):
+        logger.info(f"Using WorkspaceClient to determine the schema info for '{sanitize_for_logging(location)}'")
+        table_info = ws.tables.get(location.replace("`", ""))
+        column_dicts = extract_column_dicts(table_info)
+        if config is None:
+            return UnityCatalogMetadata(columns=column_dicts)
+        if spark is None:
+            raise MissingParameterError("A Spark session is required for Unity Catalog metadata enrichment")
+        return build_unity_catalog_metadata(
+            table_full_name=location,
+            column_dicts=column_dicts,
+            ws=ws,
+            spark=spark,
+            config=config,
+            table_info=table_info,
+        )
+
+    if reads_schema_with_spark(location):
+        if spark is None:
+            raise MissingParameterError("A Spark session is required to read the input schema")
+        logger.info(f"Using a SparkSession to determine the schema info for '{sanitize_for_logging(location)}'")
+        df = read_input_data(spark, input_config)
+        column_dicts = [{"name": field.name, "type": field.dataType.simpleString()} for field in df.schema.fields]
+        return UnityCatalogMetadata(columns=column_dicts)
+
+    raise InvalidConfigError(
+        "Invalid input location. It must be a 2 or 3-level table namespace or storage path, "
+        f"given {sanitize_for_logging(location)}"
+    )
 
 
 def build_unity_catalog_metadata(
