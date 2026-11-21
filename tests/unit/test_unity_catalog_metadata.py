@@ -42,23 +42,18 @@ from databricks.labs.dqx.profiler.unity_catalog_metadata import (
     collect_table_comments,
     collect_table_tags,
     collect_upstream_table_lineage,
+    serialize_unity_catalog_metadata,
 )
 
 
-def test_unity_catalog_metadata_defaults_leave_enrichment_fields_none():
-    metadata = UnityCatalogMetadata()
-    assert not metadata.columns
-    assert metadata.table is None
-    assert metadata.table_comment is None
-    assert metadata.table_tags is None
-    assert metadata.column_upstream_lineage is None
-    assert metadata.upstream_tables is None
-    assert metadata.external_lineage is None
+def test_unity_catalog_metadata_serializes_an_empty_column_list():
+    metadata = UnityCatalogMetadata(columns=[])
+    assert serialize_unity_catalog_metadata(metadata) == '{"columns": []}'
 
 
 def test_unity_catalog_metadata_json_emits_columns_only_for_baseline_shape():
     metadata = UnityCatalogMetadata(columns=[{"name": "id", "type": "string"}])
-    payload = json.loads(metadata.json())
+    payload = json.loads(serialize_unity_catalog_metadata(metadata))
     assert payload == {"columns": [{"name": "id", "type": "string"}]}
     # The baseline shape has no `table` key; None fields are omitted from the payload.
     assert "table" not in payload
@@ -69,14 +64,32 @@ def test_unity_catalog_metadata_json_emits_only_populated_enrichment_keys():
         table="main.default.users",
         columns=[{"name": "id", "type": "string"}],
         table_comment="users dim",
-        external_lineage=[{"source_kind": "external_metadata", "source_name": "sap_sd_invoices"}],
+        external_lineage=[
+            {
+                "source_kind": "external_metadata",
+                "source_name": "sap_sd_invoices",
+                "system_type": None,
+                "entity_type": None,
+                "columns": [],
+                "properties": None,
+            }
+        ],
     )
-    payload = json.loads(metadata.json())
+    payload = json.loads(serialize_unity_catalog_metadata(metadata))
     assert payload == {
         "table": "main.default.users",
         "columns": [{"name": "id", "type": "string"}],
         "table_comment": "users dim",
-        "external_lineage": [{"source_kind": "external_metadata", "source_name": "sap_sd_invoices"}],
+        "external_lineage": [
+            {
+                "source_kind": "external_metadata",
+                "source_name": "sap_sd_invoices",
+                "system_type": None,
+                "entity_type": None,
+                "columns": [],
+                "properties": None,
+            }
+        ],
     }
     # Unset fields (tags, lineage, upstream_tables) must not appear.
     for omitted in ("table_tags", "column_upstream_lineage", "upstream_tables"):
@@ -603,13 +616,13 @@ def test_build_unity_catalog_metadata_leaves_disabled_fields_none(mock_workspace
         spark=spark,
         config=UnityCatalogMetadataConfig(),
     )
-    assert result.table == "cat.sch.tab"
-    assert result.columns == [{"name": "id", "type": "string"}]
-    assert result.table_comment is None
-    assert result.table_tags is None
-    assert result.column_upstream_lineage is None
-    assert result.upstream_tables is None
-    assert result.external_lineage is None
+    assert result["table"] == "cat.sch.tab"
+    assert result["columns"] == [{"name": "id", "type": "string"}]
+    assert "table_comment" not in result
+    assert "table_tags" not in result
+    assert "column_upstream_lineage" not in result
+    assert "upstream_tables" not in result
+    assert "external_lineage" not in result
 
 
 def test_build_unity_catalog_metadata_skips_disabled_sub_models(mock_workspace_client):
@@ -626,9 +639,9 @@ def test_build_unity_catalog_metadata_skips_disabled_sub_models(mock_workspace_c
         spark=spark,
         config=config,
     )
-    assert result.column_upstream_lineage is None
-    assert result.external_lineage is None
-    assert result.upstream_tables is None
+    assert "column_upstream_lineage" not in result
+    assert "external_lineage" not in result
+    assert "upstream_tables" not in result
     assert spark.table.call_count == 2  # only the two tag reads (DataFrame API)
     spark.sql.assert_not_called()  # no lineage CTEs issued
     ws.external_lineage.list_external_lineage_relationships.assert_not_called()
@@ -650,10 +663,9 @@ def test_build_unity_catalog_metadata_includes_comments_and_external_lineage(moc
         spark=spark,
         config=UnityCatalogMetadataConfig(),
     )
-    assert result.table_comment == "Invoice fact table"
-    assert result.columns[0]["comment"] == "Invoice primary key"
-    assert result.external_lineage is not None
-    assert result.external_lineage[0]["system_type"] == SystemType.SAP.value
+    assert result["table_comment"] == "Invoice fact table"
+    assert result["columns"][0]["comment"] == "Invoice primary key"
+    assert result["external_lineage"][0]["system_type"] == SystemType.SAP.value
 
 
 def test_build_unity_catalog_metadata_normalises_table_name(mock_workspace_client):
@@ -671,7 +683,7 @@ def test_build_unity_catalog_metadata_normalises_table_name(mock_workspace_clien
         spark=spark,
         config=UnityCatalogMetadataConfig(),
     )
-    assert result.table == "main.sales.invoices"
+    assert result["table"] == "main.sales.invoices"
     # Comments SDK is called with the normalised name.
     ws.tables.get.assert_called_once_with("main.sales.invoices")
     # Lineage SQL inlines the normalised anchor literal.
@@ -715,11 +727,10 @@ def test_build_unity_catalog_metadata_dedupes_diamond_upstreams_and_fetches_once
         config=UnityCatalogMetadataConfig(),
     )
 
-    assert result.upstream_tables is not None
     # One upstream_tables entry per *distinct* upstream, not per edge.
-    assert [u["name"] for u in result.upstream_tables] == ["cat.sch.a", "cat.sch.b", "cat.sch.u"]
+    assert [u["name"] for u in result["upstream_tables"]] == ["cat.sch.a", "cat.sch.b", "cat.sch.u"]
     # Minimum depth retained for the duplicated upstream; sort is (depth, name).
-    assert [u["depth"] for u in result.upstream_tables] == [1, 1, 2]
+    assert [u["depth"] for u in result["upstream_tables"]] == [1, 1, 2]
     # `tables.get` fires once for the seed + once per distinct upstream (4 total, 4 unique names).
     called_names = [call.args[0] for call in ws.tables.get.call_args_list]
     assert sorted(called_names) == ["cat.sch.a", "cat.sch.b", "cat.sch.tab", "cat.sch.u"]
@@ -740,8 +751,8 @@ def test_build_unity_catalog_metadata_degrades_on_bad_name(mock_workspace_client
         config=UnityCatalogMetadataConfig(),
     )
     # Raw name is kept so the baseline record remains well-formed.
-    assert result.table == "two.part"
-    assert result.columns == [{"name": "id", "type": "string"}]
+    assert result["table"] == "two.part"
+    assert result["columns"] == [{"name": "id", "type": "string"}]
     # Comments: _normalize_three_part_name fails → tables.get is never called.
     ws.tables.get.assert_not_called()
     # Tag + lineage + external-lineage paths all re-validate the name and short-circuit.

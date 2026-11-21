@@ -5,8 +5,7 @@
 # MAGIC Builds a synthetic bronze → silver → gold invoice pipeline, then calls
 # MAGIC `DQGenerator.generate_dq_rules_ai_assisted` **twice** against the same table:
 # MAGIC
-# MAGIC 1. **Baseline** — `unity_catalog_metadata_config=None`; the LLM sees only column names
-# MAGIC    and types.
+# MAGIC 1. **Baseline** — pass `input_config` to give the LLM the column names and types.
 # MAGIC 2. **Enriched** — `UnityCatalogMetadataConfig()` with defaults; the LLM additionally
 # MAGIC    sees UC table / column comments, column tags, bounded column upstream lineage, and
 # MAGIC    an external upstream relationship from a SAP-origin `ExternalMetadata` object.
@@ -146,6 +145,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig, UnityCatalogMetadataConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.generator import DQGenerator
+from databricks.labs.dqx.profiler.unity_catalog_metadata import collect_unity_catalog_metadata
 
 ws = WorkspaceClient()
 engine = DQEngine(ws, spark)
@@ -156,7 +156,6 @@ USER_INPUT = "generate quality checks for an invoice fact table"
 baseline_checks = generator.generate_dq_rules_ai_assisted(
     user_input=USER_INPUT,
     input_config=InputConfig(location=fact_invoice_table),
-    unity_catalog_metadata_config=None,
 )
 print(yaml.safe_dump(baseline_checks, sort_keys=False))
 
@@ -270,11 +269,13 @@ except Exception as exc:
 
 # COMMAND ----------
 
-enriched_checks = generator.generate_dq_rules_ai_assisted(
-    user_input=USER_INPUT,
-    input_config=InputConfig(location=fact_invoice_table),
-    unity_catalog_metadata_config=UnityCatalogMetadataConfig(),
+uc_metadata = collect_unity_catalog_metadata(
+    InputConfig(location=fact_invoice_table),
+    ws=ws,
+    spark=spark,
+    config=UnityCatalogMetadataConfig(),
 )
+enriched_checks = generator.generate_dq_rules_ai_assisted(user_input=USER_INPUT, uc_metadata=uc_metadata)
 print(yaml.safe_dump(enriched_checks, sort_keys=False))
 
 # COMMAND ----------

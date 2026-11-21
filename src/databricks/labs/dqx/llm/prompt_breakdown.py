@@ -8,7 +8,7 @@ Two concerns live here:
 
 - :func:`measure_schema_prompt` — stateless function that parses the schema
   JSON (typically from
-  ``UnityCatalogMetadata.json()``) and produces a *PromptBreakdown*.
+  ``serialize_unity_catalog_metadata()``) and produces a *PromptBreakdown*.
 
 Kept import-cheap on purpose: no DSPy, no PySpark — only standard library.
 """

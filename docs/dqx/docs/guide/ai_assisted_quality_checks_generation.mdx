@@ -40,9 +40,9 @@ assemble Unity Catalog context — table / column comments, column tags from
 `system.information_schema.*_tags`, bounded column upstream lineage from
 `system.access.column_lineage`, and external upstream lineage (non-Databricks sources such
 as SAP, Salesforce, Tableau) read via the [Unity Catalog External Lineage API](https://docs.databricks.com/aws/en/data-governance/unity-catalog/external-lineage).
-The returned `UnityCatalogMetadata` is then passed to `generate_dq_rules_ai_assisted` as
-`uc_metadata`, letting you inspect / edit / filter the serialised JSON between the two
-calls if you need to.
+You can inspect or edit the returned `UnityCatalogMetadata` dictionary before passing it
+to `generate_dq_rules_ai_assisted` as `uc_metadata`. The generator copies the dictionary
+and its nested values before serializing them for the prompt.
 
 ```python
 from databricks.labs.dqx.profiler.unity_catalog_metadata import collect_unity_catalog_metadata

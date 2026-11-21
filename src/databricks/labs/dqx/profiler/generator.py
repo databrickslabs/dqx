@@ -1,6 +1,7 @@
 import logging
 import datetime
 import json
+from copy import deepcopy
 from decimal import Decimal
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -204,10 +205,14 @@ class DQGenerator(DQEngineBase):
             )
 
         logger.info(f"Generating DQ rules with LLM for input: '{user_input}'")
-        if uc_metadata is None and input_config is not None:
+        if uc_metadata is not None:
+            uc_metadata = deepcopy(uc_metadata)
+        elif input_config is not None:
             spark = self.spark if unity_catalog_metadata.reads_schema_with_spark(input_config.location) else None
             uc_metadata = unity_catalog_metadata.collect_unity_catalog_metadata(input_config, ws=self.ws, spark=spark)
-        schema_info = uc_metadata.json() if uc_metadata else ""
+        schema_info = (
+            unity_catalog_metadata.serialize_unity_catalog_metadata(uc_metadata) if uc_metadata is not None else ""
+        )
 
         prediction = self.llm_engine.detect_business_rules_with_llm(
             user_input=user_input,

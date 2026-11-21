@@ -13,7 +13,7 @@ from databricks.sdk.service.catalog import ColumnInfo, TableInfo
 
 from databricks.labs.dqx.config import InputConfig, UnityCatalogMetadataConfig
 from databricks.labs.dqx.errors import InvalidConfigError, MissingParameterError
-from databricks.labs.dqx.profiler.unity_catalog_metadata import UnityCatalogMetadata, collect_unity_catalog_metadata
+from databricks.labs.dqx.profiler.unity_catalog_metadata import collect_unity_catalog_metadata
 
 
 UC_COLUMNS = [{"name": "user_id", "type": "string"}, {"name": "age", "type": "int"}]
@@ -47,11 +47,10 @@ def test_uc_table_no_config_returns_baseline_schema(uc_workspace_client):
     result = collect_unity_catalog_metadata(
         InputConfig(location="main.default.users"), ws=uc_workspace_client, spark=None
     )
-    assert isinstance(result, UnityCatalogMetadata)
     # Baseline path has no `table` key and no enrichment fields.
-    assert result.columns == UC_COLUMNS
-    assert result.table is None
-    assert result.table_comment is None
+    assert result["columns"] == UC_COLUMNS
+    assert "table" not in result
+    assert "table_comment" not in result
     uc_workspace_client.tables.get.assert_called_once_with("main.default.users")
 
 
@@ -59,7 +58,7 @@ def test_backticked_uc_table_still_routes_through_workspace_client(uc_workspace_
     result = collect_unity_catalog_metadata(
         InputConfig(location="`my-catalog`.`my-schema`.users"), ws=uc_workspace_client, spark=None
     )
-    assert result.columns == UC_COLUMNS
+    assert result["columns"] == UC_COLUMNS
     uc_workspace_client.tables.get.assert_called_once_with("my-catalog.my-schema.users")
 
 
@@ -77,8 +76,8 @@ def test_two_level_name_falls_back_to_spark(mock_workspace_client, mock_spark):
     result = collect_unity_catalog_metadata(
         InputConfig(location="default.users"), ws=mock_workspace_client, spark=mock_spark
     )
-    assert not result.columns
-    assert result.table is None
+    assert not result["columns"]
+    assert "table" not in result
     assert not mock_workspace_client.tables.get.called
 
 
@@ -104,8 +103,8 @@ def test_storage_path_falls_back_to_spark(mock_workspace_client, mock_spark):
         ws=mock_workspace_client,
         spark=mock_spark,
     )
-    assert not result.columns
-    assert result.table is None
+    assert not result["columns"]
+    assert "table" not in result
     assert not mock_workspace_client.tables.get.called
 
 
@@ -124,8 +123,8 @@ def test_uc_table_with_full_config_returns_enriched_schema(uc_workspace_client, 
     )
     # Baseline columns are always present; comments / tags / lineage are empty here (no data),
     # so the enriched record is shape-compatible with the baseline.
-    assert result.table == "main.default.users"
-    assert result.columns == UC_COLUMNS
+    assert result["table"] == "main.default.users"
+    assert result["columns"] == UC_COLUMNS
 
 
 def test_non_uc_location_with_config_skips_enrichment_with_warning(mock_workspace_client, mock_spark, caplog):
@@ -142,8 +141,8 @@ def test_non_uc_location_with_config_skips_enrichment_with_warning(mock_workspac
             config=UnityCatalogMetadataConfig(),
         )
 
-    assert not result.columns
-    assert result.table is None
+    assert not result["columns"]
+    assert "table" not in result
     mock_workspace_client.tables.get.assert_not_called()
     assert not mock_spark.sql.called
     assert "Skipping Unity Catalog metadata enrichment" in caplog.text

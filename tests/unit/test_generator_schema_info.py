@@ -39,7 +39,7 @@ def test_generate_forwards_uc_metadata_schema_json_to_engine(mock_workspace_clie
         uc_metadata=uc_metadata,
     )
 
-    assert captured["schema_info"] == uc_metadata.json()
+    assert captured["schema_info"] == '{"table": "main.default.users", "columns": [{"name": "id", "type": "string"}]}'
     assert captured["user_input"] == "id must be unique"
     assert captured["summary_stats"] is None
 
