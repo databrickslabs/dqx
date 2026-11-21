@@ -4,12 +4,14 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any
 from pathlib import Path
-from unittest.mock import Mock
+from types import SimpleNamespace
+from unittest.mock import Mock, create_autospec
 import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import Column
 from pyspark.sql.types import IntegerType, StringType, StructField, StructType
 
+from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.io import read_input_data, get_reference_dataframes
 from databricks.labs.dqx.utils import (
     escape_sql_string_literal,
@@ -32,6 +34,7 @@ from databricks.labs.dqx.utils import (
     normalize_column_expr,
     get_template_placeholders,
     replace_template,
+    list_tables,
 )
 from databricks.labs.dqx.rule import normalize_bound_args
 from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError, UnsafeSqlQueryError
@@ -1051,3 +1054,46 @@ def test_get_template_placeholders_tolerates_whitespace():
 
 def test_replace_template_substitutes_in_a_single_pass():
     assert replace_template("{{ a }} {{b}}", {"a": "{{ b }}", "b": "x"}) == "{{ b }} x"
+
+
+TABLES_BY_CATALOG_AND_SCHEMA = {
+    "main": {"sales": ["orders", "orders_tmp"], "finance": ["ledger"]},
+    "prod_eu": {"sales": ["orders"]},
+    "dev": {"scratch": ["x_tmp"]},
+}
+
+
+def _workspace_client_with_tables() -> Mock:
+    ws = create_autospec(WorkspaceClient)
+    layout = TABLES_BY_CATALOG_AND_SCHEMA
+    ws.catalogs.list.side_effect = lambda: [SimpleNamespace(name=catalog) for catalog in layout]
+    ws.schemas.list.side_effect = lambda catalog_name: [SimpleNamespace(name=schema) for schema in layout[catalog_name]]
+    ws.tables.list_summaries.side_effect = lambda catalog_name, schema_name_pattern: [
+        SimpleNamespace(full_name=f"{catalog_name}.{schema_name_pattern}.{table}")
+        for table in layout[catalog_name][schema_name_pattern]
+    ]
+    return ws
+
+
+@pytest.mark.parametrize(
+    "patterns, expected",
+    [
+        (["main.*"], {"main.sales.orders", "main.sales.orders_tmp", "main.finance.ledger"}),
+        (["main.sales.*"], {"main.sales.orders", "main.sales.orders_tmp"}),
+        (["prod_*.sales.*"], {"prod_eu.sales.orders"}),
+        (["main.sal*.*"], {"main.sales.orders", "main.sales.orders_tmp"}),
+        (["main.sales.orders", "main.*"], {"main.sales.orders", "main.sales.orders_tmp", "main.finance.ledger"}),
+        (["main.sales.orders", "dev.*"], {"main.sales.orders", "dev.scratch.x_tmp"}),
+        (["sys.*", "*_tmp"], {"main.sales.orders_tmp", "dev.scratch.x_tmp"}),
+    ],
+)
+def test_list_tables_include_patterns(patterns: list[str], expected: set[str]):
+    assert set(list_tables(_workspace_client_with_tables(), patterns=patterns)) == expected
+
+
+def test_list_tables_exact_patterns_only_list_matching_catalogs_and_schemas():
+    ws = _workspace_client_with_tables()
+
+    assert list_tables(ws, patterns=["main.sales.*"]) == ["main.sales.orders", "main.sales.orders_tmp"]
+    ws.schemas.list.assert_called_once_with(catalog_name="main")
+    ws.tables.list_summaries.assert_called_once_with(catalog_name="main", schema_name_pattern="sales")
