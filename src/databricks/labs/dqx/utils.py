@@ -1171,8 +1171,8 @@ def walk_column_lineage(
 ) -> DataFrame:
     """Walk *table*'s per-column lineage over *system.access.column_lineage*.
 
-    Mirrors *walk_table_lineage* against *system.access.column_lineage* with a ``path
-    ARRAY<STRING>`` of ``<table>.<column>`` identifiers for the cycle guard. Each member
+    Mirrors *walk_table_lineage* against *system.access.column_lineage*. The path tracks
+    table/column pairs, starting with the seed, and the anchor excludes direct self-edges. Each member
     is ``SELECT DISTINCT`` so duplicate event rows for the same
     ``(frontier_table, frontier_column, predecessor, source_column, target_column,
     depth, path)`` tuple are collapsed **before** the member ``LIMIT`` applies —
@@ -1182,8 +1182,7 @@ def walk_column_lineage(
     *column_seed* chooses the seed-filter dialect:
 
       - *InlineColumnSeeds*: inlines ``IN (<escaped-literal>, …)`` for each entry in
-        *columns* (profiler path). No self-seed revisit guard — matches the profiler's
-        current query shape exactly.
+        *columns* (profiler path).
       - *ViewColumnSeeds*: references ``IN (SELECT col_name FROM <view_name>)`` where
         *view_name* names a session temp view with a single ``col_name STRING`` column
         (actions path). Adds the actions-side ``NOT (frontier_table = <table> AND
@@ -1245,12 +1244,13 @@ def walk_column_lineage(
         f"        source_column_name AS source_column, "
         f"        target_column_name AS target_column, "
         f"        1 AS depth, "
-        f"        array(concat_ws('.', {frontier_key}, {frontier_col_key})) AS path "
+        f"        array(array({anchor_key}, {anchor_col_key}), array({frontier_key}, {frontier_col_key})) AS path "
         f" FROM {SYSTEM_ACCESS_COLUMN_LINEAGE} "
         f" WHERE {anchor_key} = {table_literal} "
         f"   AND {anchor_col_filter} "
         f"   AND {frontier_key} IS NOT NULL "
         f"   AND {frontier_col_key} IS NOT NULL "
+        f"   AND ({frontier_key} <> {anchor_key} OR {frontier_col_key} <> {anchor_col_key}) "
         f"   AND event_time >= current_timestamp() - INTERVAL {int(lookback_days)} DAYS "
         f" LIMIT {int(max_nodes)} "
         ") UNION ALL ("
@@ -1259,13 +1259,13 @@ def walk_column_lineage(
         f"        t.source_column_name AS source_column, "
         f"        t.target_column_name AS target_column, "
         f"        e.depth + 1 AS depth, "
-        f"        array_append(e.path, concat_ws('.', t.{frontier_key}, t.{frontier_col_key})) AS path "
+        f"        array_append(e.path, array(t.{frontier_key}, t.{frontier_col_key})) AS path "
         f" FROM edges e JOIN {SYSTEM_ACCESS_COLUMN_LINEAGE} t "
         f"   ON t.{anchor_key} = e.frontier_table "
         f"  AND t.{anchor_col_key} = e.frontier_column "
         f" WHERE {depth_predicate}t.{frontier_key} IS NOT NULL "
         f"   AND t.{frontier_col_key} IS NOT NULL "
-        f"   AND NOT array_contains(e.path, concat_ws('.', t.{frontier_key}, t.{frontier_col_key})) "
+        f"   AND NOT array_contains(e.path, array(t.{frontier_key}, t.{frontier_col_key})) "
         f"{revisit_guard}"
         f"   AND t.event_time >= current_timestamp() - INTERVAL {int(lookback_days)} DAYS "
         f" LIMIT {int(max_nodes)} "

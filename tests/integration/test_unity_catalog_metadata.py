@@ -27,6 +27,7 @@ from types import SimpleNamespace
 import pytest
 from databricks.sdk.service.catalog import SystemType
 
+from databricks.labs.dqx import utils
 from databricks.labs.dqx.config import ColumnUpstreamLineageConfig, ExternalLineageConfig
 from databricks.labs.dqx.profiler import unity_catalog_metadata as uc_metadata
 from databricks.labs.dqx.profiler.unity_catalog_metadata import (
@@ -72,8 +73,8 @@ def stub_system_tables(spark, make_schema, make_random, monkeypatch):
         "tag_name STRING, tag_value STRING)"
     )
 
-    monkeypatch.setattr(uc_metadata, "_TABLE_LINEAGE_TABLE", table_lineage)
-    monkeypatch.setattr(uc_metadata, "_COLUMN_LINEAGE_TABLE", column_lineage)
+    monkeypatch.setattr(utils, "SYSTEM_ACCESS_TABLE_LINEAGE", table_lineage)
+    monkeypatch.setattr(utils, "SYSTEM_ACCESS_COLUMN_LINEAGE", column_lineage)
     monkeypatch.setattr(uc_metadata, "_TABLE_TAGS_TABLE", table_tags)
     monkeypatch.setattr(uc_metadata, "_COLUMN_TAGS_TABLE", column_tags)
 
@@ -185,7 +186,7 @@ def test_collect_column_upstream_lineage_returns_seeded_edge(spark, stub_system_
     ]
 
 
-def test_collect_column_upstream_lineage_walks_multiple_hops(spark, stub_system_tables):
+def test_collect_column_upstream_lineage_walks_multiple_hops_without_cycles(spark, stub_system_tables):
     bronze = f"{TEST_CATALOG}.{stub_system_tables.schema.name}.invoices_bronze"
     silver = f"{TEST_CATALOG}.{stub_system_tables.schema.name}.invoices_silver"
     gold = f"{TEST_CATALOG}.{stub_system_tables.schema.name}.invoices_gold"
@@ -193,14 +194,17 @@ def test_collect_column_upstream_lineage_walks_multiple_hops(spark, stub_system_
     spark.sql(
         f"INSERT INTO {stub_system_tables.column_lineage} VALUES "
         f"('{silver}', 'invoice_id', '{gold}', 'invoice_id', current_timestamp()), "
-        f"('{bronze}', 'invoice_id', '{silver}', 'invoice_id', current_timestamp())"
+        f"('{bronze}', 'invoice_id', '{silver}', 'invoice_id', current_timestamp()), "
+        f"('{gold}', 'original_id', '{gold}', 'invoice_id', current_timestamp()), "
+        f"('{gold}', 'invoice_id', '{gold}', 'invoice_id', current_timestamp()), "
+        f"('{gold}', 'invoice_id', '{bronze}', 'invoice_id', current_timestamp())"
     )
 
     config = ColumnUpstreamLineageConfig(depth=3, lookback_days=1, max_nodes=50)
     edges = collect_column_upstream_lineage(spark, gold, ["invoice_id"], config=config)
 
-    hops = {(e["predecessor"], e["source_table"], e["depth"]) for e in edges}
-    assert hops == {(gold, silver, 1), (silver, bronze, 2)}
+    hops = {(e["predecessor"], e["source_table"], e["source_column"], e["depth"]) for e in edges}
+    assert hops == {(gold, silver, "invoice_id", 1), (silver, bronze, "invoice_id", 2), (gold, gold, "original_id", 1)}
 
 
 def test_collect_external_upstream_lineage_returns_sap_metadata(

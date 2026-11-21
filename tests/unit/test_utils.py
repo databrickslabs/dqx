@@ -1140,6 +1140,12 @@ def test_walk_column_lineage_inline_seeds_sql_shape():
     assert "IN ('amount', 'o\\'brien_id')" in query
     # Upstream column lineage: the seed set filters on target_column_name.
     assert "target_column_name IN ('amount', 'o\\'brien_id')" in query
+    assert (
+        "array(array(target_table_full_name, target_column_name), array(source_table_full_name, source_column_name)) AS path"
+        in query
+    )
+    assert "AND (source_table_full_name <> target_table_full_name OR source_column_name <> target_column_name)" in query
+    assert "NOT array_contains(e.path, array(t.source_table_full_name, t.source_column_name))" in query
     # Inline-seeds path does NOT emit the actions-side revisit guard subquery.
     assert "SELECT col_name FROM" not in query
 
