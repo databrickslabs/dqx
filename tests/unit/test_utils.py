@@ -8,10 +8,10 @@ from types import SimpleNamespace
 from unittest.mock import Mock, create_autospec
 import pyspark.sql.functions as F
 import pytest
-from databricks.sdk import WorkspaceClient
 from pyspark.sql import Column
 from pyspark.sql.types import IntegerType, StringType, StructField, StructType
 
+from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.io import read_input_data, get_reference_dataframes
 from databricks.labs.dqx.utils import (
     escape_sql_string_literal,
