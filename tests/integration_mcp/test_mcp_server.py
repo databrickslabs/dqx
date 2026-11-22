@@ -384,6 +384,34 @@ def _assert_missing_column_is_reported_as_skipped(client: McpClient, table: str)
     assert "no_such_column_xyz" in first_error["columns"], first_error
 
 
+def _assert_rule_summary_keeps_same_named_rules_apart(client: McpClient, table: str) -> None:
+    """Two different rules that share a name get one rule_summary entry each, keyed by fingerprint.
+
+    DQX allows rules to share a name and tells them apart by rule_fingerprint. Grouping the summary
+    by name would merge them into a single entry with combined counts (1 + 2 = 3 here).
+    """
+    shared_name = "shared_rule_name"
+    checks = [
+        {
+            "name": shared_name,
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "customer_id"}},
+        },
+        {
+            "name": shared_name,
+            "criticality": "error",
+            "check": {"function": "is_in_range", "arguments": {"column": "age", "min_limit": 0, "max_limit": 120}},
+        },
+    ]
+    result = client.call("run_checks", {"table_name": table, "checks": checks})
+    entries = [e for e in result["rule_summary"] if e["rule_name"] == shared_name]
+    assert len(entries) == 2, result["rule_summary"]
+    assert len({e["rule_fingerprint"] for e in entries}) == 2, entries
+    # customer_id NULL on 1 row, age out of range on 2 rows (see the sample-table note above).
+    assert sorted(e["error_count"] for e in entries) == [1, 2], entries
+    assert all(e["warning_count"] == 0 for e in entries), entries
+
+
 def _assert_failed_run_surfaces_error(client: McpClient) -> None:
     """A runner job that fails must report the task's OWN error, not the generic job-level message.
 
@@ -666,6 +694,10 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
         assert run["invalid_rows"] == EXPECTED_INVALID_ROWS
         assert run["valid_rows"] == EXPECTED_TOTAL_ROWS - EXPECTED_INVALID_ROWS
         assert run["error_sample"] and run["rule_summary"]
+        # One summary entry per rule, each identified by its fingerprint.
+        assert len(run["rule_summary"]) == len(EXPLICIT_CHECKS), run["rule_summary"]
+        assert all(e["rule_fingerprint"] for e in run["rule_summary"]), run["rule_summary"]
+        _assert_rule_summary_keeps_same_named_rules_apart(client, table)
 
         # 9-10. Persisting tools (save_checks -> load_checks round-trip, then
         #       apply_checks_and_save_to_table) — both write to the caller's private per-user schema.
