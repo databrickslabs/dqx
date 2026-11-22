@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
 import { SetupGrantFailureErrorCode, type SetupApplyGrantsResponse } from "./api";
+import de from "./i18n/locales/de.json";
 import en from "./i18n/locales/en.json";
 import es from "./i18n/locales/es.json";
 import fr from "./i18n/locales/fr.json";
 import it from "./i18n/locales/it.json";
+import pl from "./i18n/locales/pl.json";
 import ptBR from "./i18n/locales/pt-BR.json";
 import {
   grantErrorMessageKey,
@@ -109,6 +111,8 @@ describe("grantRequestFailure", () => {
     ["es", es],
     ["it", it],
     ["pt-BR", ptBR],
+    ["de", de],
+    ["pl", pl],
   ] as const)("has a message for an unfinished run in %s", (code, locale) => {
     const message = locale.setup.grants.errors.setup_grants_failed;
 
@@ -149,6 +153,8 @@ describe("a rate-limited GRANT", () => {
     ["es", es],
     ["it", it],
     ["pt-BR", ptBR],
+    ["de", de],
+    ["pl", pl],
   ] as const)("is translated in %s", (_code, locale) => {
     for (const message of [
       locale.setup.grants.errors.rate_limited,

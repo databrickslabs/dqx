@@ -4,10 +4,12 @@ import { I18nextProvider } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { DatasetVerdict } from "./DatasetVerdict";
+import de from "@/lib/i18n/locales/de.json";
 import en from "@/lib/i18n/locales/en.json";
 import es from "@/lib/i18n/locales/es.json";
 import fr from "@/lib/i18n/locales/fr.json";
 import it from "@/lib/i18n/locales/it.json";
+import pl from "@/lib/i18n/locales/pl.json";
 import ptBR from "@/lib/i18n/locales/pt-BR.json";
 
 const testI18n = i18next.createInstance();
@@ -63,6 +65,8 @@ describe("DatasetVerdict", () => {
     ["es", es],
     ["it", it],
     ["pt-BR", ptBR],
+    ["de", de],
+    ["pl", pl],
   ] as const)("the verdict copy is translated in %s", (_code, locale) => {
     for (const key of ["datasetVerdictPass", "datasetVerdictFail", "datasetVerdictDescription"] as const) {
       expect(locale.ruleTest[key]).not.toBe(en.ruleTest[key]);

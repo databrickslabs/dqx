@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
+import de from "./i18n/locales/de.json";
 import en from "./i18n/locales/en.json";
 import es from "./i18n/locales/es.json";
 import fr from "./i18n/locales/fr.json";
 import it from "./i18n/locales/it.json";
+import pl from "./i18n/locales/pl.json";
 import ptBR from "./i18n/locales/pt-BR.json";
 import {
   configurationListsWanted,
@@ -233,6 +235,15 @@ describe("setup completion step", () => {
   });
 });
 
+// Swap each English _one/_other plural pair for the plural forms *forms* a locale needs
+// (Polish uses one/few/many/other), so key sets compare per plural group.
+function withPluralForms(keys: string[], forms: readonly string[]): string[] {
+  const pluralBases = new Set(keys.filter((key) => key.endsWith("_other")).map((key) => key.slice(0, -"_other".length)));
+  const isPluralForm = (key: string) => /_(one|other)$/.test(key) && pluralBases.has(key.replace(/_(one|other)$/, ""));
+  const pluralKeys = [...pluralBases].flatMap((base) => forms.map((form) => `${base}_${form}`));
+  return [...keys.filter((key) => !isPluralForm(key)), ...pluralKeys].sort();
+}
+
 function leafKeys(value: unknown, prefix = ""): string[] {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return [prefix];
 
@@ -250,5 +261,7 @@ describe("locale keys", () => {
     expect(leafKeys(ptBR)).toEqual(englishKeys);
     expect(leafKeys(it)).toEqual(englishKeys);
     expect(leafKeys(es)).toEqual(englishKeys);
+    expect(leafKeys(de)).toEqual(englishKeys);
+    expect(leafKeys(pl)).toEqual(withPluralForms(englishKeys, ["one", "few", "many", "other"]));
   });
 });
