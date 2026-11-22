@@ -50,12 +50,12 @@ _TABLE_NAME_PART_PATTERN = re.compile(_TABLE_NAME_PART)
 _TABLE_NAME_PATTERN = re.compile(rf"{_TABLE_NAME_PART}(?:\.{_TABLE_NAME_PART}){{0,2}}")
 
 
-def _strip_literals_keep_comments(match: "re.Match[str]") -> str:
+def _strip_literals_keep_comments(match: re.Match[str]) -> str:
     """Replace a quoted literal/identifier with a space, keeping comment text so its keywords are scanned."""
     return match.group() if match.group("comment") is not None else " "
 
 
-def _strip_literals_and_comments(match: "re.Match[str]") -> str:
+def _strip_literals_and_comments(match: re.Match[str]) -> str:
     """Remove a comment entirely and replace a quoted literal/identifier with a space."""
     return "" if match.group("comment") is not None else " "
 

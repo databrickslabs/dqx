@@ -208,6 +208,17 @@ def test_profiler_detect_pk_with_llm(mock_workspace_client, mock_spark):
     assert result["table"] == "test_table"
 
 
+def test_profiler_detect_pk_with_llm_drops_quoted_temp_view(mock_workspace_client, mock_spark):
+    profiler = DQProfiler(mock_workspace_client, mock_spark, llm_model_config=LLMModelConfig(model_name="test-model"))
+    profiler.llm_engine = Mock()
+    profiler.llm_engine.detect_primary_keys_with_llm.return_value = {"success": True}
+
+    profiler.detect_primary_keys_with_llm(input_config=InputConfig(location="/Volumes/c/s/v/data", format="delta"))
+
+    view_name = profiler.llm_engine.detect_primary_keys_with_llm.call_args.args[0]
+    mock_spark.sql.assert_called_once_with(f"DROP VIEW IF EXISTS `{view_name}`")
+
+
 def test_detect_primary_key_composite(mock_spark):
     """Test detection of composite primary key."""
     mock_table_definition = """
