@@ -235,9 +235,10 @@ describe("setup completion step", () => {
   });
 });
 
-// Swap each English _one/_other plural pair for the plural forms *forms* a locale needs
-// (Polish uses one/few/many/other), so key sets compare per plural group.
-function withPluralForms(keys: string[], forms: readonly string[]): string[] {
+// Swap each English _one/_other plural pair for the plural forms *locale* needs (from
+// Intl.PluralRules, e.g. one/few/many/other for Polish), so key sets compare per plural group.
+function withPluralForms(keys: string[], locale: string): string[] {
+  const forms = new Intl.PluralRules(locale).resolvedOptions().pluralCategories;
   const pluralBases = new Set(keys.filter((key) => key.endsWith("_other")).map((key) => key.slice(0, -"_other".length)));
   const isPluralForm = (key: string) => /_(one|other)$/.test(key) && pluralBases.has(key.replace(/_(one|other)$/, ""));
   const pluralKeys = [...pluralBases].flatMap((base) => forms.map((form) => `${base}_${form}`));
@@ -262,6 +263,6 @@ describe("locale keys", () => {
     expect(leafKeys(it)).toEqual(englishKeys);
     expect(leafKeys(es)).toEqual(englishKeys);
     expect(leafKeys(de)).toEqual(englishKeys);
-    expect(leafKeys(pl)).toEqual(withPluralForms(englishKeys, ["one", "few", "many", "other"]));
+    expect(leafKeys(pl)).toEqual(withPluralForms(englishKeys, "pl"));
   });
 });
