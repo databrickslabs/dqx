@@ -89,10 +89,10 @@ def quote_table_name(name: str) -> str:
     cannot inject SQL into the statement it is interpolated into.
 
     Args:
-        name: Table or view name, e.g. "catalog.schema.table" or "`my-catalog`.schema.table".
+        name: Table or view name, e.g. "catalog.schema.table". Any part may already be backtick-quoted.
 
     Returns:
-        The name with every part backtick-quoted, e.g. "`catalog`.`schema`.`table`".
+        The name with every part wrapped in backticks, joined by dots.
 
     Raises:
         InvalidParameterError: If *name* is not a valid one- to three-part table or view name.
