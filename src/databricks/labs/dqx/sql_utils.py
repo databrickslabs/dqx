@@ -109,10 +109,10 @@ def is_sql_query_safe(query: str) -> bool:
     Returns True if the query contains no destructive SQL statement keyword, otherwise False.
 
     Quoted string literals and backtick-quoted identifiers are stripped before scanning so that a
-    forbidden keyword appearing as data (e.g. ``status = 'drop'``) or as a quoted column name
-    (e.g. `` `drop` ``) is not mistaken for a statement. Comments are checked two ways so both a
-    keyword *inside* a comment (e.g. ``/* delete */``) and a keyword *split* by a comment
-    (e.g. ``dr/**/op``) are caught. ``SELECT`` is allowed: filters may legitimately use subqueries
+    forbidden keyword appearing as data (e.g. *status = 'drop'*) or as a backtick-quoted column name
+    is not mistaken for a statement. Comments are checked two ways so both a keyword *inside* a
+    comment (e.g. a block comment around *delete*) and a keyword *split* by an empty block comment
+    between its letters are caught. *SELECT* is allowed: filters may legitimately use subqueries
     and are authored by trusted operators.
 
     Args:
