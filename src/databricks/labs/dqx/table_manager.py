@@ -630,5 +630,8 @@ class TableManager:
 
         Returns:
             Spark DataFrame containing query results.
+
+        Raises:
+            UnsafeSqlQueryError: If the default repository rejects a destructive statement such as DELETE or DROP.
         """
         return self.repository.execute_query(query)

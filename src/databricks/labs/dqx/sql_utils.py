@@ -44,8 +44,8 @@ _SQL_COMMENT_OR_LITERAL_PATTERN = re.compile(
 )
 # A single part of a table or view name: a bare name, or a backtick-quoted name without embedded backticks.
 # Databricks permits leading digits in bare identifiers (e.g. 1abc is a valid table name; verified against a
-# live workspace), so a bare part is [A-Za-z0-9_]+; special characters must be backtick-quoted. Also used by
-# the table-location patterns in *config*, so both accept exactly the same names.
+# live workspace), so a bare part is [A-Za-z0-9_]+; special characters must be backtick-quoted. *config* builds
+# its table-location patterns from this, so both use the same per-part grammar.
 TABLE_NAME_PART = r"(?:[A-Za-z0-9_]+|`[^`]+`)"
 _TABLE_NAME_PART_PATTERN = re.compile(TABLE_NAME_PART)
 # One to three parts: view, schema.table or catalog.schema.table.
@@ -86,7 +86,7 @@ def quote_table_name(name: str) -> str:
 
     Accepts one to three dot-separated parts (*view*, *schema.table* or *catalog.schema.table*). Each part is
     either a bare name of letters, digits and underscores, or a name that is already backtick-quoted (with no
-    backtick inside), the same names *is_table_location* accepts. Bare parts
+    backtick inside), the same per-part grammar as *is_table_location*. Bare parts
     are quoted with *quote_column_name*; quoted parts are kept as they are. Anything else, such as a name that
     breaks out of the identifier with a semicolon, a quote or an unbalanced backtick, is rejected, so the name
     cannot inject SQL into the statement it is interpolated into.
