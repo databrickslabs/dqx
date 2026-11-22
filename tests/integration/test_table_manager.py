@@ -1,4 +1,8 @@
 import datetime as dt
+
+import pytest
+
+from databricks.labs.dqx.errors import InvalidParameterError, UnsafeSqlQueryError
 from databricks.labs.dqx.table_manager import SparkTableDataProvider, TableManager
 from tests.constants import TEST_CATALOG
 
@@ -29,6 +33,29 @@ def test_table_manager_metadata_and_run_sql(spark, make_schema, make_random):
     row = result_df.first()
     assert row is not None
     assert row["cnt"] == 2
+
+
+def test_table_manager_accepts_backtick_quoted_table_name(spark, make_schema, make_random):
+    _, table_name = _create_simple_table(spark, make_schema, make_random)
+    quoted_table_name = ".".join(f"`{part}`" for part in table_name.split("."))
+
+    manager = TableManager(spark=spark)
+    definition = manager.get_table_definition(quoted_table_name)
+
+    assert "id int" in definition
+    assert "name string" in definition
+
+
+def test_table_manager_rejects_injected_table_name_and_destructive_sql(spark, make_schema, make_random):
+    _, table_name = _create_simple_table(spark, make_schema, make_random)
+
+    manager = TableManager(spark=spark)
+    with pytest.raises(InvalidParameterError, match="Invalid table or view name"):
+        manager.get_table_definition(f"{table_name}; DROP TABLE {table_name}")
+    with pytest.raises(UnsafeSqlQueryError, match="Unsafe SQL query"):
+        manager.run_sql(f"DROP TABLE {table_name}")
+
+    assert spark.catalog.tableExists(table_name)
 
 
 def test_table_manager_metadata_includes_type_distribution(spark, make_schema, make_random):

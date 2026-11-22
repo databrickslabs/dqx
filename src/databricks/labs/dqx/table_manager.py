@@ -290,7 +290,7 @@ class SparkTableDataProvider:
             Exception: If query execution fails.
         """
         if not is_sql_query_safe(query):
-            raise UnsafeSqlQueryError(f"Unsafe SQL query: {query!r}")
+            raise UnsafeSqlQueryError("Unsafe SQL query: the query contains a destructive statement keyword")
         return self.spark.sql(query)
 
 

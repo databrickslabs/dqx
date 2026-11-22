@@ -77,7 +77,8 @@ src/databricks/labs/dqx/
   ├── cli.py               # Databricks Labs CLI commands (@dqx.command)
   ├── errors.py            # For example: MissingParameterError, InvalidParameterError, UnsafeSqlQueryError — use instead of built-in exceptions
   ├── telemetry.py         # telemetry_logger, log_telemetry, log_dataframe_telemetry
-  ├── utils.py             # shared helpers (column name resolution, SQL safety checks, etc.)
+  ├── utils.py             # shared helpers (column name resolution, column/expression normalization, etc.)
+  ├── sql_utils.py         # SQL safety: is_sql_query_safe, quote_column_name, quote_table_name
   ├── executor.py / io.py / table_manager.py / workflows_runner.py
   ├── metrics_listener.py / metrics_observer.py / reporting_columns.py
   ├── profiling_utils.py   # Profiling utilities (stats, column metadata helpers)
@@ -179,7 +180,7 @@ In particular, never disable `protected-access` (pylint `W0212`) — inline, per
 ## Security Requirements
 
 **Mandatory:** Agents must comply with the following security requirements. These are non-negotiable; any added or modified code must not introduce security gaps. Violations must be rejected or remediated before merge.
-- **SQL injection**: User-provided or templated SQL must be validated with `is_sql_query_safe()` from `utils.py` before execution. Raise `UnsafeSqlQueryError` when the query is unsafe. Do not embed user input directly into SQL strings; use parameterized queries or validated template substitution (e.g., `re.escape` for keys).
+- **SQL injection**: User-provided or templated SQL must be validated with `is_sql_query_safe()` from `sql_utils.py` before execution, and table or column names interpolated into statements must go through `quote_table_name()` / `quote_column_name()`. Raise `UnsafeSqlQueryError` when the query is unsafe. Do not embed user input directly into SQL strings; use parameterized queries or validated template substitution (e.g., `re.escape` for keys).
 - **Sensitive content**: Do not include in the repository, history, issues, PRs, workflows, or CI logs: PII, customer identifiers, internal URLs, internal system names, architecture details, secrets, keys, or tokens. Use structured logging with redaction. Before release, commit history must be reviewed and remediated or rewritten if needed.
 - **Untrusted input**: When parsing JSON, YAML, or other formats from external sources, handle parse failures gracefully and avoid exposing raw error details that could leak internal structure.
 - **Path traversal**: Validate file and workspace paths; avoid constructing paths from unsanitized user input.

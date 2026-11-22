@@ -43,11 +43,13 @@ _SQL_COMMENT_OR_LITERAL_PATTERN = re.compile(
     re.DOTALL,
 )
 # A single part of a table or view name: a bare name, or a backtick-quoted name with embedded backticks
-# doubled. Databricks permits leading digits in bare identifiers (e.g. 1abc), so a bare part is [A-Za-z0-9_]+.
-_TABLE_NAME_PART = r"(?:[A-Za-z0-9_]+|`(?:[^`]|``)+`)"
-_TABLE_NAME_PART_PATTERN = re.compile(_TABLE_NAME_PART)
+# doubled. Databricks permits leading digits in bare identifiers (e.g. 1abc is a valid table name; verified
+# against a live workspace), so a bare part is [A-Za-z0-9_]+; special characters must be backtick-quoted.
+# Shared with the table-location patterns in *config*, so both accept exactly the same names.
+TABLE_NAME_PART = r"(?:[A-Za-z0-9_]+|`(?:[^`]|``)+`)"
+_TABLE_NAME_PART_PATTERN = re.compile(TABLE_NAME_PART)
 # One to three parts: view, schema.table or catalog.schema.table.
-_TABLE_NAME_PATTERN = re.compile(rf"{_TABLE_NAME_PART}(?:\.{_TABLE_NAME_PART}){{0,2}}")
+_TABLE_NAME_PATTERN = re.compile(rf"{TABLE_NAME_PART}(?:\.{TABLE_NAME_PART}){{0,2}}")
 
 
 def _strip_literals_keep_comments(match: re.Match[str]) -> str:
