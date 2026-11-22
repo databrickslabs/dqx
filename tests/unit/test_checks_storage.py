@@ -46,7 +46,6 @@ _CUSTOM_CHECK_FUNCTIONS = {"custom_not_null": custom_not_null}
         ("`my-schema`.table", True),  # Backticked schema in 2-level location
         ("catalog.schema.`my-table`", True),  # Backticked table with special chars
         ("`my-catalog`.schema.table", True),  # Backticked catalog with special chars
-        ("catalog.schema.`tick``table`", True),  # Doubled backtick escaped inside a backticked part
         ("`bad`catalog.schema.table", False),  # Malformed backticks (not spanning the segment)
         ("catalog/schema/table.yml", False),  # File path with known extension
         ("catalog.schema.table.json", False),  # File path with known extension

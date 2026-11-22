@@ -42,11 +42,11 @@ _SQL_COMMENT_OR_LITERAL_PATTERN = re.compile(
     r"|`(?:[^`]|``)*`",  # backtick-quoted identifier (with `` escapes)
     re.DOTALL,
 )
-# A single part of a table or view name: a bare name, or a backtick-quoted name with embedded backticks
-# doubled. Databricks permits leading digits in bare identifiers (e.g. 1abc is a valid table name; verified
-# against a live workspace), so a bare part is [A-Za-z0-9_]+; special characters must be backtick-quoted.
-# Shared with the table-location patterns in *config*, so both accept exactly the same names.
-TABLE_NAME_PART = r"(?:[A-Za-z0-9_]+|`(?:[^`]|``)+`)"
+# A single part of a table or view name: a bare name, or a backtick-quoted name without embedded backticks.
+# Databricks permits leading digits in bare identifiers (e.g. 1abc is a valid table name; verified against a
+# live workspace), so a bare part is [A-Za-z0-9_]+; special characters must be backtick-quoted. Also used by
+# the table-location patterns in *config*, so both accept exactly the same names.
+TABLE_NAME_PART = r"(?:[A-Za-z0-9_]+|`[^`]+`)"
 _TABLE_NAME_PART_PATTERN = re.compile(TABLE_NAME_PART)
 # One to three parts: view, schema.table or catalog.schema.table.
 _TABLE_NAME_PATTERN = re.compile(rf"{TABLE_NAME_PART}(?:\.{TABLE_NAME_PART}){{0,2}}")
@@ -85,7 +85,8 @@ def quote_table_name(name: str) -> str:
     Validates a table or view name and backtick-quotes each of its parts for use as a SQL identifier.
 
     Accepts one to three dot-separated parts (*view*, *schema.table* or *catalog.schema.table*). Each part is
-    either a bare name of letters, digits and underscores, or a name that is already backtick-quoted. Bare parts
+    either a bare name of letters, digits and underscores, or a name that is already backtick-quoted (with no
+    backtick inside), the same names *is_table_location* accepts. Bare parts
     are quoted with *quote_column_name*; quoted parts are kept as they are. Anything else, such as a name that
     breaks out of the identifier with a semicolon, a quote or an unbalanced backtick, is rejected, so the name
     cannot inject SQL into the statement it is interpolated into.

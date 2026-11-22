@@ -14,7 +14,6 @@ from databricks.labs.dqx.sql_utils import quote_table_name
         ("`catalog`.`schema`.`table`", "`catalog`.`schema`.`table`"),
         ("`my-catalog`.schema.table", "`my-catalog`.`schema`.`table`"),
         ("catalog.schema.`weird.name`", "`catalog`.`schema`.`weird.name`"),
-        ("`tick``name`.schema.table", "`tick``name`.`schema`.`table`"),
     ],
 )
 def test_quote_table_name_quotes_every_part(name: str, expected: str):
@@ -34,6 +33,7 @@ def test_quote_table_name_quotes_every_part(name: str, expected: str):
         "catalog schema.table",
         "catalog.schema.table\n",
         "``.schema.table",
+        "`tick``name`.schema.table",
     ],
 )
 def test_quote_table_name_rejects_invalid_names(name: str):

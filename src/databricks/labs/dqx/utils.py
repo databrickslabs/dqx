@@ -25,6 +25,8 @@ from pydantic.json_schema import WithJsonSchema
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.errors import InvalidParameterError, UnsafeSqlQueryError
+
+# Re-exported: is_sql_query_safe and quote_column_name live in sql_utils; existing callers import them from here.
 from databricks.labs.dqx.sql_utils import is_sql_query_safe, quote_column_name
 from databricks.labs.dqx.table_manager import SparkTableDataProvider
 from databricks.sdk.errors import NotFound
