@@ -4,6 +4,9 @@ from typing import Any, Protocol
 from pandas import DataFrame  # type: ignore
 from pyspark.sql import SparkSession
 
+from databricks.labs.dqx.errors import UnsafeSqlQueryError
+from databricks.labs.dqx.sql_utils import is_sql_query_safe, quote_table_name
+
 logger = logging.getLogger(__name__)
 
 
@@ -183,7 +186,7 @@ class SparkTableDataProvider:
             ValueError: If table is not found.
             TypeError: If there's a type error in processing.
         """
-        describe_query = f"DESCRIBE TABLE EXTENDED {table}"
+        describe_query = f"DESCRIBE TABLE EXTENDED {quote_table_name(table)}"
         describe_result = self.spark.sql(describe_query)
         return describe_result.toPandas()
 
@@ -198,7 +201,7 @@ class SparkTableDataProvider:
             Primary key constraint string if exists, None otherwise.
         """
         try:
-            pk_query = f"SHOW TBLPROPERTIES {table}"
+            pk_query = f"SHOW TBLPROPERTIES {quote_table_name(table)}"
             pk_result = self.spark.sql(pk_query)
             pk_df: DataFrame = pk_result.toPandas()
 
@@ -220,7 +223,7 @@ class SparkTableDataProvider:
         Returns:
             Pandas DataFrame with columns: key, value.
         """
-        stats_query = f"SHOW TBLPROPERTIES {table}"
+        stats_query = f"SHOW TBLPROPERTIES {quote_table_name(table)}"
         stats_result = self.spark.sql(stats_query)
         return stats_result.toPandas()
 
@@ -252,7 +255,7 @@ class SparkTableDataProvider:
         Returns:
             Pandas DataFrame with column information.
         """
-        col_stats_query = f"DESCRIBE TABLE EXTENDED {table}"
+        col_stats_query = f"DESCRIBE TABLE EXTENDED {quote_table_name(table)}"
         col_result = self.spark.sql(col_stats_query)
         return col_result.toPandas()
 
@@ -273,6 +276,9 @@ class SparkTableDataProvider:
         """
         Execute a SQL query and return Spark DataFrame.
 
+        The query is validated with *is_sql_query_safe* before it runs, as a backstop against destructive
+        statements such as DELETE or DROP.
+
         Args:
             query: SQL query string.
 
@@ -280,8 +286,11 @@ class SparkTableDataProvider:
             Spark DataFrame containing query results.
 
         Raises:
+            UnsafeSqlQueryError: If the query contains a destructive statement such as DELETE or DROP.
             Exception: If query execution fails.
         """
+        if not is_sql_query_safe(query):
+            raise UnsafeSqlQueryError(f"Unsafe SQL query: {query!r}")
         return self.spark.sql(query)
 
 

@@ -41,6 +41,7 @@ from databricks.labs.dqx.profiler.semantic import (
     DQSemanticType,
     SemanticRegistry,
 )
+from databricks.labs.dqx.sql_utils import quote_table_name
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.utils import list_tables
 
@@ -248,7 +249,7 @@ class DQProfiler(DQEngineBase):
                 return self.llm_engine.detect_primary_keys_with_llm(view_name)
             finally:
                 try:
-                    self.spark.sql(f"DROP VIEW IF EXISTS {view_name}")
+                    self.spark.sql(f"DROP VIEW IF EXISTS {quote_table_name(view_name)}")
                 except AnalysisException:
                     pass
 
@@ -667,7 +668,7 @@ class DQProfiler(DQEngineBase):
             pk_result = self.detect_primary_keys_with_llm(input_config=InputConfig(location=temp_view_name))
         finally:
             try:  # Clean up the temporary view using SQL (Unity Catalog compatible)
-                self.spark.sql(f"DROP VIEW IF EXISTS {temp_view_name}")
+                self.spark.sql(f"DROP VIEW IF EXISTS {quote_table_name(temp_view_name)}")
             except AnalysisException:
                 pass  # Ignore cleanup errors
 

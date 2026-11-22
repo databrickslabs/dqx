@@ -66,6 +66,7 @@ from databricks.labs.dqx.checks_serializer import (
 from databricks.labs.dqx.checks_validator import ChecksValidator
 from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint_by_metadata
 from databricks.labs.dqx.rule import compute_rule_fingerprint
+from databricks.labs.dqx.sql_utils import quote_column_name, quote_table_name
 from databricks.labs.dqx.utils import get_file_extension, safe_json_load
 from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.installer.mixins import InstallationMixin
@@ -513,10 +514,10 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         if not missing:
             return False
 
-        quoted = ".".join(f"`{part}`" for part in location.replace("`", "").split("."))
+        quoted_table = quote_table_name(location)
         for col in missing:
             col_type = column_types[col]
-            self.spark.sql(f"ALTER TABLE {quoted} ADD COLUMN {col} {col_type}")
+            self.spark.sql(f"ALTER TABLE {quoted_table} ADD COLUMN {quote_column_name(col)} {col_type}")
         logger.info(f"Added columns {missing} to table '{location}'.")
         return True
 

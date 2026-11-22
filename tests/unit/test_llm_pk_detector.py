@@ -1,10 +1,11 @@
-from unittest.mock import Mock
+from unittest.mock import Mock, create_autospec
 import pytest
 import pandas as pd  # type: ignore
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
-from databricks.labs.dqx.llm.llm_pk_detector import LLMPrimaryKeyDetector, PredictionResult
+from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.llm.llm_pk_detector import DuplicateValidator, LLMPrimaryKeyDetector, PredictionResult
 from databricks.labs.dqx.table_manager import TableManager
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 
@@ -284,3 +285,26 @@ def _create_mock_spark_results():
     pk_res.toPandas.return_value = pd.DataFrame()
     dup_res.toPandas.return_value = pd.DataFrame()
     return col_res, pk_res, dup_res
+
+
+def test_duplicate_validator_quotes_table_and_columns():
+    spark = create_autospec(SparkSession)
+    spark.sql.return_value.toPandas.return_value = pd.DataFrame()
+    validator = DuplicateValidator(TableManager(spark=spark))
+
+    result = validator.validate("catalog.schema.orders", ["order_id", "line`no"], [], {})
+
+    assert result.valid
+    query = spark.sql.call_args.args[0]
+    assert "FROM `catalog`.`schema`.`orders`" in query
+    assert "GROUP BY `order_id`, `line``no`" in query
+
+
+def test_duplicate_validator_rejects_injected_table_name():
+    spark = create_autospec(SparkSession)
+    validator = DuplicateValidator(TableManager(spark=spark))
+
+    with pytest.raises(InvalidParameterError, match="Invalid table or view name"):
+        validator.validate("catalog.schema.orders; DROP TABLE catalog.schema.other", ["order_id"], [], {})
+
+    spark.sql.assert_not_called()
