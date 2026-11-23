@@ -603,7 +603,7 @@ def test_preselect_original_columns_no_op_when_columns_already_in_kwargs(monkeyp
 # --- Streaming support validation tests ---
 
 
-def _streaming_df(columns: list[str]):
+def _streaming_df(columns: list[str]) -> Mock:
     df = create_autospec(engine_module.DataFrame)
     df.columns = columns
     df.isStreaming = True
