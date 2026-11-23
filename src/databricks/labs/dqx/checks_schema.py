@@ -11,9 +11,9 @@ import types
 from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Literal, get_args, get_origin
+from typing import Literal, get_args, get_origin
 
-from pydantic.json_schema import models_json_schema
+from pydantic.json_schema import JsonSchemaValue, models_json_schema
 
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.checks_validator import CheckSpec
@@ -34,7 +34,7 @@ _STRING_TYPES = (str, bytes, date, datetime)
 _NUMBER_TYPES = (float, Decimal)
 
 
-def build_checks_json_schema() -> dict[str, Any]:
+def build_checks_json_schema() -> JsonSchemaValue:
     """
     Build the JSON schema (draft-07) for a list of declarative quality checks.
 
@@ -82,10 +82,10 @@ def _built_in_check_functions() -> dict[str, Callable]:
     return functions
 
 
-def _function_rule(name: str, func: Callable) -> dict[str, Any]:
+def _function_rule(name: str, func: Callable) -> JsonSchemaValue:
     """The schema applied to a check block whose *function* is *name*."""
     descriptions = _argument_descriptions(func)
-    properties: dict[str, Any] = {}
+    properties: JsonSchemaValue = {}
     required: list[str] = []
     for param in inspect.signature(func).parameters.values():
         if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
@@ -99,11 +99,11 @@ def _function_rule(name: str, func: Callable) -> dict[str, Any]:
 
     column_params = [param for param in required if param in _FOR_EACH_COLUMN_PARAMS]
     other_required = [param for param in required if param not in _FOR_EACH_COLUMN_PARAMS]
-    arguments: dict[str, Any] = {"type": "object", "properties": properties, "additionalProperties": False}
+    arguments: JsonSchemaValue = {"type": "object", "properties": properties, "additionalProperties": False}
     if other_required:
         arguments["required"] = other_required
 
-    then: dict[str, Any] = {"description": _summary(func), "properties": {"arguments": arguments}}
+    then: JsonSchemaValue = {"description": _summary(func), "properties": {"arguments": arguments}}
     if column_params:
         # The column is given either in *arguments* or by *for_each_column*.
         then["anyOf"] = [
@@ -115,18 +115,18 @@ def _function_rule(name: str, func: Callable) -> dict[str, Any]:
     return {"if": {"properties": {"function": {"const": name}}, "required": ["function"]}, "then": then}
 
 
-def _annotation_schema(annotation: Any) -> dict[str, Any]:
+def _annotation_schema(annotation: object) -> JsonSchemaValue:
     """
     Map a check function parameter annotation to the JSON schema of the value written in YAML/JSON.
 
     Spark *Column* and other types without a JSON form are written as strings; anything unknown is left
     unconstrained.
     """
-    if annotation is inspect.Parameter.empty or annotation is Any:
+    if annotation is inspect.Parameter.empty:
         return {}
     origin = get_origin(annotation)
     if origin is types.UnionType:
-        options: list[dict[str, Any]] = []
+        options: list[JsonSchemaValue] = []
         for arg in get_args(annotation):
             schema = _annotation_schema(arg)
             if not schema:
@@ -145,7 +145,7 @@ def _annotation_schema(annotation: Any) -> dict[str, Any]:
     return _scalar_schema(annotation)
 
 
-def _scalar_schema(annotation: Any) -> dict[str, Any]:
+def _scalar_schema(annotation: object) -> JsonSchemaValue:
     if annotation is type(None):
         return {"type": "null"}
     if annotation is bool:
