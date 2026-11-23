@@ -2885,7 +2885,9 @@ def sql_query(
         name: Optional name for the result.
         negate: If True, the condition is negated (i.e., the check fails when the condition is False).
         input_placeholder: Name to be used in the sql query as `{{ input_placeholder }}` to refer to the
-            input DataFrame on which the checks are applied.
+            input DataFrame on which the checks are applied. The view holds the untouched input DataFrame, unless
+            the query refers to a column added by the previous checks (e.g. *_errors* in a warning check), in
+            which case it holds the result of the previous checks.
         row_filter: Optional SQL expression used to filter input rows before running the SQL validation. Auto-injected from the check filter.
 
     Returns:
@@ -2914,12 +2916,15 @@ def sql_query(
     unique_condition_column = f"{alias_name}_{condition_column}_{unique_str}"
     unique_input_view = f"{alias_name}_{input_placeholder}_{unique_str}"
 
-    def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
-        # The query runs on df, the result of the previous checks, because it may refer to columns they added
-        # (e.g. the error results of a warning check's query).
-        filtered_df = df
+    def apply(
+        df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame], input_df: DataFrame | None = None
+    ) -> DataFrame:
+        # The query runs on the untouched input unless it refers to columns added by the previous checks
+        # (e.g. the error results of a warning check's query); results are always joined onto df.
+        source_df = df if input_df is None or _refers_to_added_columns(query, df, input_df) else input_df
+        filtered_df = source_df
         if row_filter:
-            filtered_df = df.filter(safe_filter_expr(row_filter))
+            filtered_df = source_df.filter(safe_filter_expr(row_filter))
 
         # since the check could be applied multiple times, the views created here must be unique
         filtered_df.createOrReplaceTempView(unique_input_view)
@@ -2953,8 +2958,6 @@ def sql_query(
         )
 
         # To retain the original records we need to join back to the input DataFrame.
-        # Therefore, applying this check multiple times at once can potentially lead to long spark plans.
-        # When applying large number of sql query checks, it may be beneficial to split it into separate runs.
         return _join_results_on_null_safe_columns(df, user_query_df_unique, merge_columns, [unique_condition_column])
 
     if negate:
@@ -6301,6 +6304,25 @@ def _is_valid_ipv6_cidr_block(cidr: str) -> bool:
         return True
     except (ipaddress.AddressValueError, ipaddress.NetmaskValueError):
         return False
+
+
+def _refers_to_added_columns(query: str, df: DataFrame, input_df: DataFrame) -> bool:
+    """
+    Check whether a SQL query refers to a column that exists on *df* but not on *input_df*.
+
+    Column names are matched as whole identifiers, case-insensitively.
+
+    Args:
+        query: The SQL query to inspect.
+        df: The DataFrame with the columns added by the previous checks.
+        input_df: The untouched input DataFrame.
+
+    Returns:
+        True if the query refers to any added column, False otherwise.
+    """
+    input_columns = {column.lower() for column in input_df.columns}
+    added_columns = [column for column in df.columns if column.lower() not in input_columns]
+    return any(re.search(rf"(?<!\w){re.escape(column)}(?!\w)", query, re.IGNORECASE) for column in added_columns)
 
 
 def _apply_dataset_level_sql_check(
