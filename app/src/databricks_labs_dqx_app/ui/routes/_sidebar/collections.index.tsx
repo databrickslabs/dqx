@@ -52,10 +52,7 @@ import {
   SavedViewPage,
   type DataProductOut,
 } from "@/lib/api";
-import {
-  TableSpaceDiffDialog,
-  type TableSpaceDiffTarget,
-} from "@/components/drafts/ChangeDiffDialog";
+import { CollectionChangesDialog, type CollectionChangesTarget } from "@/components/changes/CollectionChangesDialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
   DQ_SCORE_BUCKETS,
@@ -234,7 +231,7 @@ function DataProductsPage() {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [rejectTarget, setRejectTarget] = useState<DataProductOut | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DataProductOut | null>(null);
-  const [diffTarget, setDiffTarget] = useState<TableSpaceDiffTarget | null>(null);
+  const [diffTarget, setDiffTarget] = useState<CollectionChangesTarget | null>(null);
 
   const approveMutation = useApproveDataProduct();
   const rejectMutation = useRejectDataProduct();
@@ -809,7 +806,7 @@ function DataProductsPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <TableSpaceDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
+      <CollectionChangesDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
       <AlertDialog open={bulkRunOpen} onOpenChange={setBulkRunOpen}>
         <AlertDialogContent>
