@@ -20,7 +20,12 @@ from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
 
 from databricks.labs.dqx.profiling_utils import median_absolute_deviation_bounds_df
-from databricks.labs.dqx.rule import register_rule, register_for_original_columns_preselection, row_preserving
+from databricks.labs.dqx.rule import (
+    not_supported_in_streaming,
+    register_for_original_columns_preselection,
+    register_rule,
+    row_preserving,
+)
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
     is_sql_query_safe,
@@ -640,6 +645,7 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
 
 
 @row_preserving
+@not_supported_in_streaming
 @register_rule("dataset")
 def is_in_distribution(
     column: str | Column,
@@ -2525,6 +2531,7 @@ def is_data_fresh(
 
 
 @row_preserving
+@not_supported_in_streaming
 @register_rule("dataset")
 def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tuple[Column, Callable]:
     """
@@ -2602,6 +2609,7 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
 
 
 @row_preserving
+@not_supported_in_streaming
 @register_rule("dataset")
 def is_unique(
     columns: list[str | Column],
@@ -2617,7 +2625,8 @@ def is_unique(
     is True (default), rows with NULLs are treated as distinct (SQL ANSI behavior); otherwise,
     NULLs are treated as equal when checking for duplicates.
 
-    In streaming, uniqueness is validated within individual micro-batches only.
+    Not supported on streaming DataFrames. Apply it to each micro-batch inside foreachBatch instead,
+    where uniqueness is validated within that micro-batch only.
 
     Args:
         columns: List of column names (str) or Spark Column expressions to validate for uniqueness.
@@ -2846,6 +2855,7 @@ def foreign_key(
 
 
 @row_preserving
+@not_supported_in_streaming
 @register_rule("dataset")
 def sql_query(
     query: str,
@@ -2970,6 +2980,7 @@ def sql_query(
 
 
 @row_preserving
+@not_supported_in_streaming
 @register_rule("dataset")
 def is_aggr_not_greater_than(
     column: str | Column,
@@ -3020,6 +3031,7 @@ def is_aggr_not_greater_than(
 
 
 @row_preserving
+@not_supported_in_streaming
 @register_rule("dataset")
 def is_aggr_not_less_than(
     column: str | Column,
@@ -3070,6 +3082,7 @@ def is_aggr_not_less_than(
 
 
 @row_preserving
+@not_supported_in_streaming
 @register_rule("dataset")
 def is_aggr_equal(
     column: str | Column,
@@ -3126,6 +3139,7 @@ def is_aggr_equal(
 
 
 @row_preserving
+@not_supported_in_streaming
 @register_rule("dataset")
 def is_aggr_not_equal(
     column: str | Column,
@@ -3185,6 +3199,7 @@ _VALID_TIME_TRUNCATIONS: frozenset[str] = frozenset({"minute", "hour", "day", "w
 
 
 @row_preserving
+@not_supported_in_streaming
 @register_rule("dataset")
 def has_no_aggr_outliers(
     column: str | Column,
@@ -3427,6 +3442,7 @@ def has_no_aggr_outliers(
 
 
 @row_preserving
+@not_supported_in_streaming
 @register_rule("dataset")
 def aggr_matches_dataset(
     column: str | Column,
@@ -3894,6 +3910,7 @@ def compare_datasets(
 
 
 @row_preserving
+@not_supported_in_streaming
 @register_rule("dataset")
 def is_data_fresh_per_time_window(
     column: str | Column,
@@ -4009,6 +4026,7 @@ def is_data_fresh_per_time_window(
 
 
 @row_preserving
+@not_supported_in_streaming
 @register_rule("dataset")
 def has_no_gaps_per_time_window(
     column: str | Column,
@@ -4039,7 +4057,8 @@ def has_no_gaps_per_time_window(
     is caught even at the tail of the series. Null values are ignored and pass with no violation
     reported.
 
-    In streaming, gaps are detected within individual micro-batches only.
+    Not supported on streaming DataFrames. Apply it to each micro-batch inside foreachBatch instead,
+    where gaps are detected within that micro-batch only.
 
     Args:
         column: timestamp or date column to check; can be a string column name or a column expression
