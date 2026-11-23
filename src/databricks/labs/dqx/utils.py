@@ -614,6 +614,11 @@ def _build_include_scope_for_patterns(patterns: list[str]) -> tuple[set[str] | N
     """
     Builds allowed catalogs and schemas from a list of wildcard patterns.
 
+    A catalog or schema part that contains an *fnmatch* wildcard ('*', '?' or '[') is treated
+    as unconstrained. A wildcard catalog part removes the catalog filter. A wildcard schema part
+    removes the schema filter for that catalog, even if other patterns name exact schemas in it.
+    Exact-name parts keep the listing narrowed to the named catalogs and schemas.
+
     Args:
         patterns (list[str]): A list of wildcard patterns to match against the table name.
 
@@ -624,17 +629,35 @@ def _build_include_scope_for_patterns(patterns: list[str]) -> tuple[set[str] | N
               None if no specific schemas are constrained.
     """
     parts = [_split_pattern(p) for p in patterns]
-    # If any pattern uses '*' at catalog → don’t constrain catalogs
-    if any(cat == "*" for cat, _, _ in parts):
+    # If any pattern has a wildcard in the catalog part (e.g. '*', 'prod_*') → don’t constrain catalogs
+    if any(_has_wildcard(cat) for cat, _, _ in parts):
         return None, None
     allowed_catalogs: set[str] = set()
     allowed_schemas: dict[str, set[str]] = {}
+    catalogs_with_any_schema: set[str] = set()
     for catalog, schema, _ in parts:
-        if catalog != "*":
-            allowed_catalogs.add(catalog)
-            if schema != "*":
-                allowed_schemas.setdefault(catalog, set()).add(schema)
+        allowed_catalogs.add(catalog)
+        if _has_wildcard(schema):
+            catalogs_with_any_schema.add(catalog)
+        else:
+            allowed_schemas.setdefault(catalog, set()).add(schema)
+    # A catalog that has a pattern with a wildcard schema must not be narrowed to the schemas of other patterns
+    for catalog in catalogs_with_any_schema:
+        allowed_schemas.pop(catalog, None)
     return (allowed_catalogs or None), (allowed_schemas or None)
+
+
+def _has_wildcard(pattern_part: str) -> bool:
+    """
+    Checks if a part of a wildcard pattern contains any *fnmatch* wildcard character.
+
+    Args:
+        pattern_part (str): A catalog or schema part of a wildcard pattern.
+
+    Returns:
+        bool: True if the part contains '*', '?' or '[', False otherwise.
+    """
+    return any(char in pattern_part for char in "*?[")
 
 
 def _get_allowed_catalogs_and_schemas(
