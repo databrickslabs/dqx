@@ -136,6 +136,60 @@ MULTI_SCHEMA_ODCS = {
 }
 
 
+@pytest.mark.parametrize(("column_name", "note_name"), [("customer", "note"), ("customer.info", "note.text")])
+@pytest.mark.parametrize("note_required", [False, True])
+def test_required_object_rule_applies_on_spark(
+    ws: WorkspaceClient, spark: SparkSession, column_name: str, note_name: str, note_required: bool
+) -> None:
+    """Check missing structs and child fields independently, including literal dots."""
+    contract = {
+        "kind": "DataContract",
+        "apiVersion": "v3.0.2",
+        "id": "test:required-object",
+        "name": "Required object",
+        "version": "1.0.0",
+        "status": "active",
+        "schema": [
+            {
+                "name": "customers",
+                "physicalType": "table",
+                "properties": [
+                    {
+                        "name": column_name,
+                        "physicalType": f"STRUCT<`{note_name}`: STRING>",
+                        "logicalType": "object",
+                        "required": True,
+                        "properties": [
+                            {
+                                "name": note_name,
+                                "physicalType": "STRING",
+                                "logicalType": "string",
+                                "required": note_required,
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    rules = _generate_rules_from_temp_contract(
+        ws, spark, contract, process_text_rules=False, generate_schema_validation=False
+    )
+    test_df = spark.createDataFrame(
+        [("missing_object", None), ("missing_note", (None,)), ("valid", ("hello",))],
+        f"case: string, `{column_name}`: struct<`{note_name}`: string>",
+    )
+
+    checked_df = DQEngine(ws, spark).apply_checks_by_metadata(test_df, rules)
+    flagged = {row["case"]: _flagged_names(row) for row in checked_df.select("case", "_errors").collect()}
+    note_errors = {f"{column_name}.{note_name}_is_null"} if note_required else set()
+    assert flagged == {
+        "missing_object": {f"{column_name}_is_null"} | note_errors,
+        "missing_note": note_errors,
+        "valid": set(),
+    }
+
+
 class TestDataContractIntegration:
     """Integration tests for data contract processing."""
 
@@ -900,6 +954,53 @@ class TestDataContractRangeRulesIntegration:
                 }, time_zone
         finally:
             spark.conf.set("spark.sql.session.timeZone", original_time_zone)
+
+    def test_range_rules_on_names_needing_escaping_compare_the_named_column(self, ws, spark, set_utc_timezone):
+        """Property names that look like SQL are back-quoted, so the range check compares the column they name."""
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.1.0",
+            "id": "test:escaped-range-names",
+            "name": "Escaped range names",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "orders",
+                    "physicalType": "table",
+                    "properties": [
+                        # Stored as text: compared through try_cast on the quoted name
+                        {
+                            "name": "amount (usd)",
+                            "physicalType": "STRING",
+                            "logicalType": "integer",
+                            "logicalTypeOptions": {"minimum": 0},
+                        },
+                        # A name that reads as an expression, which must not be evaluated
+                        {
+                            "name": "v - (SELECT 1000)",
+                            "physicalType": "INT",
+                            "logicalType": "integer",
+                            "logicalTypeOptions": {"maximum": 10},
+                        },
+                    ],
+                },
+            ],
+        }
+        rules = _generate_rules_from_temp_contract(
+            ws, spark, contract, process_text_rules=False, generate_schema_validation=False
+        )
+        test_df = spark.createDataFrame(
+            [[1, "5", 5], [2, "-1", 500], [3, None, None]],
+            "row_id int, `amount (usd)` string, `v - (SELECT 1000)` int",
+        )
+
+        flagged_by_row = _flagged_names_by_row_under_ansi(ws, spark, test_df, rules)
+        assert flagged_by_row == {
+            1: set(),
+            2: {"amount (usd)_below_minimum", "v - (SELECT 1000)_above_maximum"},
+            3: set(),
+        }
 
 
 class TestDataContractIntegrationErrors:

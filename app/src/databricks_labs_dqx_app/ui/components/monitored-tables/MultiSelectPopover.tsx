@@ -233,22 +233,15 @@ export function MultiSelectPopover({
               ordering, tri-state select-all, disabled/already-monitored rows)
               via `filteredOptions` above rather than cmdk's fuzzy scoring. */}
           <Command shouldFilter={false} className="flex-1 min-h-0 overflow-hidden">
-            {/* Search row: the shared Input primitive (used by `CommandInput`)
-                bakes in its own `dark:bg-input/30` fill (see
-                components/ui/input.tsx), which — because a `.dark` compound
-                selector always outranks a bare `.bg-transparent` class
-                regardless of source order — wins over the `bg-transparent`
-                override and only tints the input's own rectangle. That's why
-                the dark-mode search bar looked like a lighter-grey patch
-                covering part of the row (the input) sitting on a darker row
-                (the icon gutter + padding around it). Applying the same
-                token to the row container makes the fill span the row's full
-                width uniformly. */}
+            {/* Search row: CommandInput's input is transparent, so the row reads
+                as one surface with the popover. A fill on the input itself (it
+                used to carry dark:bg-input/30) only tints the input's own
+                rectangle, which showed as a grey patch inside the row. */}
             <CommandInput
               value={search}
               onValueChange={setSearch}
               placeholder={searchPlaceholder}
-              className="h-9 text-sm dark:bg-input/30"
+              className="h-9 text-sm"
             />
             {/* ROOT CAUSE of the "list still doesn't scroll" bug (see git
                 history): the list needs its own bounded height in addition

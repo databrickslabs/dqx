@@ -233,6 +233,22 @@ def _compile_is_not_greater_than(args: dict[str, Any]) -> str:
     return f"({col} <= {_sql_scalar(limit)})"
 
 
+def _compile_is_greater_than(args: dict[str, Any]) -> str:
+    col = _col_arg(args)
+    limit = args.get("limit")
+    if limit is None:
+        raise NativeTestCompileError("is_greater_than requires limit.")
+    return f"({col} > {_sql_scalar(limit)})"
+
+
+def _compile_is_less_than(args: dict[str, Any]) -> str:
+    col = _col_arg(args)
+    limit = args.get("limit")
+    if limit is None:
+        raise NativeTestCompileError("is_less_than requires limit.")
+    return f"({col} < {_sql_scalar(limit)})"
+
+
 def _tolerance_pass(col: str, value: Any, abs_tol: Any, rel_tol: Any) -> str:
     abs_tol = 0.0 if abs_tol is None else float(abs_tol)
     rel_tol = 0.0 if rel_tol is None else float(rel_tol)
@@ -397,6 +413,8 @@ _COMPILERS: dict[str, Any] = {
     "is_not_in_range": _compile_is_not_in_range,
     "is_not_less_than": _compile_is_not_less_than,
     "is_not_greater_than": _compile_is_not_greater_than,
+    "is_greater_than": _compile_is_greater_than,
+    "is_less_than": _compile_is_less_than,
     "is_equal_to": _compile_is_equal_to,
     "is_not_equal_to": _compile_is_not_equal_to,
     "is_in_list": _compile_is_in_list,
