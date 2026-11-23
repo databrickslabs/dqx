@@ -614,6 +614,11 @@ def _build_include_scope_for_patterns(patterns: list[str]) -> tuple[set[str] | N
     """
     Builds allowed catalogs and schemas from a list of wildcard patterns.
 
+    A catalog or schema part that contains an *fnmatch* wildcard ('*', '?' or '[') is treated
+    as unconstrained. A wildcard catalog part removes the catalog filter. A wildcard schema part
+    removes the schema filter for that catalog, even if other patterns name exact schemas in it.
+    Exact-name parts keep the listing narrowed to the named catalogs and schemas.
+
     Args:
         patterns (list[str]): A list of wildcard patterns to match against the table name.
 

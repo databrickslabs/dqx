@@ -1082,6 +1082,8 @@ def _workspace_client_with_tables() -> Mock:
         (["main.sales.*"], {"main.sales.orders", "main.sales.orders_tmp"}),
         (["prod_*.sales.*"], {"prod_eu.sales.orders"}),
         (["main.sal*.*"], {"main.sales.orders", "main.sales.orders_tmp"}),
+        (["prod_e?.sales.*"], {"prod_eu.sales.orders"}),
+        (["main.[sf]*.*"], {"main.sales.orders", "main.sales.orders_tmp", "main.finance.ledger"}),
         (["main.sales.orders", "main.*"], {"main.sales.orders", "main.sales.orders_tmp", "main.finance.ledger"}),
         (["main.sales.orders", "dev.*"], {"main.sales.orders", "dev.scratch.x_tmp"}),
         (["sys.*", "*_tmp"], {"main.sales.orders_tmp", "dev.scratch.x_tmp"}),
