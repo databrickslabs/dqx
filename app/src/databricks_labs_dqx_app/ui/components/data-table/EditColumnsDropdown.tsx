@@ -38,7 +38,7 @@ function ToggleItem({ label, checked, onCheckedChange, disabled }: Omit<Sortable
   );
 }
 
-/** A pinned entry: toggleable, but with no drag handle and outside the sortable list. */
+/** A pinned or locked entry: no drag handle, outside the sortable list. */
 function PinnedItem({ label, checked, onCheckedChange, disabled }: Omit<SortableItemProps<string>, "id">) {
   return (
     <div className="flex items-center">
@@ -88,6 +88,10 @@ export interface SortableToggleListConfig<K extends string> {
   /** True pins an entry to the top: listed first with no drag handle, never
    *  reorderable, and nothing can be dropped above it. Still toggleable. */
   pinnedOf?: (id: K) => boolean;
+  /** Label of a locked trailing entry (e.g. the Actions column): listed last,
+   *  always checked, not toggleable, no drag handle — and outside the sortable
+   *  list, so nothing can be dropped below it. */
+  lockedLastLabel?: string;
   isChecked: (id: K) => boolean;
   onToggle: (id: K) => void;
   onDragEnd: (event: DragEndEvent) => void;
@@ -99,6 +103,7 @@ function SortableToggleList<K extends string>({
   labelOf,
   toggleableOf,
   pinnedOf,
+  lockedLastLabel,
   isChecked,
   onToggle,
   onDragEnd,
@@ -126,6 +131,7 @@ function SortableToggleList<K extends string>({
           ))}
         </SortableContext>
       </DndContext>
+      {lockedLastLabel && <PinnedItem label={lockedLastLabel} checked onCheckedChange={() => {}} disabled />}
     </>
   );
 }

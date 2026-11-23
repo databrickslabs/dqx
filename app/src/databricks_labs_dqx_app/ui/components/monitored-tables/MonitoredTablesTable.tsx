@@ -614,6 +614,7 @@ export function MonitoredTablesTable<F extends string = string>({
           <EditColumnsDropdown
             order={colOrder}
             labelOf={(key) => t(COLUMNS[key].labelKey)}
+            lockedLastLabel={hasActions ? t("monitoredTables.colActions") : undefined}
             toggleableOf={(key) => COLUMNS[key].toggleable}
             isChecked={(key) => visibleKeys.includes(key)}
             onToggle={toggleColumn}

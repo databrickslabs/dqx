@@ -444,6 +444,7 @@ export function DataProductsTable<F extends string = string>({
           <EditColumnsDropdown
             order={colOrder}
             labelOf={(key) => t(COLUMNS[key].labelKey)}
+            lockedLastLabel={hasActions ? t("dataProducts.colActions") : undefined}
             toggleableOf={(key) => COLUMNS[key].toggleable}
             isChecked={(key) => visibleKeys.includes(key)}
             onToggle={toggleColumn}

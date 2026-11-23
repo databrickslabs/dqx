@@ -661,9 +661,9 @@ export function RulesTable<F extends string = string>({
     (showSelection ? 40 : 0) +
     visibleKeys.reduce((acc, k) => acc + (colWidths[k] ?? COLUMNS[k].defaultWidth), 0);
 
-  // Actions is pinned last: excluded from the Edit Columns list/reorder
-  // entirely (it's the only surface for rule lifecycle actions and must
-  // never be hidden or moved), and rendered as the final, sticky-right
+  // Actions is pinned last: kept out of the sortable Edit Columns list (it's
+  // the only surface for rule lifecycle actions and must never be hidden or
+  // moved) and shown there as a locked trailing entry instead, and rendered as the final, sticky-right
   // column regardless of where it happens to sit in the persisted column
   // order — so a stale/corrupted layout payload can't move it.
   const editableOrder = colOrder.filter((k) => k !== "actions");
@@ -686,6 +686,7 @@ export function RulesTable<F extends string = string>({
           <EditColumnsDropdown
             order={editableOrder}
             labelOf={(key) => t(COLUMNS[key].labelKey)}
+            lockedLastLabel={t(COLUMNS.actions.labelKey)}
             toggleableOf={(key) => COLUMNS[key].toggleable}
             isChecked={(key) => visibleKeys.includes(key)}
             onToggle={toggleColumn}

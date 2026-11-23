@@ -674,7 +674,7 @@ function DataProductsPage() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-7 w-7 p-0 text-purple-600 dark:text-purple-400"
+                            className="h-7 w-7 p-0 text-purple-600 dark:text-purple-400 dark:hover:text-accent-foreground"
                             aria-label={t("rulesDrafts.diff.viewChanges")}
                             onClick={() =>
                               setDiffTarget({
@@ -698,7 +698,7 @@ function DataProductsPage() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-7 w-7 p-0 text-amber-600 dark:text-amber-400"
+                            className="h-7 w-7 p-0 text-amber-600 dark:text-amber-400 dark:hover:text-accent-foreground"
                             aria-label={t("dataProducts.revertAction")}
                             onClick={() => handleRevert(product)}
                           >
