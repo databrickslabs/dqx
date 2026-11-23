@@ -107,6 +107,25 @@ def quote_table_name(name: str) -> str:
     )
 
 
+def quote_unity_catalog_name(name: str) -> str:
+    """
+    Backtick-quotes each part of a dot-separated table name read from Unity Catalog (for example from the
+    lineage system tables).
+
+    Unity Catalog returns names unquoted, and their parts may contain characters such as hyphens that
+    *quote_table_name* rejects in user-provided names. Every part is quoted with *quote_column_name*, which
+    escapes embedded backticks, so each part stays a single identifier. Use *quote_table_name* for names that
+    come from user input or configuration.
+
+    Args:
+        name: Unquoted table name as returned by Unity Catalog, e.g. "my-catalog.sales.orders".
+
+    Returns:
+        The name with every part wrapped in backticks, joined by dots.
+    """
+    return ".".join(quote_column_name(part) for part in name.split("."))
+
+
 def is_sql_query_safe(query: str) -> bool:
     """
     Returns True if the query contains no destructive SQL statement keyword, otherwise False.

@@ -170,3 +170,22 @@ def test_table_manager_run_sql_executes_safe_query():
     manager.run_sql("SELECT `id`, COUNT(*) FROM `catalog`.`update`.`table` GROUP BY `id`")
 
     spark.sql.assert_called_once_with("SELECT `id`, COUNT(*) FROM `catalog`.`update`.`table` GROUP BY `id`")
+
+
+def test_spark_table_data_provider_quotes_table_name_for_column_names():
+    spark = create_autospec(SparkSession)
+    provider = SparkTableDataProvider(spark)
+
+    provider.get_table_column_names("catalog.schema.table")
+
+    spark.table.assert_called_once_with("`catalog`.`schema`.`table`")
+
+
+def test_spark_table_data_provider_rejects_injected_table_name_for_column_names():
+    spark = create_autospec(SparkSession)
+    provider = SparkTableDataProvider(spark)
+
+    with pytest.raises(InvalidParameterError, match="Invalid table or view name"):
+        provider.get_table_column_names("catalog.schema.table; DROP TABLE catalog.schema.other")
+
+    spark.table.assert_not_called()

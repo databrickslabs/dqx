@@ -1,7 +1,7 @@
 import pytest
 
 from databricks.labs.dqx.errors import InvalidParameterError
-from databricks.labs.dqx.sql_utils import quote_table_name
+from databricks.labs.dqx.sql_utils import quote_table_name, quote_unity_catalog_name
 
 
 @pytest.mark.parametrize(
@@ -39,3 +39,15 @@ def test_quote_table_name_quotes_every_part(name: str, expected: str):
 def test_quote_table_name_rejects_invalid_names(name: str):
     with pytest.raises(InvalidParameterError, match="Invalid table or view name"):
         quote_table_name(name)
+
+
+@pytest.mark.parametrize(
+    "name, expected",
+    [
+        ("catalog.schema.table", "`catalog`.`schema`.`table`"),
+        ("my-catalog.sales.orders", "`my-catalog`.`sales`.`orders`"),
+        ("catalog.schema.weird`name", "`catalog`.`schema`.`weird``name`"),
+    ],
+)
+def test_quote_unity_catalog_name_quotes_every_part(name: str, expected: str):
+    assert quote_unity_catalog_name(name) == expected

@@ -47,7 +47,8 @@ from databricks.labs.dqx.actions.registry import register_action
 from databricks.labs.dqx.config import TABLE_PATTERN, OutputConfig
 from databricks.labs.dqx.errors import InvalidActionError
 from databricks.labs.dqx.io import save_dataframe_as_table
-from databricks.labs.dqx.utils import escape_sql_string_literal, quote_column_name
+from databricks.labs.dqx.sql_utils import quote_column_name, quote_table_name, quote_unity_catalog_name
+from databricks.labs.dqx.utils import escape_sql_string_literal
 
 logger = logging.getLogger(__name__)
 
@@ -512,16 +513,6 @@ def _sql_str_literal(value: str) -> str:
     return f"'{escape_sql_string_literal(value)}'"
 
 
-def _fully_qualified_identifier(name: str) -> str:
-    """Backtick-quote each dot-separated segment of a UC name for use as a SQL identifier.
-
-    Used where the anchor table has to appear as an identifier (e.g. ``DESCRIBE HISTORY <ident>``)
-    rather than a string literal — each segment is escaped via *quote_column_name* so embedded
-    backticks or reserved words are handled the same way as elsewhere in the codebase.
-    """
-    return ".".join(quote_column_name(segment) for segment in name.split("."))
-
-
 def _document_table(*, spark: SparkSession, location: str, safe_name: str) -> None:
     """Attach *LINEAGE_TABLE_COMMENT* and each column's declared comment to the persisted lineage
     table via ``COMMENT ON TABLE`` / ``COMMENT ON COLUMN``
@@ -538,7 +529,7 @@ def _document_table(*, spark: SparkSession, location: str, safe_name: str) -> No
     """
     if not TABLE_PATTERN.match(location):
         return
-    table_ident = _fully_qualified_identifier(location)
+    table_ident = quote_table_name(location)
     try:
         spark.sql(f"COMMENT ON TABLE {table_ident} IS {_sql_str_literal(LINEAGE_TABLE_COMMENT)}")
     except Exception as exc:  # broad catch: table-comment application is best-effort
@@ -657,7 +648,7 @@ def _collect_lineage_rows(
 def _lookup_target_delta_version(spark: SparkSession, table: str) -> tuple[str, int] | None:
     """Best-effort per-target Delta log read; returns *(table, version)* or *None* on failure."""
     try:
-        history = spark.sql(f"DESCRIBE HISTORY {_fully_qualified_identifier(table)} LIMIT 1")
+        history = spark.sql(f"DESCRIBE HISTORY {quote_unity_catalog_name(table)} LIMIT 1")
         rows = history.select(F.col("version").cast(LongType()).alias("version")).collect()
     except Exception as exc:  # broad catch: per-table lookup errors are non-fatal for lineage
         logger.warning(f"Delta-version lookup failed for '{_sanitize(table)}': {_sanitize(str(exc))}")

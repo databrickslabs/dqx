@@ -269,15 +269,16 @@ class SparkTableDataProvider:
         Returns:
             List of column names.
         """
-        df = self.spark.table(table)
+        df = self.spark.table(quote_table_name(table))
         return df.columns
 
     def execute_query(self, query: str) -> DataFrame:
         """
         Execute a SQL query and return Spark DataFrame.
 
-        The query is validated with *is_sql_query_safe* before it runs, as a backstop against destructive
-        statements such as DELETE or DROP.
+        This path is read-only by design: the query is validated with *is_sql_query_safe* before it runs, so
+        destructive statements such as DELETE or DROP, and DDL such as CREATE or ALTER, are rejected. Run
+        DQX's own DDL directly with *spark.sql* rather than through this method.
 
         Args:
             query: SQL query string.
@@ -623,7 +624,10 @@ class TableManager:
 
     def run_sql(self, query: str):
         """
-        Run a SQL query and return the result DataFrame.
+        Run a read-only SQL query and return the result DataFrame.
+
+        Destructive statements and DDL are rejected by the default repository (see
+        *SparkTableDataProvider.execute_query*), so do not route DQX's own DDL through this method.
 
         Args:
             query: SQL query string.
