@@ -30,6 +30,13 @@ _DOCSTRING_SECTION_RE = re.compile(r"^(Args|Returns|Raises|Yields|Examples?|Note
 _DOCSTRING_ARG_RE = re.compile(r"^(\*{0,2}\w+)(?:\s*\([^)]*\))?:\s*(.*)$")
 # Metadata values for these types are written as strings in YAML/JSON (column names, SQL expressions, ISO
 # dates, DDL schemas, WKT geometries).
+# Docstrings mark names in *italics* (and a few phrases in **bold**); editors show schema descriptions as
+# plain text, so the markers are removed. Simple names first, then spans such as *count(*)* or *"*"*,
+# whose inner asterisk is part of the text, then phrases with spaces. A spaced * (multiplication) is kept.
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+_ITALIC_NAME_RE = re.compile(r"(?<![\w*])\*([\w.\-]+)\*(?![\w*])")
+_ITALIC_SPAN_RE = re.compile(r"(?<![\w*])\*(\S+)\*(?=[\s.,;:)\]'\"/]|$)")
+_ITALIC_PHRASE_RE = re.compile(r"(?:(?<=\s)|(?<=^))\*(\S[^*]*?\S)\*(?![\w*])")
 _STRING_TYPES = (str, bytes, date, datetime)
 _NUMBER_TYPES = (float, Decimal)
 # User-facing descriptions shown by editors. The pydantic models' own docstrings describe validator internals.
@@ -192,7 +199,15 @@ def _scalar_schema(annotation: object) -> JsonSchemaValue:
 def _summary(func: Callable) -> str:
     """The first paragraph of a function's docstring, on one line."""
     doc = inspect.getdoc(func) or ""
-    return " ".join(doc.split("\n\n", 1)[0].split())
+    return _plain_text(" ".join(doc.split("\n\n", 1)[0].split()))
+
+
+def _plain_text(text: str) -> str:
+    """Remove docstring emphasis markers so editors show the description as plain text."""
+    text = _BOLD_RE.sub(r"\1", text)
+    text = _ITALIC_NAME_RE.sub(r"\1", text)
+    text = _ITALIC_SPAN_RE.sub(r"\1", text)
+    return _ITALIC_PHRASE_RE.sub(r"\1", text)
 
 
 def _argument_descriptions(func: Callable) -> dict[str, str]:
@@ -214,4 +229,4 @@ def _argument_descriptions(func: Callable) -> dict[str, str]:
             descriptions[current] = match.group(2)
         elif current:
             descriptions[current] = f"{descriptions[current]} {stripped}".strip()
-    return descriptions
+    return {name: _plain_text(description) for name, description in descriptions.items()}

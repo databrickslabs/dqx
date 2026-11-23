@@ -143,7 +143,7 @@
             },
             {
               "const": "is_geo_within_distance",
-              "description": "Checks if the column point is within a geodesic distance of the reference point using *st_distancespheroid*."
+              "description": "Checks if the column point is within a geodesic distance of the reference point using st_distancespheroid."
             },
             {
               "const": "is_geography",
@@ -429,7 +429,7 @@
                 "properties": {
                   "column": {
                     "type": "string",
-                    "description": "Column name (str) or Column expression to aggregate in the checked DataFrame. Pass *\"*\"* for *count(*)* over all rows."
+                    "description": "Column name (str) or Column expression to aggregate in the checked DataFrame. Pass \"*\" for count(*) over all rows."
                   },
                   "ref_table": {
                     "anyOf": [
@@ -462,7 +462,7 @@
                         "type": "null"
                       }
                     ],
-                    "description": "Column name (str) or Column expression to aggregate in the reference DataFrame. Defaults to *column* when not provided."
+                    "description": "Column name (str) or Column expression to aggregate in the reference DataFrame. Defaults to column when not provided."
                   },
                   "aggr_type": {
                     "type": "string",
@@ -491,7 +491,7 @@
                         "type": "null"
                       }
                     ],
-                    "description": "Optional list of column names or Column expressions in the checked DataFrame to compare the aggregate per group instead of dataset-wide. Only simple column expressions are supported, e.g. *F.col(\"region\")*. A group present in the checked DataFrame but absent from the reference is reported as a mismatch; groups present only in the reference are not surfaced. Group keys are matched null-safely on both the checked and reference sides (including window-incompatible aggregates such as *count_distinct*), so a legitimately null group key is compared like any other rather than being dropped."
+                    "description": "Optional list of column names or Column expressions in the checked DataFrame to compare the aggregate per group instead of dataset-wide. Only simple column expressions are supported, e.g. F.col(\"region\"). A group present in the checked DataFrame but absent from the reference is reported as a mismatch; groups present only in the reference are not surfaced. Group keys are matched null-safely on both the checked and reference sides (including window-incompatible aggregates such as count_distinct), so a legitimately null group key is compared like any other rather than being dropped."
                   },
                   "ref_group_by": {
                     "anyOf": [
@@ -505,7 +505,7 @@
                         "type": "null"
                       }
                     ],
-                    "description": "Optional list of group-by columns on the reference (upstream) side, matched to *group_by* by position. Defaults to *group_by* when omitted. Must have the same length as *group_by*. Requires *group_by* to be set."
+                    "description": "Optional list of group-by columns on the reference (upstream) side, matched to group_by by position. Defaults to group_by when omitted. Must have the same length as group_by. Requires group_by to be set."
                   },
                   "row_filter": {
                     "anyOf": [
@@ -662,7 +662,7 @@
                     "items": {
                       "type": "string"
                     },
-                    "description": "List of columns in the reference DataFrame or Table to row match against the source DataFrame (can be a list of string column names or column expressions). The *columns* parameter is matched with *ref_columns* by position, so the order of the provided columns in both lists must be exactly aligned. Only simple column expressions are supported, e.g. F.col(\"col_name\")."
+                    "description": "List of columns in the reference DataFrame or Table to row match against the source DataFrame (can be a list of string column names or column expressions). The columns parameter is matched with ref_columns by position, so the order of the provided columns in both lists must be exactly aligned. Only simple column expressions are supported, e.g. F.col(\"col_name\")."
                   },
                   "ref_df_name": {
                     "anyOf": [
@@ -768,7 +768,7 @@
                   },
                   "raise_on_duplicate_keys": {
                     "type": "boolean",
-                    "description": "Controls duplicate-key handling, which is also a performance trade-off. If True, require unique matching keys among in-scope source rows and all reference rows: uniqueness is validated with a lightweight aggregation (an eager Spark job) and rows are then paired with a single join, avoiding the per-group row-number windows. This is the more efficient option when keys are known to be unique, but raises *InvalidParameterError* if duplicates are present. If False (default), pair duplicate-key rows lazily by compared values using per-group row-number windows; this is robust to duplicates but sorts both datasets on the compared columns."
+                    "description": "Controls duplicate-key handling, which is also a performance trade-off. If True, require unique matching keys among in-scope source rows and all reference rows: uniqueness is validated with a lightweight aggregation (an eager Spark job) and rows are then paired with a single join, avoiding the per-group row-number windows. This is the more efficient option when keys are known to be unique, but raises InvalidParameterError if duplicates are present. If False (default), pair duplicate-key rows lazily by compared values using per-group row-number windows; this is robust to duplicates but sorts both datasets on the compared columns."
                   }
                 },
                 "additionalProperties": false,
@@ -935,7 +935,7 @@
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY value. GEOGRAPHY is not supported (*st_dimension* accepts GEOMETRY only). A null value is skipped; a non-null value that fails to parse is reported as unparseable."
+                    "description": "When True (default), the column value is parsed with try_to_geometry (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY value. GEOGRAPHY is not supported (st_dimension accepts GEOMETRY only). A null value is skipped; a non-null value that fails to parse is reported as unparseable."
                   }
                 },
                 "additionalProperties": false,
@@ -1050,7 +1050,7 @@
                 "properties": {
                   "column": {
                     "type": "string",
-                    "description": "Column name (str) or Column expression to aggregate (e.g. *\"revenue\"* or *F.col(\"a\") - F.col(\"b\")*). Pass *\"*\"* for *count(*)*."
+                    "description": "Column name (str) or Column expression to aggregate (e.g. \"revenue\" or F.col(\"a\") - F.col(\"b\")). Pass \"*\" for count(*)."
                   },
                   "time_column": {
                     "type": "string",
@@ -1058,23 +1058,23 @@
                   },
                   "aggr_type": {
                     "type": "string",
-                    "description": "Aggregation type applied per bucket (default: *\"avg\"*). All curated DQX aggregate types are supported (count, sum, avg, min, max, count_distinct, stddev, percentile, etc.)."
+                    "description": "Aggregation type applied per bucket (default: \"avg\"). All curated DQX aggregate types are supported (count, sum, avg, min, max, count_distinct, stddev, percentile, etc.)."
                   },
                   "sigma": {
                     "type": "number",
-                    "description": "Number of standard deviations that defines the outlier band (default: *3.0*). Must be positive."
+                    "description": "Number of standard deviations that defines the outlier band (default: 3.0). Must be positive."
                   },
                   "lookback_num_intervals": {
                     "type": "integer",
-                    "description": "Number of preceding time-grain buckets used to build the rolling baseline (default: *14*). Must be >= 2."
+                    "description": "Number of preceding time-grain buckets used to build the rolling baseline (default: 14). Must be >= 2."
                   },
                   "warmup_num_intervals": {
                     "type": "integer",
-                    "description": "Minimum number of historical buckets required before the check fires (default: *7*). Must satisfy *1 <= warmup_num_intervals <= lookback_num_intervals*."
+                    "description": "Minimum number of historical buckets required before the check fires (default: 7). Must satisfy 1 <= warmup_num_intervals <= lookback_num_intervals."
                   },
                   "time_interval": {
                     "type": "string",
-                    "description": "Granularity at which to bucket the *time_column* (default: *\"day\"*). One of *\"minute\"*, *\"hour\"*, *\"day\"*, *\"week\"*, *\"month\"*."
+                    "description": "Granularity at which to bucket the time_column (default: \"day\"). One of \"minute\", \"hour\", \"day\", \"week\", \"month\"."
                   },
                   "group_by": {
                     "anyOf": [
@@ -1088,7 +1088,7 @@
                         "type": "null"
                       }
                     ],
-                    "description": "Optional list of column names or Column expressions to segment the outlier band (e.g. *[\"csp\", \"region\"]*). The check fires if *any* group exceeds its own band."
+                    "description": "Optional list of column names or Column expressions to segment the outlier band (e.g. [\"csp\", \"region\"]). The check fires if any group exceeds its own band."
                   },
                   "row_filter": {
                     "anyOf": [
@@ -1099,7 +1099,7 @@
                         "type": "null"
                       }
                     ],
-                    "description": "Optional SQL expression to filter rows before aggregation (e.g. *\"status = 'Active'\"*). Auto-injected from the check filter."
+                    "description": "Optional SQL expression to filter rows before aggregation (e.g. \"status = 'Active'\"). Auto-injected from the check filter."
                   },
                   "aggr_params": {
                     "anyOf": [
@@ -1110,7 +1110,7 @@
                         "type": "null"
                       }
                     ],
-                    "description": "Optional dict of extra parameters for aggregate functions that require them (e.g. *percentile=0.95* for percentile aggregates)."
+                    "description": "Optional dict of extra parameters for aggregate functions that require them (e.g. percentile=0.95 for percentile aggregates)."
                   }
                 },
                 "additionalProperties": false,
@@ -1184,7 +1184,7 @@
                   },
                   "trailing_gap": {
                     "type": "boolean",
-                    "description": "if *True*, also flags the last present window (per group) when it ends more than one window before *curr_timestamp*, anchoring the trailing boundary to the current time instead of leaving it unchecked; defaults to *False*"
+                    "description": "if True, also flags the last present window (per group) when it ends more than one window before curr_timestamp, anchoring the trailing boundary to the current time instead of leaving it unchecked; defaults to False"
                   },
                   "curr_timestamp": {
                     "anyOf": [
@@ -1195,7 +1195,7 @@
                         "type": "null"
                       }
                     ],
-                    "description": "optional current timestamp column used to anchor trailing-gap detection; only used when *trailing_gap* is *True*; if not provided, *current_timestamp()* is used. The anchor is bucketed onto the same absolute-time grid as the event windows, which aligns to UTC epoch boundaries regardless of *spark.sql.session.timeZone*. With daily windows this means the \"current window\" is the UTC day, which can differ from the local day near midnight (e.g. 21:00 in a UTC-4 timezone is already the next UTC day); pass an explicit *curr_timestamp* shifted to your timezone if you need local-day anchoring."
+                    "description": "optional current timestamp column used to anchor trailing-gap detection; only used when trailing_gap is True; if not provided, current_timestamp() is used. The anchor is bucketed onto the same absolute-time grid as the event windows, which aligns to UTC epoch boundaries regardless of spark.sql.session.timeZone. With daily windows this means the \"current window\" is the UTC day, which can differ from the local day near midnight (e.g. 21:00 in a UTC-4 timezone is already the next UTC day); pass an explicit curr_timestamp shifted to your timezone if you need local-day anchoring."
                   }
                 },
                 "additionalProperties": false,
@@ -1516,7 +1516,7 @@
                   },
                   "case": {
                     "type": "string",
-                    "description": "expected case; one of *upper*, *lower*, *title*, or *sentence*"
+                    "description": "expected case; one of upper, lower, title, or sentence"
                   }
                 },
                 "additionalProperties": false,
@@ -1580,7 +1580,7 @@
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY value. GEOGRAPHY is not supported (*st_xmin*/*st_xmax* accept GEOMETRY only). A null value is skipped; a non-null value that fails to parse is reported as unparseable."
+                    "description": "When True (default), the column value is parsed with try_to_geometry (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY value. GEOGRAPHY is not supported (st_xmin/st_xmax accept GEOMETRY only). A null value is skipped; a non-null value that fails to parse is reported as unparseable."
                   }
                 },
                 "additionalProperties": false,
@@ -1645,7 +1645,7 @@
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY value. GEOGRAPHY is not supported (*st_ymin*/*st_ymax* accept GEOMETRY only). A null value is skipped; a non-null value that fails to parse is reported as unparseable."
+                    "description": "When True (default), the column value is parsed with try_to_geometry (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY value. GEOGRAPHY is not supported (st_ymin/st_ymax accept GEOMETRY only). A null value is skipped; a non-null value that fails to parse is reported as unparseable."
                   }
                 },
                 "additionalProperties": false,
@@ -2199,7 +2199,7 @@
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value."
+                    "description": "When True (default), the column value is parsed with try_to_geometry (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value."
                   }
                 },
                 "additionalProperties": false,
@@ -2284,7 +2284,7 @@
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value."
+                    "description": "When True (default), the column value is parsed with try_to_geometry (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value."
                   }
                 },
                 "additionalProperties": false,
@@ -2369,7 +2369,7 @@
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value."
+                    "description": "When True (default), the column value is parsed with try_to_geometry (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value."
                   }
                 },
                 "additionalProperties": false,
@@ -2454,7 +2454,7 @@
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value."
+                    "description": "When True (default), the column value is parsed with try_to_geometry (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value."
                   }
                 },
                 "additionalProperties": false,
@@ -2592,7 +2592,7 @@
                         "type": "null"
                       }
                     ],
-                    "description": "Optional number of time windows to look back from *curr_timestamp*. This filters records to include only those within the specified number of time windows from *curr_timestamp*. If no lookback is provided, the check is applied to the entire dataset."
+                    "description": "Optional number of time windows to look back from curr_timestamp. This filters records to include only those within the specified number of time windows from curr_timestamp. If no lookback is provided, the check is applied to the entire dataset."
                   },
                   "row_filter": {
                     "anyOf": [
@@ -2817,15 +2817,15 @@
                   },
                   "reference_geometry": {
                     "type": "string",
-                    "description": "Reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a Column expression (e.g. *F.col('col_name')*) to reference another column. A plain string is always treated as a literal, not a column name."
+                    "description": "Reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a Column expression (e.g. F.col('col_name')) to reference another column. A plain string is always treated as a literal, not a column name."
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True, *try_to_geometry* is applied to convert the column values to GEOMETRY. When False (default), the column is assumed to already hold a native GEOMETRY value."
+                    "description": "When True, try_to_geometry is applied to convert the column values to GEOMETRY. When False (default), the column is assumed to already hold a native GEOMETRY value."
                   },
                   "convert_reference_geometry": {
                     "type": "boolean",
-                    "description": "When True, *try_to_geometry* is applied to convert the reference geometry to GEOMETRY. When False (default), the reference geometry is assumed to already hold a native GEOMETRY value."
+                    "description": "When True, try_to_geometry is applied to convert the reference geometry to GEOMETRY. When False (default), the reference geometry is assumed to already hold a native GEOMETRY value."
                   }
                 },
                 "additionalProperties": false,
@@ -2881,11 +2881,11 @@
                   },
                   "reference_geometry": {
                     "type": "string",
-                    "description": "Reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a Column expression (e.g. *F.col('col_name')*) to reference another column. A plain string is always treated as a literal, not a column name. Bytes (WKB) are only supported in precise mode."
+                    "description": "Reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a Column expression (e.g. F.col('col_name')) to reference another column. A plain string is always treated as a literal, not a column name. Bytes (WKB) are only supported in precise mode."
                   },
                   "precise": {
                     "type": "boolean",
-                    "description": "When True, uses exact `st_covers` computation. When False (default), uses the H3 approximate method which requires *resolution*."
+                    "description": "When True, uses exact `st_covers` computation. When False (default), uses the H3 approximate method which requires resolution."
                   },
                   "resolution": {
                     "anyOf": [
@@ -2899,15 +2899,15 @@
                         "type": "null"
                       }
                     ],
-                    "description": "H3 resolution integer (0\u201315) or column reference. Required when *precise* is False. Higher values give finer precision at the cost of more cells."
+                    "description": "H3 resolution integer (0\u201315) or column reference. Required when precise is False. Higher values give finer precision at the cost of more cells."
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True, *try_to_geometry* is applied to convert column values to GEOMETRY. Only used in precise mode."
+                    "description": "When True, try_to_geometry is applied to convert column values to GEOMETRY. Only used in precise mode."
                   },
                   "convert_reference_geometry": {
                     "type": "boolean",
-                    "description": "When True, *try_to_geometry* is applied to convert the reference geometry to GEOMETRY. Only used in precise mode."
+                    "description": "When True, try_to_geometry is applied to convert the reference geometry to GEOMETRY. Only used in precise mode."
                   }
                 },
                 "additionalProperties": false,
@@ -2963,11 +2963,11 @@
                   },
                   "reference_geometry": {
                     "type": "string",
-                    "description": "Reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a Column expression (e.g. *F.col('col_name')*) to reference another column. A plain string is always treated as a literal, not a column name. Bytes (WKB) are only supported in precise mode."
+                    "description": "Reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a Column expression (e.g. F.col('col_name')) to reference another column. A plain string is always treated as a literal, not a column name. Bytes (WKB) are only supported in precise mode."
                   },
                   "precise": {
                     "type": "boolean",
-                    "description": "When True, uses exact `st_intersects` computation. When False (default), uses the H3 approximate method which requires *resolution*."
+                    "description": "When True, uses exact `st_intersects` computation. When False (default), uses the H3 approximate method which requires resolution."
                   },
                   "resolution": {
                     "anyOf": [
@@ -2981,15 +2981,15 @@
                         "type": "null"
                       }
                     ],
-                    "description": "H3 resolution integer (0\u201315) or column reference. Required when *precise* is False. Higher values give finer precision at the cost of more cells."
+                    "description": "H3 resolution integer (0\u201315) or column reference. Required when precise is False. Higher values give finer precision at the cost of more cells."
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True, *try_to_geometry* is applied to convert column values to GEOMETRY. Only used in precise mode."
+                    "description": "When True, try_to_geometry is applied to convert column values to GEOMETRY. Only used in precise mode."
                   },
                   "convert_reference_geometry": {
                     "type": "boolean",
-                    "description": "When True, *try_to_geometry* is applied to convert the reference geometry to GEOMETRY. Only used in precise mode."
+                    "description": "When True, try_to_geometry is applied to convert the reference geometry to GEOMETRY. Only used in precise mode."
                   }
                 },
                 "additionalProperties": false,
@@ -3045,15 +3045,15 @@
                   },
                   "reference_geometry": {
                     "type": "string",
-                    "description": "Reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a Column expression (e.g. *F.col('col_name')*) to reference another column. A plain string is always treated as a literal, not a column name."
+                    "description": "Reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a Column expression (e.g. F.col('col_name')) to reference another column. A plain string is always treated as a literal, not a column name."
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True, *try_to_geometry* is applied to convert column values to GEOMETRY. When False (default), the column is assumed to already hold a native GEOMETRY value."
+                    "description": "When True, try_to_geometry is applied to convert column values to GEOMETRY. When False (default), the column is assumed to already hold a native GEOMETRY value."
                   },
                   "convert_reference_geometry": {
                     "type": "boolean",
-                    "description": "When True, *try_to_geometry* is applied to convert the reference geometry to GEOMETRY. When False (default), the reference geometry is assumed to already hold a native GEOMETRY value."
+                    "description": "When True, try_to_geometry is applied to convert the reference geometry to GEOMETRY. When False (default), the reference geometry is assumed to already hold a native GEOMETRY value."
                   }
                 },
                 "additionalProperties": false,
@@ -3109,15 +3109,15 @@
                   },
                   "reference_geometry": {
                     "type": "string",
-                    "description": "Reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a Column expression (e.g. *F.col('col_name')*) to reference another column. A plain string is always treated as a literal, not a column name."
+                    "description": "Reference geometry as a literal WKT/WKB/EWKT/EWKB string or bytes value, or a Column expression (e.g. F.col('col_name')) to reference another column. A plain string is always treated as a literal, not a column name."
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True, *try_to_geometry* is applied to convert column values to GEOMETRY. When False (default), the column is assumed to already hold a native GEOMETRY value."
+                    "description": "When True, try_to_geometry is applied to convert column values to GEOMETRY. When False (default), the column is assumed to already hold a native GEOMETRY value."
                   },
                   "convert_reference_geometry": {
                     "type": "boolean",
-                    "description": "When True, *try_to_geometry* is applied to convert the reference geometry to GEOMETRY. When False (default), the reference geometry is assumed to already hold a native GEOMETRY value."
+                    "description": "When True, try_to_geometry is applied to convert the reference geometry to GEOMETRY. When False (default), the reference geometry is assumed to already hold a native GEOMETRY value."
                   }
                 },
                 "additionalProperties": false,
@@ -3162,7 +3162,7 @@
             ]
           },
           "then": {
-            "description": "Checks if the column point is within a geodesic distance of the reference point using *st_distancespheroid*.",
+            "description": "Checks if the column point is within a geodesic distance of the reference point using st_distancespheroid.",
             "properties": {
               "arguments": {
                 "type": "object",
@@ -3173,7 +3173,7 @@
                   },
                   "reference_geometry": {
                     "type": "string",
-                    "description": "Reference point as a literal WKT/EWKT/GeoJSON string or WKB/EWKB bytes value, or a Column expression (e.g. *F.col('col_name')*) to reference another column. A plain string is always treated as a literal, not a column name. Rows where a referenced column is null are skipped."
+                    "description": "Reference point as a literal WKT/EWKT/GeoJSON string or WKB/EWKB bytes value, or a Column expression (e.g. F.col('col_name')) to reference another column. A plain string is always treated as a literal, not a column name. Rows where a referenced column is null are skipped."
                   },
                   "distance": {
                     "anyOf": [
@@ -3187,15 +3187,15 @@
                         "type": "string"
                       }
                     ],
-                    "description": "Maximum allowed distance in meters. Accepts a non-negative number, a Column expression (e.g. *F.col('radius_m')*), or a string SQL expression evaluated against the input DataFrame. Numeric literals, including numeric strings such as *\"1000\"*, are validated up front; Column and expression distances are evaluated per row and are not range-checked. Rows where the distance expression evaluates to null are skipped."
+                    "description": "Maximum allowed distance in meters. Accepts a non-negative number, a Column expression (e.g. F.col('radius_m')), or a string SQL expression evaluated against the input DataFrame. Numeric literals, including numeric strings such as \"1000\", are validated up front; Column and expression distances are evaluated per row and are not range-checked. Rows where the distance expression evaluates to null are skipped."
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True, *try_to_geometry* is applied to convert column values to GEOMETRY. When False (default), the column is assumed to already hold a native GEOMETRY value."
+                    "description": "When True, try_to_geometry is applied to convert column values to GEOMETRY. When False (default), the column is assumed to already hold a native GEOMETRY value."
                   },
                   "convert_reference_geometry": {
                     "type": "boolean",
-                    "description": "When True, *try_to_geometry* is applied to convert the reference geometry to GEOMETRY. When False (default), the reference geometry is assumed to already hold a native GEOMETRY value."
+                    "description": "When True, try_to_geometry is applied to convert the reference geometry to GEOMETRY. When False (default), the reference geometry is assumed to already hold a native GEOMETRY value."
                   }
                 },
                 "additionalProperties": false,
@@ -3344,7 +3344,7 @@
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value. A null value is skipped; a non-null value that fails to parse is reported as unparseable."
+                    "description": "When True (default), the column value is parsed with try_to_geometry (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value. A null value is skipped; a non-null value that fails to parse is reported as unparseable."
                   }
                 },
                 "additionalProperties": false
@@ -3537,7 +3537,7 @@
                   },
                   "allowed": {
                     "type": "array",
-                    "description": "list of allowed values. Each entry is resolved like the comparison-check limits: a bare string is treated as a **column expression**, a numeric string such as \"3\" as a number, and an ISO-date string such as \"2024-01-01\" as a date. To compare against a string literal, quote it (e.g. \"'value'\") or pass *F.lit(\"value\")*."
+                    "description": "list of allowed values. Each entry is resolved like the comparison-check limits: a bare string is treated as a column expression, a numeric string such as \"3\" as a number, and an ISO-date string such as \"2024-01-01\" as a date. To compare against a string literal, quote it (e.g. \"'value'\") or pass F.lit(\"value\")."
                   },
                   "case_sensitive": {
                     "type": "boolean",
@@ -3906,7 +3906,7 @@
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value. A null value is skipped; a non-null value that fails to parse is reported as unparseable."
+                    "description": "When True (default), the column value is parsed with try_to_geometry (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value. A null value is skipped; a non-null value that fails to parse is reported as unparseable."
                   }
                 },
                 "additionalProperties": false
@@ -4002,7 +4002,7 @@
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value. A null value is skipped; a non-null value that fails to parse is reported as unparseable."
+                    "description": "When True (default), the column value is parsed with try_to_geometry (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value. A null value is skipped; a non-null value that fails to parse is reported as unparseable."
                   }
                 },
                 "additionalProperties": false
@@ -4052,7 +4052,7 @@
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value. A null value is skipped; a non-null value that fails to parse is reported as unparseable."
+                    "description": "When True (default), the column value is parsed with try_to_geometry (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value. A null value is skipped; a non-null value that fails to parse is reported as unparseable."
                   }
                 },
                 "additionalProperties": false
@@ -4102,7 +4102,7 @@
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value. A null value is skipped; a non-null value that fails to parse is reported as unparseable."
+                    "description": "When True (default), the column value is parsed with try_to_geometry (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value. A null value is skipped; a non-null value that fails to parse is reported as unparseable."
                   }
                 },
                 "additionalProperties": false
@@ -4152,7 +4152,7 @@
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value. A null value is skipped; a non-null value that fails to parse is reported as unparseable."
+                    "description": "When True (default), the column value is parsed with try_to_geometry (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value. A null value is skipped; a non-null value that fails to parse is reported as unparseable."
                   }
                 },
                 "additionalProperties": false
@@ -4476,7 +4476,7 @@
                   },
                   "forbidden": {
                     "type": "array",
-                    "description": "list of forbidden values. Each entry is resolved like the comparison-check limits: a bare string is treated as a **column expression**, a numeric string such as \"3\" as a number, and an ISO-date string such as \"2024-01-01\" as a date. To compare against a string literal, quote it (e.g. \"'value'\") or pass *F.lit(\"value\")*."
+                    "description": "list of forbidden values. Each entry is resolved like the comparison-check limits: a bare string is treated as a column expression, a numeric string such as \"3\" as a number, and an ISO-date string such as \"2024-01-01\" as a date. To compare against a string literal, quote it (e.g. \"'value'\") or pass F.lit(\"value\")."
                   },
                   "case_sensitive": {
                     "type": "boolean",
@@ -4794,7 +4794,7 @@
                   },
                   "allowed": {
                     "type": "array",
-                    "description": "list of allowed values. Each entry is resolved like the comparison-check limits: a bare string is treated as a **column expression**, a numeric string such as \"3\" as a number, and an ISO-date string such as \"2024-01-01\" as a date. To compare against a string literal, quote it (e.g. \"'value'\") or pass *F.lit(\"value\")*."
+                    "description": "list of allowed values. Each entry is resolved like the comparison-check limits: a bare string is treated as a column expression, a numeric string such as \"3\" as a number, and an ISO-date string such as \"2024-01-01\" as a date. To compare against a string literal, quote it (e.g. \"'value'\") or pass F.lit(\"value\")."
                   },
                   "case_sensitive": {
                     "type": "boolean",
@@ -4957,7 +4957,7 @@
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY value. GEOGRAPHY is not supported (*st_x*/*st_y* accept POINT GEOMETRY only). A null value is skipped; a non-null value that fails to parse is reported as unparseable."
+                    "description": "When True (default), the column value is parsed with try_to_geometry (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY value. GEOGRAPHY is not supported (st_x/st_y accept POINT GEOMETRY only). A null value is skipped; a non-null value that fails to parse is reported as unparseable."
                   }
                 },
                 "additionalProperties": false
@@ -5124,7 +5124,7 @@
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value."
+                    "description": "When True (default), the column value is parsed with try_to_geometry (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value."
                   }
                 },
                 "additionalProperties": false,
@@ -5194,7 +5194,7 @@
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value."
+                    "description": "When True (default), the column value is parsed with try_to_geometry (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value."
                   }
                 },
                 "additionalProperties": false,
@@ -5264,7 +5264,7 @@
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value."
+                    "description": "When True (default), the column value is parsed with try_to_geometry (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value."
                   }
                 },
                 "additionalProperties": false,
@@ -5334,7 +5334,7 @@
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value."
+                    "description": "When True (default), the column value is parsed with try_to_geometry (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value."
                   }
                 },
                 "additionalProperties": false,
@@ -5390,7 +5390,7 @@
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY value. GEOGRAPHY is not supported (*st_isvalid* accepts GEOMETRY only). A null value is skipped; a non-null value that fails to parse is reported as unparseable."
+                    "description": "When True (default), the column value is parsed with try_to_geometry (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY value. GEOGRAPHY is not supported (st_isvalid accepts GEOMETRY only). A null value is skipped; a non-null value that fails to parse is reported as unparseable."
                   }
                 },
                 "additionalProperties": false
@@ -5557,7 +5557,7 @@
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value. A null value is skipped; a non-null value that fails to parse is reported as unparseable."
+                    "description": "When True (default), the column value is parsed with try_to_geometry (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value. A null value is skipped; a non-null value that fails to parse is reported as unparseable."
                   }
                 },
                 "additionalProperties": false
@@ -5607,7 +5607,7 @@
                   },
                   "convert_column": {
                     "type": "boolean",
-                    "description": "When True (default), the column value is parsed with *try_to_geometry* (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value. A null value is skipped; a non-null value that fails to parse is reported as unparseable."
+                    "description": "When True (default), the column value is parsed with try_to_geometry (WKT, WKB, EWKT, EWKB, or GeoJSON). When False, the column is treated as already holding a native GEOMETRY/GEOGRAPHY value. A null value is skipped; a non-null value that fails to parse is reported as unparseable."
                   }
                 },
                 "additionalProperties": false
@@ -5725,11 +5725,11 @@
                   },
                   "code_format": {
                     "type": "string",
-                    "description": "ISO 3166-1 code representation to validate against: *alpha-2* (default), *alpha-3*, or *numeric*; matching is case-insensitive"
+                    "description": "ISO 3166-1 code representation to validate against: alpha-2 (default), alpha-3, or numeric; matching is case-insensitive"
                   },
                   "case_sensitive": {
                     "type": "boolean",
-                    "description": "whether to perform a case-sensitive comparison (default: True); ignored when *code_format* is *numeric*"
+                    "description": "whether to perform a case-sensitive comparison (default: True); ignored when code_format is numeric"
                   }
                 },
                 "additionalProperties": false
@@ -5779,11 +5779,11 @@
                   },
                   "code_format": {
                     "type": "string",
-                    "description": "ISO 4217 code representation to validate against, either *alphabetic* (default) or *numeric*; matching is case-insensitive"
+                    "description": "ISO 4217 code representation to validate against, either alphabetic (default) or numeric; matching is case-insensitive"
                   },
                   "case_sensitive": {
                     "type": "boolean",
-                    "description": "whether to perform a case-sensitive comparison (default: True); ignored when *code_format* is *numeric*"
+                    "description": "whether to perform a case-sensitive comparison (default: True); ignored when code_format is numeric"
                   }
                 },
                 "additionalProperties": false
@@ -6074,7 +6074,7 @@
                   },
                   "code_format": {
                     "type": "string",
-                    "description": "ISO 639 code representation to validate against, either *alpha-2* (default) or *alpha-3*; matching is case-insensitive"
+                    "description": "ISO 639 code representation to validate against, either alpha-2 (default) or alpha-3; matching is case-insensitive"
                   },
                   "case_sensitive": {
                     "type": "boolean",
@@ -6128,7 +6128,7 @@
                   },
                   "country": {
                     "type": "string",
-                    "description": "ISO 3166 alpha-2 country code selecting the validation pattern (default: *US*)"
+                    "description": "ISO 3166 alpha-2 country code selecting the validation pattern (default: US)"
                   }
                 },
                 "additionalProperties": false
@@ -6189,7 +6189,7 @@
                         "type": "null"
                       }
                     ],
-                    "description": "optional column name or column expression holding the expected ISO 3166-1 alpha-2 country code; when provided, also flags a row where *column*'s country prefix does not match this column's value"
+                    "description": "optional column name or column expression holding the expected ISO 3166-1 alpha-2 country code; when provided, also flags a row where column's country prefix does not match this column's value"
                   }
                 },
                 "additionalProperties": false
@@ -6459,7 +6459,7 @@
                         "type": "null"
                       }
                     ],
-                    "description": "optional message of the *Column* type, automatically generated if None"
+                    "description": "optional message of the Column type, automatically generated if None"
                   },
                   "name": {
                     "anyOf": [
@@ -6521,7 +6521,7 @@
                 "properties": {
                   "query": {
                     "type": "string",
-                    "description": "SQL query that must return as a minimum a condition column and all merge columns (if provided). When merge_columns are provided, the resulting DataFrame is automatically joined back to the input DataFrame. When merge_columns are not provided, the check applies to all rows (either all pass or all fail), making it useful for dataset-level validation with custom_metrics. Reference DataFrames provided in the ref_dfs parameter are registered as temp views when the query refers to them by name in a double-curly-brace placeholder (like *input_placeholder*)."
+                    "description": "SQL query that must return as a minimum a condition column and all merge columns (if provided). When merge_columns are provided, the resulting DataFrame is automatically joined back to the input DataFrame. When merge_columns are not provided, the check applies to all rows (either all pass or all fail), making it useful for dataset-level validation with custom_metrics. Reference DataFrames provided in the ref_dfs parameter are registered as temp views when the query refers to them by name in a double-curly-brace placeholder (like input_placeholder)."
                   },
                   "merge_columns": {
                     "anyOf": [
@@ -6535,7 +6535,7 @@
                         "type": "null"
                       }
                     ],
-                    "description": "Optional (can be None or omitted). List of columns to join results back to input DataFrame. - If provided: Row-level validation - different rows can have different results - If None/omitted: Dataset-level validation - all rows get same result. The query must return at most one row. This is verified lazily: a query returning more than one row makes the Spark action that computes the results fail (e.g. a write or *collect*), not the *apply_checks* call. When provided, columns must form a unique key to avoid duplicate records."
+                    "description": "Optional (can be None or omitted). List of columns to join results back to input DataFrame. - If provided: Row-level validation - different rows can have different results - If None/omitted: Dataset-level validation - all rows get same result. The query must return at most one row. This is verified lazily: a query returning more than one row makes the Spark action that computes the results fail (e.g. a write or collect), not the apply_checks call. When provided, columns must form a unique key to avoid duplicate records."
                   },
                   "msg": {
                     "anyOf": [

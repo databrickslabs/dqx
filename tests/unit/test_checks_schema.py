@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import date, datetime
 from pathlib import Path
 
@@ -172,3 +173,22 @@ def test_descriptions_are_user_facing(schema):
     definitions = schema["definitions"]
     assert definitions["CheckSpec"]["description"] == "A data quality check."
     assert "pydantic" not in json.dumps(definitions).lower()
+
+
+def _descriptions(node: object) -> list[str]:
+    if isinstance(node, dict):
+        own = [node["description"]] if isinstance(node.get("description"), str) else []
+        return own + [text for value in node.values() for text in _descriptions(value)]
+    if isinstance(node, list):
+        return [text for item in node for text in _descriptions(item)]
+    return []
+
+
+def test_descriptions_have_no_docstring_markup(schema):
+    marked = [text for text in _descriptions(schema) if re.search(r"(?:^|\s)\*{1,2}\S", text)]
+    assert not marked
+
+
+def test_literal_asterisks_are_kept(schema):
+    column = _arguments(schema, "aggr_matches_dataset")["properties"]["column"]["description"]
+    assert "count(*)" in column
