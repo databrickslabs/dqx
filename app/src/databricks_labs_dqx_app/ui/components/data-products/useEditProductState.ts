@@ -14,9 +14,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { DEFAULT_SCHEDULE_KIND, type ScheduleKind } from "@/components/common/ScheduleEditor";
 import {
-  useUpdateDataProduct,
-  useAddDataProductMember,
-  useRemoveDataProductMember,
+  useSaveDataProduct,
   useSetObjectGrant,
   useRemoveObjectGrant,
   getGetDataProductQueryKey,
@@ -221,9 +219,10 @@ export function useEditProductState(product: DataProductOut) {
 
   // --- Mutations ---
   // Suppress the global mutation onError toast — errors are surfaced locally.
-  const updateMut = useUpdateDataProduct({ mutation: { onError: () => {} } });
-  const addMut = useAddDataProductMember({ mutation: { onError: () => {} } });
-  const removeMut = useRemoveDataProductMember({ mutation: { onError: () => {} } });
+  // One save is one request (the changed settings plus the full member list),
+  // so it's one edit in the collection's History, and a table that can't join
+  // is refused before anything is saved.
+  const saveMut = useSaveDataProduct({ mutation: { onError: () => {} } });
   const submitMut = useSubmitDataProductWithRationale({ mutation: { onError: () => {} } });
   const setGrantMut = useSetObjectGrant({ mutation: { onError: () => {} } });
   const removeGrantMut = useRemoveObjectGrant({ mutation: { onError: () => {} } });
@@ -282,29 +281,24 @@ export function useEditProductState(product: DataProductOut) {
       patchNeeded = true;
     }
 
-    if (patchNeeded) {
-      await updateMut.mutateAsync({ productId: product.product_id, data: patch });
-    }
-
-    // Reconcile members. Adds: in buffer, not on server. Pin changes on
-    // existing members: re-POST (the endpoint upserts pinned_version by
-    // binding_id). Removals: on server, not in buffer.
-    const bufferKeys = new Set(members.map(memberKey));
-    for (const m of members) {
-      const k = memberKey(m);
-      const isNew = !serverMemberKeys.has(k);
-      const pinChanged = !isNew && (m.pinned_version ?? null) !== (serverMemberPins.get(k) ?? null);
-      if (isNew || pinChanged) {
-        await addMut.mutateAsync({
-          productId: product.product_id,
-          data: { binding_id: m.binding_id, pinned_version: m.pinned_version ?? null },
-        });
-      }
-    }
-    for (const m of product.members ?? []) {
-      if (!bufferKeys.has(memberKey(m))) {
-        await removeMut.mutateAsync({ productId: product.product_id, memberId: m.id });
-      }
+    // Members: the full list after the save (the server adds, re-pins and
+    // removes to match), or left alone when they're unchanged.
+    const membersChanged =
+      members.length !== serverMemberKeys.size ||
+      members.some((m) => {
+        const k = memberKey(m);
+        return !serverMemberKeys.has(k) || (m.pinned_version ?? null) !== (serverMemberPins.get(k) ?? null);
+      });
+    if (patchNeeded || membersChanged) {
+      await saveMut.mutateAsync({
+        productId: product.product_id,
+        data: {
+          updates: patchNeeded ? patch : null,
+          members: membersChanged
+            ? members.map((m) => ({ binding_id: m.binding_id, pinned_version: m.pinned_version ?? null }))
+            : null,
+        },
+      });
     }
 
     // Write owner grant(s) after the product is persisted.  Fires only when
@@ -362,9 +356,7 @@ export function useEditProductState(product: DataProductOut) {
     serverMemberPins,
     product,
     ownerGrantIntent,
-    updateMut,
-    addMut,
-    removeMut,
+    saveMut,
     setGrantMut,
     removeGrantMut,
   ]);
@@ -434,9 +426,9 @@ export function useEditProductState(product: DataProductOut) {
     resyncRef.current = true;
   }, []);
 
-  // A save touches several endpoints and then refetches; treat the whole
-  // sequence as "save pending" (not just whichever mutation is in flight).
-  const savePending = persisting || updateMut.isPending || addMut.isPending || removeMut.isPending;
+  // A save is one request and then a refetch; treat the whole sequence as
+  // "save pending" (not just the request in flight).
+  const savePending = persisting || saveMut.isPending;
 
   return {
     name,
