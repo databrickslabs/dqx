@@ -32,6 +32,26 @@ _DOCSTRING_ARG_RE = re.compile(r"^(\*{0,2}\w+)(?:\s*\([^)]*\))?:\s*(.*)$")
 # dates, DDL schemas, WKT geometries).
 _STRING_TYPES = (str, bytes, date, datetime)
 _NUMBER_TYPES = (float, Decimal)
+# User-facing descriptions shown by editors. The pydantic models' own docstrings describe validator internals.
+_MODEL_DESCRIPTIONS = {
+    "CheckSpec": "A data quality check.",
+    "CheckBlock": "The check function to apply and its arguments.",
+}
+_FIELD_DESCRIPTIONS = {
+    "CheckSpec": {
+        "check": "The check function to apply and its arguments.",
+        "criticality": "'error' sends failing rows only to the invalid (quarantine) output; 'warn' sends them to both "
+        "outputs. Defaults to 'error'.",
+        "name": "Name of the check, added to the reported errors and warnings. Generated when not given.",
+        "filter": "Spark SQL expression selecting the rows the check applies to.",
+        "user_metadata": "Key-value pairs added to the reported errors and warnings.",
+        "message_expr": "Spark SQL expression for a custom message reported when the check fails.",
+    },
+    "CheckBlock": {
+        "arguments": "Keyword arguments passed to the check function.",
+        "for_each_column": "Columns or column expressions to apply the same check to, one check per column.",
+    },
+}
 
 
 def build_checks_json_schema() -> JsonSchemaValue:
@@ -48,6 +68,10 @@ def build_checks_json_schema() -> JsonSchemaValue:
     """
     _, definitions = models_json_schema([(CheckSpec, "validation")], ref_template="#/definitions/{model}")
     definitions = definitions.get("$defs", {})
+    for model, description in _MODEL_DESCRIPTIONS.items():
+        definitions[model]["description"] = description
+        for field, field_description in _FIELD_DESCRIPTIONS[model].items():
+            definitions[model]["properties"][field]["description"] = field_description
     check_spec = definitions["CheckSpec"]
     check_spec["properties"]["criticality"]["enum"] = [criticality.value for criticality in Criticality]
 

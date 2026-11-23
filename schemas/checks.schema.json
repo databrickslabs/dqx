@@ -8,7 +8,7 @@
   },
   "definitions": {
     "CheckBlock": {
-      "description": "Pydantic schema for the inner 'check' block of a rule metadata dict.\n\nValidates the structural shape (function name present, for_each_column is a non-empty list,\narguments is a dict). Function resolution and signature-based argument validation are performed\nby *CheckSpec*'s semantic validator, which needs this well-formed block to run.\n\nUses *extra=\"ignore\"* to preserve the pre-migration behaviour: unknown keys in the check block\nare tolerated (the hand-rolled validator never rejected them). Unknown check-function\n*arguments* are still reported by *CheckSpec*'s signature validation.",
+      "description": "The check function to apply and its arguments.",
       "properties": {
         "function": {
           "description": "Name of the check function.",
@@ -386,7 +386,8 @@
           "additionalProperties": true,
           "default": {},
           "title": "Arguments",
-          "type": "object"
+          "type": "object",
+          "description": "Keyword arguments passed to the check function."
         },
         "for_each_column": {
           "anyOf": [
@@ -399,7 +400,8 @@
             }
           ],
           "default": null,
-          "title": "For Each Column"
+          "title": "For Each Column",
+          "description": "Columns or column expressions to apply the same check to, one check per column."
         }
       },
       "required": [
@@ -6595,15 +6597,17 @@
       ]
     },
     "CheckSpec": {
-      "description": "Pydantic schema for a single top-level rule metadata dict.\n\nThis is the single validated representation of a declarative check. Structural validation\n(required 'check' key, known field types, for_each_column shape) is done by Pydantic field\nvalidation. Semantic validation \u2014 criticality enum value, function resolution and signature-\nbased argument validation \u2014 runs in *_validate_semantics* (a *model_validator*) so a bare\n*CheckSpec.validate_check(check, ...)* fully validates a check with no second pass.\n\nPydantic skips *model_validator(mode=\"after\")* when any field fails, so a malformed 'check'\nblock would suppress the sibling *criticality* error raised there. The pre-migration validator\nalways reported criticality regardless of the check block, so *ChecksValidator.validate_and_parse*\nreproduces that check (via *criticality_errors*) on the field-failure path to preserve parity.\n\nThe *model_validate* call accepts a *context* dict with:\n    - *raw_check*: the original check dict, included verbatim in error messages for context.\n    - *custom_check_functions*: optional mapping of custom function names to callables.\n    - *validate_custom_check_functions*: if False, unknown/unregistered functions are tolerated\n      (used by the LLM and profiler paths).\n\nUses *extra=\"ignore\"* to preserve the pre-migration behaviour: unknown top-level keys are\ntolerated (the hand-rolled validator never rejected them, and storage backends persist extra\ncolumns alongside the check). Rejecting them would be a breaking change for existing check\ndefinitions and would fail the load -> apply round-trip for stored checks.",
+      "description": "A data quality check.",
       "properties": {
         "check": {
-          "$ref": "#/definitions/CheckBlock"
+          "$ref": "#/definitions/CheckBlock",
+          "description": "The check function to apply and its arguments."
         },
         "criticality": {
           "default": "error",
           "title": "Criticality",
           "type": "string",
+          "description": "'error' sends failing rows only to the invalid (quarantine) output; 'warn' sends them to both outputs. Defaults to 'error'.",
           "enum": [
             "warn",
             "error"
@@ -6619,7 +6623,8 @@
             }
           ],
           "default": null,
-          "title": "Name"
+          "title": "Name",
+          "description": "Name of the check, added to the reported errors and warnings. Generated when not given."
         },
         "filter": {
           "anyOf": [
@@ -6631,7 +6636,8 @@
             }
           ],
           "default": null,
-          "title": "Filter"
+          "title": "Filter",
+          "description": "Spark SQL expression selecting the rows the check applies to."
         },
         "user_metadata": {
           "anyOf": [
@@ -6644,7 +6650,8 @@
             }
           ],
           "default": null,
-          "title": "User Metadata"
+          "title": "User Metadata",
+          "description": "Key-value pairs added to the reported errors and warnings."
         },
         "message_expr": {
           "anyOf": [
@@ -6656,7 +6663,8 @@
             }
           ],
           "default": null,
-          "title": "Message Expr"
+          "title": "Message Expr",
+          "description": "Spark SQL expression for a custom message reported when the check fails."
         }
       },
       "required": [

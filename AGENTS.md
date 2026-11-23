@@ -495,6 +495,8 @@ discoverable, tested end-to-end, and covered by the repo's consistency guards:
 7. **Performance test** — add the check to the benchmark in `tests/perf/test_apply_checks.py`.
 8. **Reference docs** — document the check (name, arguments, example) in
    `docs/dqx/docs/reference/quality_checks.mdx`.
+9. **JSON schema** — regenerate `schemas/checks.schema.json` with `make checks-schema`;
+   `test_committed_schema_matches_generated` fails until you do.
 
 ### Add a new CLI command
 

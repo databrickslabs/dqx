@@ -1,7 +1,9 @@
 import json
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
+import yaml
 
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.checks_schema import build_checks_json_schema
@@ -9,6 +11,13 @@ from databricks.labs.dqx.geo import check_funcs as geo_check_funcs
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
 
 _SCHEMA_FILE = Path(__file__).resolve().parents[2] / "schemas" / "checks.schema.json"
+_RESOURCES = Path(__file__).resolve().parents[1] / "resources"
+_CHECK_RESOURCES = [
+    "all_row_checks.yaml",
+    "all_dataset_checks.yaml",
+    "all_row_geo_checks.yaml",
+    "all_dateset_geo_checks.yaml",
+]
 
 
 @pytest.fixture(scope="module")
@@ -28,15 +37,12 @@ def _arguments(checks_schema: dict, function: str) -> dict:
 def test_committed_schema_matches_generated(schema):
     """The committed schema must match the check functions in the code.
 
-    If a check function was added or changed, regenerate the file and review the diff:
-
-        python -c "import json; from databricks.labs.dqx.checks_schema import build_checks_json_schema as b; \\
-        open('schemas/checks.schema.json', 'w', encoding='utf-8').write(json.dumps(b(), indent=2) + '\\n')"
+    If a check function was added or changed, regenerate the file with *make checks-schema* and review the diff.
     """
     committed = json.loads(_SCHEMA_FILE.read_text(encoding="utf-8"))
     assert committed == schema, (
-        f"{_SCHEMA_FILE.name} is out of date with the check functions. Regenerate it (see the docstring) "
-        "and review the diff."
+        f"{_SCHEMA_FILE.name} is out of date with the check functions. Regenerate it with "
+        "'make checks-schema' and review the diff."
     )
 
 
@@ -101,3 +107,68 @@ def test_other_required_arguments_are_always_required(schema):
     rule = _function_rule(schema, "is_older_than_n_days")
     assert rule["properties"]["arguments"]["required"] == ["days"]
     assert rule["required"] == ["arguments"]
+
+
+def _as_editor_sees_it(value: object) -> object:
+    """PyYAML loads unquoted dates as date objects; editors validate them as the strings they are written as."""
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, list):
+        return [_as_editor_sees_it(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _as_editor_sees_it(item) for key, item in value.items()}
+    return value
+
+
+@pytest.fixture(scope="module")
+def validator(schema):
+    jsonschema = pytest.importorskip("jsonschema")
+    jsonschema.Draft7Validator.check_schema(schema)
+    return jsonschema.Draft7Validator(schema)
+
+
+@pytest.mark.parametrize("resource", _CHECK_RESOURCES)
+def test_shipped_check_examples_are_valid(validator, resource: str):
+    checks = _as_editor_sees_it(yaml.safe_load((_RESOURCES / resource).read_text(encoding="utf-8")))
+    errors = [f"{list(error.absolute_path)}: {error.message}" for error in validator.iter_errors(checks)]
+    assert not errors
+
+
+@pytest.mark.parametrize(
+    "check",
+    [
+        {"check": {"function": "is_not_null", "arguments": {"colum": "a"}}},
+        {"check": {"function": "is_not_null", "arguments": {}}},
+        {"check": {"function": "is_older_than_n_days", "arguments": {"column": "a"}}},
+        {"check": {"function": "is_in_range", "arguments": {"column": "a", "min_limit": [1]}}},
+        {"criticality": "fatal", "check": {"function": "is_not_null", "arguments": {"column": "a"}}},
+        {"criticality": "error"},
+    ],
+    ids=["unknown argument", "missing column", "missing required argument", "wrong type", "criticality", "no check"],
+)
+def test_invalid_checks_are_rejected(validator, check: dict):
+    assert list(validator.iter_errors([check]))
+
+
+@pytest.mark.parametrize(
+    "check",
+    [
+        {"check": {"function": "is_not_null", "for_each_column": ["a", "b"]}},
+        {"check": {"function": "my_custom_check", "arguments": {"anything": 1}}},
+        {
+            "name": "x",
+            "filter": "a > 1",
+            "user_metadata": {"k": 1},
+            "check": {"function": "is_not_null", "arguments": {"column": "a"}},
+        },
+    ],
+    ids=["for_each_column", "custom function", "optional fields"],
+)
+def test_valid_checks_are_accepted(validator, check: dict):
+    assert not list(validator.iter_errors([check]))
+
+
+def test_descriptions_are_user_facing(schema):
+    definitions = schema["definitions"]
+    assert definitions["CheckSpec"]["description"] == "A data quality check."
+    assert "pydantic" not in json.dumps(definitions).lower()
