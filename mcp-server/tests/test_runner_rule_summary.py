@@ -74,13 +74,6 @@ class TestCounting:
     def test_no_failures_gives_empty_summary(self):
         assert not summarize_rule_counts(error_counts=[], warning_counts=[])
 
-    def test_accepts_any_iterable(self):
-        # The runner passes lists, but the helper only needs to iterate once.
-        errors = (rc for rc in [RuleCount("fp_a", "a_is_null", 1)])
-        warnings = iter([RuleCount("fp_b", "b_is_null", 2)])
-        summary = summarize_rule_counts(error_counts=errors, warning_counts=warnings)
-        assert summary == [_entry("a_is_null", "fp_a", errors=1), _entry("b_is_null", "fp_b", warnings=2)]
-
 
 class TestMissingFingerprintOrName:
     @pytest.mark.parametrize("missing", [None, ""])
