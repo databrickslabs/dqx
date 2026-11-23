@@ -2,6 +2,7 @@ import datetime
 import json
 import logging
 import os
+from pathlib import Path
 import tempfile
 from unittest.mock import Mock
 
@@ -2013,6 +2014,15 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
                             "logicalTypeOptions": {"pattern": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"},
                         },
                         {
+                            "name": "billing",
+                            "physicalType": "BINARY",
+                            "logicalType": "object",
+                            "required": True,
+                            "properties": [
+                                {"name": "note", "physicalType": "STRING", "logicalType": "string"},
+                            ],
+                        },
+                        {
                             "name": "address",
                             "physicalType": "BINARY",
                             "logicalType": "object",
@@ -2039,10 +2049,73 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
         finally:
             os.unlink(temp_path)
 
+    def test_predefined_rules_quote_dotted_property_names(self, generator: DQGenerator, tmp_path: Path) -> None:
+        contract = self.create_basic_contract(
+            properties=[
+                {
+                    "name": "customer.info",
+                    "logicalType": "object",
+                    "required": True,
+                    "properties": [
+                        {
+                            "name": "note",
+                            "logicalType": "string",
+                            "logicalTypeOptions": {"minLength": 2},
+                        }
+                    ],
+                },
+                {"name": "customer.id", "logicalType": "string", "unique": True},
+            ]
+        )
+        contract_file = tmp_path / "contract.yaml"
+        contract_file.write_text(yaml.safe_dump(contract), encoding="utf-8")
+        rules = generator.generate_rules_from_contract(
+            contract_file=str(contract_file),
+            generate_schema_validation=False,
+            process_text_rules=False,
+            default_criticality="warn",
+        )
+
+        by_name = {rule["name"]: rule for rule in rules}
+        object_rule = by_name["customer.info_is_null"]
+        assert object_rule["check"] == {"function": "is_not_null", "arguments": {"column": "`customer.info`"}}
+        assert object_rule["criticality"] == "warn"
+        assert object_rule["user_metadata"] == {
+            "contract_id": "test",
+            "contract_version": "1.0.0",
+            "odcs_version": "v3.0.2",
+            "schema": "test_table",
+            "field": "customer.info",
+            "dimension": "completeness",
+            "rule_type": "predefined",
+        }
+        assert by_name["customer.info.note_too_short"]["check"] == {
+            "function": "sql_expression",
+            "arguments": {"expression": "LENGTH(`customer.info`.note) >= 2", "columns": ["`customer.info`.note"]},
+        }
+        assert by_name["customer.id_not_unique"]["check"] == {
+            "function": "is_unique",
+            "arguments": {"columns": ["`customer.id`"]},
+        }
+
     def _verify_nested_field_rules(self, generator, contract_file):
         """Helper to verify nested field rule generation."""
         rules = generator.generate_rules_from_contract(
             contract_file=contract_file, generate_predefined_rules=True, process_text_rules=False
+        )
+
+        null_columns = [
+            rule["check"]["arguments"]["column"] for rule in rules if rule["check"]["function"] == "is_not_null"
+        ]
+        assert sorted(null_columns) == sorted(
+            [
+                "customer",
+                "customer.billing",
+                "customer.name",
+                "customer.email",
+                "customer.address.street",
+                "customer.address.city",
+            ]
         )
 
         # Verify nested column paths are generated correctly
@@ -2386,8 +2459,8 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             "arguments": {"column": "humidity", "limit": 100.0},
         }
 
-    def test_range_rule_keeps_column_requiring_escaping(self, generator):
-        """Test that a column name that requires SQL escaping is passed to the range check as is."""
+    def test_range_rule_escapes_column_requiring_escaping(self, generator):
+        """Test that a column name that requires SQL escaping is back-quoted in the range check, as in every rule."""
         rules = self._generate_range_rules(
             generator,
             {
@@ -2401,8 +2474,49 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
         assert len(rules) == 1
         assert rules[0]["check"] == {
             "function": "is_in_range",
-            "arguments": {"column": "Päivämäärä", "min_limit": 0.0, "max_limit": 100.0},
+            "arguments": {"column": "`Päivämäärä`", "min_limit": 0.0, "max_limit": 100.0},
         }
+        assert rules[0]["name"] == "Päivämäärä_out_of_range"
+        assert rules[0]["user_metadata"]["field"] == "Päivämäärä"
+
+    def test_range_rule_on_nested_field_quotes_only_the_segment_needing_it(self, generator):
+        """Test that a nested text field's range check back-quotes only the path segment that needs it."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {
+                    "name": "order",
+                    "logicalType": "object",
+                    "physicalType": "STRUCT<`gross margin`: STRING>",
+                    "properties": [
+                        {
+                            "name": "gross margin",
+                            "logicalType": "number",
+                            "physicalType": "STRING",
+                            "logicalTypeOptions": {"maximum": 1.0},
+                        }
+                    ],
+                }
+            ]
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, process_text_rules=False, generate_schema_validation=False
+            )
+        finally:
+            os.unlink(temp_path)
+
+        range_rules = [rule for rule in rules if rule["name"].endswith("_above_maximum")]
+        assert [(rule["name"], rule["check"], rule["user_metadata"]["field"]) for rule in range_rules] == [
+            (
+                "order.gross margin_above_maximum",
+                {
+                    "function": "is_not_greater_than",
+                    "arguments": {"column": "try_cast(order.`gross margin` AS DOUBLE)", "limit": 1.0},
+                },
+                "order.gross margin",
+            )
+        ]
 
     def test_field_with_only_integer_maximum_constraint(self, generator):
         """Test that an integer maximum generates a row-level is_not_greater_than rule, not an aggregate check."""
@@ -2761,6 +2875,24 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 "try_cast(`Päivämäärä` AS DATE)",
                 "is_not_less_than",
                 {"limit": "2020-01-01"},
+            ),
+            (
+                "amount (usd)",
+                "integer",
+                "STRING",
+                {"minimum": 0},
+                "try_cast(`amount (usd)` AS DOUBLE)",
+                "is_not_less_than",
+                {"limit": 0},
+            ),
+            (
+                "v - (SELECT 1000)",
+                "integer",
+                "STRING",
+                {"minimum": 0},
+                "try_cast(`v - (SELECT 1000)` AS DOUBLE)",
+                "is_not_less_than",
+                {"limit": 0},
             ),
         ],
     )
