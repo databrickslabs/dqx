@@ -683,6 +683,32 @@ Checks defined in JSON files are supported by the DQX workflows.
 ]
 ```
 
+## Validating YAML and JSON checks in your IDE
+
+<FeatureTags>
+  <AvailableSinceVersion productName="DQX" version="0.17.3" heading={false} />
+</FeatureTags>
+
+DQX publishes a JSON schema for check files at [`schemas/checks.schema.json`](https://github.com/databrickslabs/dqx/blob/main/schemas/checks.schema.json).
+Editors that support JSON schemas (VS Code, IntelliJ and others) use it to autocomplete check function names and their arguments,
+show each function's description, and flag unknown or missing arguments, wrong value types and invalid `criticality` values while you type.
+Custom check functions are accepted with free-form arguments.
+
+To use it in a YAML file in VS Code (with the YAML extension), add this comment at the top of the file:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/databrickslabs/dqx/main/schemas/checks.schema.json
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      column: col1
+```
+
+For JSON files, map the schema to your check files in the VS Code settings (`json.schemas`) or, in IntelliJ, under
+*Languages & Frameworks > Schemas and DTDs > JSON Schema Mappings*. The schema matches the check functions of the current
+DQX release; you can also build it for your installed version with `build_checks_json_schema()` from `databricks.labs.dqx.checks_schema`.
+
 ## Delta and Lakebase table format (declarative approach)
 
 Checks can be defined in a Delta table or Lakebase table where each row represents a check with columns: `name`, `check`, `criticality`, `filter`, and `run_config_name` fields. Both backends use the same logical structure and compact format for `for_each_column`.

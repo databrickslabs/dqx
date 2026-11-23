@@ -73,6 +73,7 @@ src/databricks/labs/dqx/
   ├── config.py            # WorkspaceConfig, RunConfig, AnomalyParams, LLMModelConfig, ExtraParams
   ├── checks_storage.py    # WorkspaceFileChecksStorageHandler, VolumeFileChecksStorageHandler
   ├── checks_serializer.py / checks_resolver.py / checks_validator.py
+  ├── checks_schema.py     # JSON schema for YAML/JSON check files (generated copy in schemas/)
   ├── config_serializer.py # ConfigSerializer — use instead of dataclasses.asdict()
   ├── cli.py               # Databricks Labs CLI commands (@dqx.command)
   ├── errors.py            # For example: MissingParameterError, InvalidParameterError, UnsafeSqlQueryError — use instead of built-in exceptions
