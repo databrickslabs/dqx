@@ -97,7 +97,11 @@ def build_checks_json_schema() -> JsonSchemaValue:
 
 
 def _built_in_check_functions() -> dict[str, Callable]:
-    """Registered check functions from the core and geo check modules, sorted by name."""
+    """Registered check functions from the core and geo check modules, sorted by name.
+
+    Anomaly and PII checks live in optional modules that are not always installed, so they are left out to keep
+    the committed schema the same in every environment; like custom functions, they are still accepted by name.
+    """
     functions = {}
     for name in sorted(CHECK_FUNC_REGISTRY):
         func = getattr(check_funcs, name, None) or getattr(geo_check_funcs, name, None)
