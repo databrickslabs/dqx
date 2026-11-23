@@ -80,8 +80,9 @@ Set the shared vocabulary authors will reuse:
 ### Step 4 — Set retention and handle sensitive data
 
 In Admin Settings you choose how long runs, results, and metrics are kept, and —
-separately — how long quarantined rows (which may contain sensitive data)
-are kept. Keep the evidence long enough to investigate, then let it clear to minimize the app data.
+separately — how long quarantined rows (which may contain sensitive data) are kept.
+Lifecycle history is audit metadata and is not expired by these settings. Keep the
+evidence long enough to investigate, then let it clear to minimize the app data.
 
 <Admonition type="tip" title="Now invite your team">
 With roles, approvals, and standards in place, point authors at the
@@ -108,5 +109,7 @@ complete trail is kept in append-only history tables in the app's own catalog.
   — roles across the app, and per-object access.
 - [The approval workflow](/docs/studio/governance/approval-workflow) — draft →
   review → approve, and the four-eyes rule.
+- [History and comparisons](/docs/studio/governance/history-and-comparisons) —
+  per-item diffs, saved states, and who changed or approved an object.
 - [Try the built-in demo](/docs/demos#dqx-studio) — deploy sample
   content from Admin Settings to explore every feature.
