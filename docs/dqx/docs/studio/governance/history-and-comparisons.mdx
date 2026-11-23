@@ -1,0 +1,51 @@
+---
+sidebar_position: 3
+title: History and comparisons
+---
+
+import { AvailableSinceVersion, FeatureTags } from '@site/src/components/FeatureTags';
+
+# History and comparisons
+
+<FeatureTags>
+  <AvailableSinceVersion version="0.17.3" heading={false} />
+</FeatureTags>
+
+DQX Studio keeps a lifecycle history for registry rules, monitored tables, and collections. Creation, edits, review submissions, approvals, rejections, and withdrawals appear together, with the actor, time, and any review note. New steps also store the object's state so you can compare saved drafts and review steps, not only approved versions.
+
+## Review proposed changes
+
+Choose **View changes** in **Review & Approve**, on an object's page, or in its list. When the object has unapproved changes, Studio compares the approved state with the proposed state. Otherwise, it compares the latest approved version with the preceding version. For an object that has never been approved, the comparison starts from **Nothing**.
+
+The comparison is broken down by item rather than treating the whole object as one block of YAML:
+
+- **Registry rule:** the full materialized check, including its function, arguments, criticality, name, message, and tags.
+- **Monitored table:** one section per applied rule, matched by its applied-rule identity rather than its position.
+- **Collection:** its settings, followed by one section per member table and version pin.
+
+Each item is marked **added**, **removed**, **modified**, or **unchanged**. Modified items highlight changed words, and you can switch between **Unified** and **Split** layouts. Use the status filters and **Only show changes** to fold away content you do not need.
+
+## Explore the History tab
+
+The object's **History** tab shows approved versions alongside creation, edits, submissions, rejections, and withdrawals. An approved version includes its approver and approval note; other review steps include the actor and any rationale they supplied.
+
+Selecting a timeline entry compares that state with **Nothing**. This shows the complete state at that point; it does not implicitly select the preceding version. To see what changed between two points, choose them explicitly in **Compare** and **To**. You can compare:
+
+- any two approved versions;
+- a saved draft with a version or another saved draft;
+- the draft captured by a submit, rejection, or withdrawal step;
+- **Nothing** with any saved state.
+
+The first creation step has no comparison of its own. **View changes** also offers the current proposed state when unapproved changes exist; the History tab compares saved states instead.
+
+Schedules are operational settings, not part of a collection's approved definition. Changing only a schedule does not create a new approval version.
+
+## Older objects and retention
+
+Approved versions remain the frozen artifacts used by version-pinned runs. Lifecycle snapshots are separate comparison data.
+
+Existing registry-rule history is moved into the unified lifecycle history when the app migrates to this design. Older versions of Studio recorded a rejection without a note the same way as a withdrawal, so those steps appear as **Returned**. Collections approved before collection versions were recorded are backfilled just before their first edit. If two older collection states were never recorded, Studio explains that they cannot be compared instead of inventing a diff.
+
+Lifecycle snapshots can be larger than other audit rows because they contain the object's full state. Lifecycle history is audit metadata, so Studio's retention sweep does not remove its event rows or snapshots. Approved version artifacts are stored separately and are not removed either.
+
+History and comparisons use the same read permissions as the object itself. For the review process, see [Approval workflow](/docs/studio/governance/approval-workflow). For collection versions and runs, see [Collections](/docs/studio/monitoring/collections).
