@@ -28,8 +28,6 @@ _FOR_EACH_COLUMN_PARAMS = ("column", "columns")
 # Google-style docstring section headers that end the *Args* section.
 _DOCSTRING_SECTION_RE = re.compile(r"^(Args|Returns|Raises|Yields|Examples?|Notes?|Warnings?):\s*$")
 _DOCSTRING_ARG_RE = re.compile(r"^(\*{0,2}\w+)(?:\s*\([^)]*\))?:\s*(.*)$")
-# Metadata values for these types are written as strings in YAML/JSON (column names, SQL expressions, ISO
-# dates, DDL schemas, WKT geometries).
 # Docstrings mark names in *italics* (and a few phrases in **bold**); editors show schema descriptions as
 # plain text, so the markers are removed. Simple names first, then spans such as *count(*)* or *"*"*,
 # whose inner asterisk is part of the text, then phrases with spaces. A spaced * (multiplication) is kept.
@@ -37,6 +35,8 @@ _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _ITALIC_NAME_RE = re.compile(r"(?<![\w*])\*([\w.\-]+)\*(?![\w*])")
 _ITALIC_SPAN_RE = re.compile(r"(?<![\w*])\*(\S+)\*(?=[\s.,;:)\]'\"/]|$)")
 _ITALIC_PHRASE_RE = re.compile(r"(?:(?<=\s)|(?<=^))\*(\S[^*]*?\S)\*(?![\w*])")
+# Metadata values for these types are written as strings in YAML/JSON (column names, SQL expressions, ISO
+# dates, DDL schemas, WKT geometries).
 _STRING_TYPES = (str, bytes, date, datetime)
 _NUMBER_TYPES = (float, Decimal)
 # User-facing descriptions shown by editors. The pydantic models' own docstrings describe validator internals.
