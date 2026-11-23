@@ -372,6 +372,13 @@ class TestRunRetentionPostgresDialect:
             # A hardcoded Delta-quoted three-part form must not leak in.
             assert not any(f"`dqx`.`public`.{table_name}" in s for s in oltp_stmts)
 
+    def test_lifecycle_history_is_never_swept(self, scheduler):
+        """Lifecycle events and their snapshots are metadata, not expirable run data."""
+        svc, mocks = scheduler
+        svc._run_retention()
+
+        assert all("dq_lifecycle_history" not in stmt for stmt in self._oltp_stmts(mocks))
+
     def test_oltp_failure_does_not_abort_remaining_tables(self, scheduler):
         """Parity with the Delta loop — one bad DELETE must not skip the others."""
         from databricks_labs_dqx_app.backend.services.scheduler_service import _OLTP_RETENTION_TABLES
