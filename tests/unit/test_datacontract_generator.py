@@ -3160,6 +3160,8 @@ class TestDataContractGeneratorRangeBoundValues(DataContractGeneratorTestBase):
             (None, "MAP<STRING,INT>", {"maximum": 1}),
             (None, "STRUCT<a:INT>", {"minimum": 0}),
             ("integer", "GEOMETRY(4326)", {"minimum": 0}),
+            (None, "INTERVAL DAY", {"minimum": 0}),
+            (None, "VOID", {"maximum": 1}),
         ],
     )
     def test_bounds_on_physical_type_without_order_are_skipped_with_warning(
@@ -3237,6 +3239,12 @@ class TestDataContractGeneratorRangeBoundValues(DataContractGeneratorTestBase):
                 "is_not_greater_than",
                 {"limit": "TIMESTAMP_NTZ '2024-01-01 12:00:00.123456'"},
             ),
+            # A wall-clock bound in a daylight saving gap is kept as written, not moved to 03:30
+            (
+                {"minimum": "2024-03-10T02:30:00", "defaultTimezone": "America/New_York"},
+                "is_not_less_than",
+                {"limit": "TIMESTAMP_NTZ '2024-03-10 02:30:00'"},
+            ),
         ],
     )
     def test_timestamp_ntz_bounds_are_wall_clock_literals(self, generator, caplog, options, function, limits):
@@ -3273,8 +3281,70 @@ class TestDataContractGeneratorRangeBoundValues(DataContractGeneratorTestBase):
         assert not rules
         assert (
             "Skipping range bounds on 'value': "
-            "no value is at least 2024-01-01T12:00:00+00:00 and at most 2024-01-01T10:00:00+00:00." in caplog.messages
+            "no value is at least 2024-01-01 12:00:00 and at most 2024-01-01 10:00:00." in caplog.messages
         )
+
+    def test_timestamp_ntz_bounds_reversed_by_daylight_saving_are_skipped_with_warning(self, generator, caplog):
+        """Test that bounds in order as instants but reversed as wall-clock times (a DST fall-back) are skipped."""
+        prop = {
+            "name": "value",
+            "physicalType": "TIMESTAMP_NTZ",
+            "logicalType": "timestamp",
+            "logicalTypeOptions": {
+                # 05:30 UTC and 06:15 UTC, but 01:30 and 01:15 on the New York wall clock
+                "minimum": "2024-11-03T01:30:00-04:00",
+                "maximum": "2024-11-03T01:15:00-05:00",
+                "defaultTimezone": "America/New_York",
+            },
+        }
+
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate_range_rules(generator, prop)
+
+        assert not rules
+        assert (
+            "Skipping range bounds on 'value': "
+            "no value is at least 2024-11-03 01:30:00 and at most 2024-11-03 01:15:00." in caplog.messages
+        )
+
+    @pytest.mark.parametrize(
+        "options, column, limits",
+        [
+            (
+                {"minimum": "2024-01-01T12:00:00", "timezone": False, "defaultTimezone": "America/New_York"},
+                "try_cast(value AS TIMESTAMP_NTZ)",
+                {"limit": "TIMESTAMP_NTZ '2024-01-01 12:00:00'"},
+            ),
+            (
+                {"minimum": "2024-01-01T12:00:00+00:00", "timezone": False, "defaultTimezone": "America/New_York"},
+                "try_cast(value AS TIMESTAMP_NTZ)",
+                {"limit": "TIMESTAMP_NTZ '2024-01-01 07:00:00'"},
+            ),
+            (
+                {"minimum": "2024-01-01T12:00:00", "timezone": True},
+                "try_cast(value AS TIMESTAMP_LTZ)",
+                {"limit": "2024-01-01T12:00:00+00:00"},
+            ),
+            (
+                {"minimum": "2024-01-01T12:00:00"},
+                "try_cast(value AS TIMESTAMP_LTZ)",
+                {"limit": "2024-01-01T12:00:00+00:00"},
+            ),
+        ],
+    )
+    def test_text_timestamps_without_time_zone_compare_as_wall_clock(self, generator, options, column, limits):
+        """Test that text timestamps the contract says have no time zone are cast to TIMESTAMP_NTZ.
+
+        They are wall-clock times in defaultTimezone, like a TIMESTAMP_NTZ column, so they compare with wall-clock
+        literals. Otherwise TIMESTAMP_LTZ reads an offset in the value.
+        """
+        prop = {"name": "value", "physicalType": "STRING", "logicalType": "timestamp", "logicalTypeOptions": options}
+
+        rules = self._generate_range_rules(generator, prop)
+
+        assert [rule["check"] for rule in rules] == [
+            {"function": "is_not_less_than", "arguments": {"column": column, **limits}}
+        ]
 
     def test_unquoted_yaml_bounds_load_as_dates_timestamps_and_numbers(self, generator):
         """Test bounds written unquoted in a YAML contract, as the loader types them: date, datetime and number."""

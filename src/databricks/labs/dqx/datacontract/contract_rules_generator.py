@@ -65,7 +65,7 @@ _NTZ_PHYSICAL_TYPE = re.compile(r"^\s*TIMESTAMP_NTZ\b", re.IGNORECASE)
 # Physical types Spark can't compare with a number, date or timestamp. Only these are skipped: physicalType can name
 # another platform's type (e.g. INTEGER or NUMBER(10,2)) when schema validation is off, and its bounds still work.
 _NON_ORDERABLE_PHYSICAL_TYPE = re.compile(
-    r"^\s*(BOOLEAN|BINARY|VARIANT|ARRAY|MAP|STRUCT|GEOMETRY|GEOGRAPHY)\b", re.IGNORECASE
+    r"^\s*(BOOLEAN|BINARY|VARIANT|ARRAY|MAP|STRUCT|GEOMETRY|GEOGRAPHY|INTERVAL|VOID)\b", re.IGNORECASE
 )
 # A date or timestamp string a range check reads as one on every supported Python version. get_limit_expr reads a
 # string without ':' as a date and a digit-only string as SQL, so a timestamp needs hours and minutes.
@@ -90,7 +90,8 @@ _BOUND_KIND_BY_LOGICAL_TYPE = {
     "datetime": _TEMPORAL_BOUND,
 }
 # Type a range check casts a column stored as text to, by ODCS logical type. TIMESTAMP_LTZ rather than TIMESTAMP,
-# which spark.sql.timestampType can turn into TIMESTAMP_NTZ, and that drops the offsets.
+# which spark.sql.timestampType can turn into TIMESTAMP_NTZ, and that drops the offsets. Text whose timestamps have no
+# time zone (logicalTypeOptions.timezone: false) is cast to TIMESTAMP_NTZ instead, see _text_cast_type.
 _TEXT_CAST_TYPE_BY_LOGICAL_TYPE = {
     "date": "DATE",
     "timestamp": "TIMESTAMP_LTZ",
@@ -207,9 +208,17 @@ def _is_timestamp_field(logical_type: str | None, physical_type: str | None, bou
     return any(_has_time(bound.value) for bound in bounds)
 
 
-def _default_zone_name(opts: dict) -> str:
-    """Return the time zone ODCS reads a field's timestamps without an offset in."""
-    return str(opts.get("defaultTimezone") or _DEFAULT_TIMEZONE)
+def _default_zone(column_path: str, opts: dict) -> zoneinfo.ZoneInfo | None:
+    """Return the time zone ODCS reads a field's timestamps without an offset in, or None (with a warning) if unknown."""
+    zone_name = str(opts.get("defaultTimezone") or _DEFAULT_TIMEZONE)
+    try:
+        return zoneinfo.ZoneInfo(zone_name)
+    except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+        logger.warning(
+            f"Skipping range bounds on '{sanitize_for_logging(column_path)}': "
+            f"unknown defaultTimezone '{sanitize_for_logging(zone_name)}'."
+        )
+        return None
 
 
 def _timestamp_bounds_with_offsets(
@@ -225,42 +234,77 @@ def _timestamp_bounds_with_offsets(
         return bounds
     if not _is_timestamp_field(logical_type, physical_type, bounds):
         return bounds
-    zone_name = _default_zone_name(opts)
-    try:
-        zone = zoneinfo.ZoneInfo(zone_name)
-    except (zoneinfo.ZoneInfoNotFoundError, ValueError):
-        logger.warning(
-            f"Skipping range bounds on '{sanitize_for_logging(column_path)}': "
-            f"unknown defaultTimezone '{sanitize_for_logging(zone_name)}'."
-        )
+    zone = _default_zone(column_path, opts)
+    if zone is None:
         return None
     return [bound._replace(value=_with_offset(bound.value, zone)) for bound in bounds]
 
 
-def _as_ntz_literal(value: _BoundValue, zone: zoneinfo.ZoneInfo) -> str:
-    """Return a timestamp bound as a TIMESTAMP_NTZ SQL literal of its wall-clock time in *zone*.
+def _compares_wall_clock(
+    logical_type: str | None, physical_type: str | None, cast_type: str | None, bounds: list[_RangeBound]
+) -> bool:
+    """Return whether a field's column holds wall-clock time: TIMESTAMP_NTZ, or text cast to it.
+
+    Spark compares such a column with a timestamp limit after reading the column in the session time zone, which can
+    differ from defaultTimezone, but compares it with a TIMESTAMP_NTZ limit as wall-clock time.
+    """
+    wall_clock_column = cast_type == "TIMESTAMP_NTZ" or bool(physical_type and _NTZ_PHYSICAL_TYPE.match(physical_type))
+    return wall_clock_column and _is_timestamp_field(logical_type, physical_type, bounds)
+
+
+def _as_wall_clock(value: _BoundValue, zone: zoneinfo.ZoneInfo) -> datetime.datetime:
+    """Return a timestamp bound as its wall-clock time in *zone*.
+
+    A bound without an offset is already a wall-clock time in defaultTimezone, so it is kept as written, even one that
+    falls in a daylight saving gap; a bound with an offset is the wall-clock time of that instant in *zone*.
+    """
+    timestamp = _as_datetime(value)
+    if timestamp.tzinfo is None:
+        return timestamp
+    return timestamp.astimezone(zone).replace(tzinfo=None)
+
+
+def _as_ntz_literal(wall_clock: datetime.datetime) -> str:
+    """Return a wall-clock time as a TIMESTAMP_NTZ SQL literal.
 
     The literal is rendered from the parsed bound, never from contract text, so no contract value becomes SQL.
     """
-    wall_clock = _as_datetime(_with_offset(value, zone)).astimezone(zone).replace(tzinfo=None)
     return f"TIMESTAMP_NTZ '{wall_clock.isoformat(sep=' ')}'"
 
 
-def _bounds_for_ntz_column(
-    logical_type: str | None, physical_type: str | None, bounds: list[_RangeBound], opts: dict
-) -> list[_RangeBound]:
-    """Return the bounds of a TIMESTAMP_NTZ column as TIMESTAMP_NTZ literals; other bounds are returned unchanged.
+def _comparable_bounds(
+    column_path: str,
+    logical_type: str | None,
+    physical_type: str | None,
+    bounds: list[_RangeBound],
+    opts: dict,
+    *,
+    wall_clock: bool,
+) -> list[_RangeBound] | None:
+    """Return the bounds as the column compares them, or None (with a warning) for an unknown defaultTimezone.
 
-    A TIMESTAMP_NTZ column holds wall-clock time, which ODCS reads in defaultTimezone. Spark compares it with a
-    timestamp limit after reading the column in the session time zone, which can differ, but compares it with a
-    TIMESTAMP_NTZ limit as wall-clock time. So each bound is passed as its wall-clock time in defaultTimezone.
+    A wall-clock column compares wall-clock times, which a daylight saving change can reorder, so its bounds are
+    ordered as wall-clock times before they become TIMESTAMP_NTZ literals. Other timestamp bounds get explicit offsets.
     """
-    if not physical_type or not _NTZ_PHYSICAL_TYPE.match(physical_type):
-        return bounds
-    if not _is_timestamp_field(logical_type, physical_type, bounds):
-        return bounds
-    zone = zoneinfo.ZoneInfo(_default_zone_name(opts))  # already checked by _timestamp_bounds_with_offsets
-    return [bound._replace(value=_as_ntz_literal(bound.value, zone)) for bound in bounds]
+    if not wall_clock:
+        return _timestamp_bounds_with_offsets(column_path, logical_type, physical_type, bounds, opts)
+    zone = _default_zone(column_path, opts)
+    if zone is None:
+        return None
+    return [bound._replace(value=_as_wall_clock(bound.value, zone)) for bound in bounds]
+
+
+def _unsupported_range_reason(
+    logical_type: str | None, physical_type: str | None, expected_kind: str | None
+) -> str | None:
+    """Return why a field takes no range bounds, or None if it does."""
+    if logical_type and expected_kind is None:
+        if logical_type == "time":
+            return "range bounds on time fields aren't supported yet"
+        return f"ODCS defines no range bounds for logical type '{logical_type}'"
+    if physical_type and _NON_ORDERABLE_PHYSICAL_TYPE.match(physical_type):
+        return f"physical type '{physical_type}' can't be compared with a range"
+    return None
 
 
 def _as_number(value: _BoundValue) -> int | float:
@@ -297,20 +341,28 @@ def _empty_range_reason(bounds: list[_RangeBound]) -> str | None:
     return None
 
 
-def _text_cast_type(logical_type: str | None, physical_type: str | None, bounds: list[_RangeBound]) -> str | None:
+def _text_cast_type(
+    logical_type: str | None, physical_type: str | None, bounds: list[_RangeBound], opts: dict
+) -> str | None:
     """Return the type to *try_cast* a column stored as text to before a range check, or None.
 
     Under ANSI mode, comparing a text column with a number or date casts every value, so one malformed value would
     fail the whole run. *try_cast* turns it into NULL instead, which passes the range check (a format or pattern
-    rule is the one that flags it). Without a logical type, the type follows the bounds.
+    rule is the one that flags it). Without a logical type, the type follows the bounds. Timestamps are cast to
+    TIMESTAMP_LTZ, which reads an offset in the value, unless the contract says they have no time zone
+    (timezone: false): then they are wall-clock times in defaultTimezone, cast to TIMESTAMP_NTZ.
     """
     if not physical_type or not _TEXT_PHYSICAL_TYPE.match(physical_type):
         return None
     if logical_type:
-        return _TEXT_CAST_TYPE_BY_LOGICAL_TYPE.get(logical_type)
-    if bounds[0].kind == _NUMBER_BOUND:
-        return "DOUBLE"
-    return "TIMESTAMP_LTZ" if any(_has_time(bound.value) for bound in bounds) else "DATE"
+        cast_type = _TEXT_CAST_TYPE_BY_LOGICAL_TYPE.get(logical_type)
+    elif bounds[0].kind == _NUMBER_BOUND:
+        cast_type = "DOUBLE"
+    else:
+        cast_type = "TIMESTAMP_LTZ" if any(_has_time(bound.value) for bound in bounds) else "DATE"
+    if cast_type == "TIMESTAMP_LTZ" and opts.get("timezone") is False:
+        return "TIMESTAMP_NTZ"
+    return cast_type
 
 
 def _range_checks(column: str, bounds: list[_RangeBound]) -> list[tuple[dict, str]]:
@@ -1139,20 +1191,11 @@ class DataContractRulesGenerator(DQEngineBase):
             return []
         column_path = field_metadata["field"]  # the plain path, for rule names and warnings
         expected_kind = _expected_bound_kind(logical_type, physical_type)
-        if logical_type and expected_kind is None:
-            reason = (
-                "range bounds on time fields aren't supported yet"
-                if logical_type == "time"
-                else f"ODCS defines no range bounds for logical type '{logical_type}'"
-            )
+        unsupported_reason = _unsupported_range_reason(logical_type, physical_type, expected_kind)
+        if unsupported_reason:
             logger.warning(
-                f"Skipping range bounds on '{sanitize_for_logging(column_path)}': {sanitize_for_logging(reason)}."
-            )
-            return []
-        if physical_type and _NON_ORDERABLE_PHYSICAL_TYPE.match(physical_type):
-            logger.warning(
-                f"Skipping range bounds on '{sanitize_for_logging(column_path)}': physical type "
-                f"'{sanitize_for_logging(physical_type)}' can't be compared with a range."
+                f"Skipping range bounds on '{sanitize_for_logging(column_path)}': "
+                f"{sanitize_for_logging(unsupported_reason)}."
             )
             return []
 
@@ -1164,19 +1207,26 @@ class DataContractRulesGenerator(DQEngineBase):
             bounds.extend(
                 self._side_bounds(column_path, inclusive_option, exclusive_option, opts, expected_kind, lower=lower)
             )
-        bounds_with_offsets = _timestamp_bounds_with_offsets(column_path, logical_type, physical_type, bounds, opts)
-        if not bounds_with_offsets:
+        if not bounds:
             return []
-        bounds = bounds_with_offsets
-        empty_reason = _empty_range_reason(bounds)
+        cast_type = _text_cast_type(logical_type, physical_type, bounds, opts)
+        wall_clock = _compares_wall_clock(logical_type, physical_type, cast_type, bounds)
+        comparable_bounds = _comparable_bounds(
+            column_path, logical_type, physical_type, bounds, opts, wall_clock=wall_clock
+        )
+        if comparable_bounds is None:
+            return []
+        empty_reason = _empty_range_reason(comparable_bounds)
         if empty_reason:
             logger.warning(
                 f"Skipping range bounds on '{sanitize_for_logging(column_path)}': {sanitize_for_logging(empty_reason)}."
             )
             return []
-        bounds = _bounds_for_ntz_column(logical_type, physical_type, bounds, opts)
+        if wall_clock:
+            comparable_bounds = [
+                bound._replace(value=_as_ntz_literal(_as_datetime(bound.value))) for bound in comparable_bounds
+            ]
 
-        cast_type = _text_cast_type(logical_type, physical_type, bounds)
         check_column = f"try_cast({column} AS {cast_type})" if cast_type else column
         return [
             {
@@ -1189,7 +1239,7 @@ class DataContractRulesGenerator(DQEngineBase):
                     "rule_type": "predefined",
                 },
             }
-            for check, name_suffix in _range_checks(check_column, bounds)
+            for check, name_suffix in _range_checks(check_column, comparable_bounds)
         ]
 
     @staticmethod
