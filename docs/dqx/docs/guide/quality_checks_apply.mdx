@@ -53,6 +53,8 @@ In addition, you can also perform standalone validation of the checks as describ
 
 You can apply quality checks to streaming pipelines using the same methods as for batch processing.
 You can either use the end-to-end methods or manage the input stream and output directly with native Spark APIs (e.g. `spark.readStream` and `writeStream`).
+Most dataset-level checks are the exception: they can't run on a streaming DataFrame, and applying them to one raises an error that names them.
+Apply those checks to each micro-batch instead, as shown in [Applying checks using Spark Structured Streaming foreachBatch](#applying-checks-using-spark-structured-streaming-foreachbatch).
 
 You can find ready-to-use examples of applying checks with different methods in the [demo](/docs/demos) section.
 
