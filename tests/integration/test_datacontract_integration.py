@@ -844,7 +844,10 @@ class TestDataContractRangeRulesIntegration:
         }
 
     def test_timestamp_ntz_bounds_flag_the_same_rows_in_any_session_time_zone(self, ws, spark, set_utc_timezone):
-        """Bounds on a TIMESTAMP_NTZ column compare as wall-clock time, so the session time zone doesn't change the result."""
+        """Bounds on wall-clock timestamps flag the same rows in any session time zone.
+
+        Covers a TIMESTAMP_NTZ column and a text column whose timestamps have no time zone (timezone: false).
+        """
         contract = {
             "kind": "DataContract",
             "apiVersion": "v3.1.0",
@@ -866,7 +869,17 @@ class TestDataContractRangeRulesIntegration:
                                 "minimum": "2024-01-01T12:00:00",
                                 "maximum": "2024-01-01T18:00:00+02:00",
                             },
-                        }
+                        },
+                        {
+                            "name": "seen_text",
+                            "physicalType": "STRING",
+                            "logicalType": "timestamp",
+                            "logicalTypeOptions": {
+                                "minimum": "2024-01-01T12:00:00",
+                                "maximum": "2024-01-01T18:00:00+02:00",
+                                "timezone": False,
+                            },
+                        },
                     ],
                 },
             ],
@@ -876,9 +889,11 @@ class TestDataContractRangeRulesIntegration:
         )
         test_df = spark.sql(
             "SELECT * FROM VALUES "
-            "(1, TIMESTAMP_NTZ'2024-01-01 12:00:00'), (2, TIMESTAMP_NTZ'2024-01-01 16:00:00'), "
-            "(3, TIMESTAMP_NTZ'2024-01-01 11:59:59'), (4, TIMESTAMP_NTZ'2024-01-01 16:00:01'), "
-            "(5, CAST(NULL AS TIMESTAMP_NTZ)) AS t(row_id, seen)"
+            "(1, TIMESTAMP_NTZ'2024-01-01 12:00:00', '2024-01-01T12:00:00'), "
+            "(2, TIMESTAMP_NTZ'2024-01-01 16:00:00', '2024-01-01T16:00:00'), "
+            "(3, TIMESTAMP_NTZ'2024-01-01 11:59:59', '2024-01-01T11:59:59'), "
+            "(4, TIMESTAMP_NTZ'2024-01-01 16:00:01', '2024-01-01T16:00:01'), "
+            "(5, CAST(NULL AS TIMESTAMP_NTZ), CAST(NULL AS STRING)) AS t(row_id, seen, seen_text)"
         )
 
         original_time_zone = spark.conf.get("spark.sql.session.timeZone")
@@ -889,8 +904,8 @@ class TestDataContractRangeRulesIntegration:
                 assert flagged_by_row == {
                     1: set(),
                     2: set(),
-                    3: {"seen_out_of_range"},
-                    4: {"seen_out_of_range"},
+                    3: {"seen_out_of_range", "seen_text_out_of_range"},
+                    4: {"seen_out_of_range", "seen_text_out_of_range"},
                     5: set(),
                 }, time_zone
         finally:
