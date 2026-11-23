@@ -248,7 +248,7 @@ def seed_builtin_rules_if_absent(registry: RegistryService, *, user_email: str =
     Args:
         registry: The :class:`RegistryService` to seed into.
         user_email: Attributed as ``created_by``/``updated_by`` on seeded
-            rows and in the ``dq_rules_history`` audit trail.
+            rows and in the ``dq_lifecycle_history`` audit trail.
 
     Returns:
         The number of new built-in rules created (0 on a fully-idempotent
