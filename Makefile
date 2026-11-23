@@ -64,6 +64,10 @@ test: TEST_WORKERS := auto
 test: ## Run unit tests (writes coverage-unit.xml)
 	$(UV_TEST) --cov --cov-report=xml:coverage-unit.xml tests/unit/
 
+checks-schema: ## Regenerate schemas/checks.schema.json from the check functions
+	$(UV_RUN) python -c "import json; from databricks.labs.dqx.checks_schema import build_checks_json_schema as b; \
+	open('schemas/checks.schema.json', 'w', encoding='utf-8').write(json.dumps(b(), indent=2) + '\\n')"
+
 integration: ## Run integration tests (long timeout, requires Databricks workspace auth)
 	$(UV_TEST) --timeout 1200 --cov --cov-report=xml tests/integration/
 
@@ -494,4 +498,4 @@ fork-sync: ## Mirror a fork PR to a branch in the main repo for full CI (PR=<num
 	./.github/scripts/fork-sync-pr.sh $(PR)
 
 .DEFAULT: all
-.PHONY: help all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-build-marketplace app-check-marketplace app-release-marketplace app-integration app-start-dev app-stop-dev app-regen-api app-check app-test app-test-ui app-check-cli app-deploy fork-sync build lock-dependencies lock-app-dependencies
+.PHONY: help all clean dev lint fmt test checks-schema integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean app-install app-build app-build-marketplace app-check-marketplace app-release-marketplace app-integration app-start-dev app-stop-dev app-regen-api app-check app-test app-test-ui app-check-cli app-deploy fork-sync build lock-dependencies lock-app-dependencies

@@ -73,6 +73,7 @@ src/databricks/labs/dqx/
   ├── config.py            # WorkspaceConfig, RunConfig, AnomalyParams, LLMModelConfig, ExtraParams
   ├── checks_storage.py    # WorkspaceFileChecksStorageHandler, VolumeFileChecksStorageHandler
   ├── checks_serializer.py / checks_resolver.py / checks_validator.py
+  ├── checks_schema.py     # JSON schema for YAML/JSON check files (generated copy in schemas/)
   ├── config_serializer.py # ConfigSerializer — use instead of dataclasses.asdict()
   ├── cli.py               # Databricks Labs CLI commands (@dqx.command)
   ├── errors.py            # For example: MissingParameterError, InvalidParameterError, UnsafeSqlQueryError — use instead of built-in exceptions
@@ -494,6 +495,8 @@ discoverable, tested end-to-end, and covered by the repo's consistency guards:
 7. **Performance test** — add the check to the benchmark in `tests/perf/test_apply_checks.py`.
 8. **Reference docs** — document the check (name, arguments, example) in
    `docs/dqx/docs/reference/quality_checks.mdx`.
+9. **JSON schema** — regenerate `schemas/checks.schema.json` with `make checks-schema`;
+   `test_committed_schema_matches_generated` fails until you do.
 
 ### Add a new CLI command
 
