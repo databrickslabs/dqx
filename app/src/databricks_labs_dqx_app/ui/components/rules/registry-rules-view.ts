@@ -4,13 +4,29 @@ import { optionsSanitizer, type ViewDefs, type ViewValue } from "@/components/da
 import type { LabelSelection } from "@/components/Labels";
 import { labelToken, tokenToLabel } from "@/lib/format-utils";
 
-/** "No filter" value of the dimension, severity and owner pills. */
+/** "No filter" value of the status, dimension, severity and owner pills. */
 export const RULES_FILTER_ALL = "all";
 
-export type RuleGroupBy = "none" | "columnType" | "dimension" | "severity" | "mode" | "level" | "owner";
+/**
+ * Status values of the Status filter and group-by, in display order: a rule's
+ * *display_status*, so an approved rule with unpublished edits is "modified",
+ * matching the Status column.
+ */
+export const RULE_STATUS_VALUES = [
+  "approved",
+  "modified",
+  "pending_approval",
+  "draft",
+  "rejected",
+  "deprecated",
+] as const;
+export type RuleStatusValue = (typeof RULE_STATUS_VALUES)[number];
+
+export type RuleGroupBy = "none" | "columnType" | "status" | "dimension" | "severity" | "mode" | "level" | "owner";
 export const RULE_GROUP_BY_VALUES: readonly RuleGroupBy[] = [
   "none",
   "columnType",
+  "status",
   "dimension",
   "severity",
   "mode",
@@ -18,12 +34,13 @@ export const RULE_GROUP_BY_VALUES: readonly RuleGroupBy[] = [
   "owner",
 ];
 
-export type RulesFilterKey = "search" | "dimension" | "severity" | "owner" | "labels" | "groupBy";
+export type RulesFilterKey = "search" | "status" | "dimension" | "severity" | "owner" | "labels" | "groupBy";
 
 // Group by is pinned: always first, divided from the other pills, not reorderable.
 export const RULES_FILTER_ORDER: readonly RulesFilterKey[] = [
   "groupBy",
   "search",
+  "status",
   "dimension",
   "severity",
   "owner",
@@ -32,6 +49,7 @@ export const RULES_FILTER_ORDER: readonly RulesFilterKey[] = [
 
 export const RULES_FILTERS: Record<RulesFilterKey, FilterLayoutDef> = {
   search: { labelKey: "rulesRegistry.filterSearch", defaultVisible: true },
+  status: { labelKey: "rulesRegistry.filterStatuses", defaultVisible: false },
   dimension: { labelKey: "rulesRegistry.filterDimensions", defaultVisible: true },
   severity: { labelKey: "rulesRegistry.filterSeverities", defaultVisible: true },
   owner: { labelKey: "rulesRegistry.filterOwners", defaultVisible: true },
@@ -42,6 +60,7 @@ export const RULES_FILTERS: Record<RulesFilterKey, FilterLayoutDef> = {
 export const RULES_EMPTY_VALUES: Record<RulesFilterKey, ViewValue> = {
   groupBy: "none",
   search: "",
+  status: RULES_FILTER_ALL,
   dimension: RULES_FILTER_ALL,
   severity: RULES_FILTER_ALL,
   owner: RULES_FILTER_ALL,
@@ -103,7 +122,7 @@ export function buildRegistryRulesViewDefs<C extends string>(
     filters: { defaultOrder: RULES_FILTER_ORDER, filters: RULES_FILTERS },
     emptyValues: RULES_EMPTY_VALUES,
     sanitizeValue: optionsSanitizer<RulesFilterKey>(
-      { groupBy: RULE_GROUP_BY_VALUES, dimension: options.dimensions, severity: options.severities },
+      { groupBy: RULE_GROUP_BY_VALUES, status: RULE_STATUS_VALUES, dimension: options.dimensions, severity: options.severities },
       RULES_EMPTY_VALUES,
     ),
     legacyStorageKeys: RULES_LEGACY_STORAGE_KEYS,
