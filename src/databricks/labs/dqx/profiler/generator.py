@@ -1,6 +1,7 @@
 import logging
 import datetime
 import json
+from copy import deepcopy
 from decimal import Decimal
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -8,7 +9,7 @@ from pyspark.sql import SparkSession
 
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.base import DQEngineBase
-from databricks.labs.dqx.config import LLMModelConfig, InputConfig, TABLE_PATTERN, UC_TABLE_PATTERN
+from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.geo.check_funcs import (
     GEOMETRYCOLLECTION_TYPE,
@@ -19,17 +20,16 @@ from databricks.labs.dqx.geo.check_funcs import (
     POINT_TYPE,
     POLYGON_TYPE,
 )
-from databricks.labs.dqx.io import STORAGE_PATH_PATTERN
 from databricks.labs.dqx.profiler.common import val_maybe_to_str, val_to_str
+from databricks.labs.dqx.profiler import unity_catalog_metadata
 from databricks.labs.dqx.profiler.profiler import DQProfile
 from databricks.labs.dqx.telemetry import telemetry_logger
-from databricks.labs.dqx.errors import InvalidConfigError, MissingParameterError
-from databricks.labs.dqx.utils import get_table_column_metadata, sanitize_for_logging
+from databricks.labs.dqx.errors import MissingParameterError
+from databricks.labs.dqx.profiler.unity_catalog_metadata import UnityCatalogMetadata
 
 # Conditional imports for LLM-assisted rules generation
 try:
     from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
-    from databricks.labs.dqx.llm.llm_utils import get_column_metadata
 
     LLM_ENABLED = True
 except ImportError:
@@ -142,16 +142,28 @@ class DQGenerator(DQEngineBase):
 
     @telemetry_logger("generator", "generate_dq_rules_ai_assisted")
     def generate_dq_rules_ai_assisted(
-        self, user_input: str = "", summary_stats: dict | None = None, input_config: InputConfig | None = None
+        self,
+        user_input: str = "",
+        summary_stats: dict | None = None,
+        input_config: InputConfig | None = None,
+        uc_metadata: UnityCatalogMetadata | None = None,
     ) -> list[dict]:
         """
-        Generates data quality rules using LLM based on natural language input.
+        Generates data quality rules using LLM based on natural language input and externally-assembled context.
+
+        Four independent context inputs — all optional, combined in the prompt when
+        supplied.
 
         Args:
             user_input: Optional Natural language description of data quality requirements.
             summary_stats: Optional summary statistics of the input data.
             input_config: Optional input config providing input data location as a path or fully qualified table name
                 to infer schema. If not provided, LLM will be used to guess the table schema.
+            uc_metadata: Prepared Unity Catalog context — call
+                :func:`databricks.labs.dqx.profiler.unity_catalog_metadata.collect_unity_catalog_metadata`
+                to build this from an *InputConfig* and optional *UnityCatalogMetadataConfig*. Pass *None* to
+                let the LLM infer a schema from *user_input* alone (or supply
+                *input_config* for a baseline schema without enrichment).
 
         Returns:
             A list of dictionaries representing the generated data quality rules. Rules that fail
@@ -159,12 +171,28 @@ class DQGenerator(DQEngineBase):
             are dropped and logged at *WARNING*; only valid rules are returned.
 
         Raises:
-            MissingParameterError: If DSPy compiler is not available.
+            MissingParameterError: If the LLM engine is not available, or if neither
+                *user_input* nor *summary_stats* is provided (*uc_metadata* /
+                *input_config* on their own are context, not intent — the LLM needs a
+                business description or statistics to produce rules).
 
         Note:
             A Spark session is required when using this method with an *input_config* that is not a Unity Catalog
             table (e.g. files or temporary views). Schemas can be read without a Spark Session for tables with a
             valid 3-level name (e.g. catalog.schema.table).
+            **Troubleshooting prompt size.** On every call the engine logs a per-source
+            prompt-size breakdown at INFO (one row per contribution: *user_input*,
+            *available_functions*, *summary_stats*, the seed *source_table*, each
+            *upstream_table* with its hop depth, and each *external_lineage* entry).
+            If the resulting prompt is too large for the target model — exceeding token
+            budgets or model input limits — consult that log entry to see which source
+            dominates, then rebuild *uc_metadata* via *collect_unity_catalog_metadata*
+            with a tighter *UnityCatalogMetadataConfig*: tighten
+            ``column_upstream_lineage.depth`` / ``.max_nodes`` / ``.lookback_days``,
+            tighten ``external_lineage.max_relationships``, or set
+            ``column_upstream_lineage`` or ``external_lineage`` to *None* to disable a
+            whole walk. For custom filtering, inspect and modify fields on the returned
+            *UnityCatalogMetadata* record before passing it back.
         """
         if self.llm_engine is None:
             raise MissingParameterError(
@@ -177,11 +205,19 @@ class DQGenerator(DQEngineBase):
             )
 
         logger.info(f"Generating DQ rules with LLM for input: '{user_input}'")
-        schema_info = self._get_schema_info(input_config) if input_config else ""
+        if uc_metadata is not None:
+            uc_metadata = deepcopy(uc_metadata)
+        elif input_config is not None:
+            spark = self.spark if unity_catalog_metadata.reads_schema_with_spark(input_config.location) else None
+            uc_metadata = unity_catalog_metadata.collect_unity_catalog_metadata(input_config, ws=self.ws, spark=spark)
+        schema_info = (
+            unity_catalog_metadata.serialize_unity_catalog_metadata(uc_metadata) if uc_metadata is not None else ""
+        )
 
-        # Generate rules using pre-initialized LLM compiler
         prediction = self.llm_engine.detect_business_rules_with_llm(
-            user_input=user_input, schema_info=schema_info, summary_stats=summary_stats
+            user_input=user_input,
+            summary_stats=summary_stats,
+            schema_info=schema_info,
         )
 
         # Validate the generated rules and drop any that fail — the LLM occasionally
@@ -199,40 +235,6 @@ class DQGenerator(DQEngineBase):
             f"out of {len(raw_rules)} LLM output(s)."
         )
         return dq_rules
-
-    def _get_schema_info(self, input_config: InputConfig) -> str:
-        """
-        Gets the input schema as JSON for use as LLM context.
-
-        The input location determines how the schema is read:
-        * Unity Catalog tables with a 3-level namespace are read using a Databricks workspace client.
-        * Storage paths and 2-level (Hive Metastore) table names are read using a Spark session.
-
-        Args:
-            input_config: Input config providing the input data location.
-
-        Returns:
-            A JSON string containing the column metadata with columns wrapped in a "columns" key.
-
-        Raises:
-            InvalidConfigError: If the input location is neither a table name nor a storage path.
-        """
-        location = input_config.location
-        if not location:
-            raise InvalidConfigError("Input location not configured")
-
-        if UC_TABLE_PATTERN.match(location):
-            logger.info(f"Using WorkspaceClient to determine the schema info for '{sanitize_for_logging(location)}'")
-            return get_table_column_metadata(self.ws, location)
-
-        if TABLE_PATTERN.match(location) or STORAGE_PATH_PATTERN.match(location):
-            logger.info(f"Using a SparkSession to determine the schema info for '{sanitize_for_logging(location)}'")
-            return get_column_metadata(self.spark, input_config)
-
-        raise InvalidConfigError(
-            "Invalid input location. It must be a 2 or 3-level table namespace or storage path, "
-            f"given {sanitize_for_logging(location)}"
-        )
 
     def _filter_valid_rules(self, rules: list[dict]) -> list[dict]:
         """Return only rules that pass ``DQEngine.validate_checks``.

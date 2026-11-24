@@ -10,6 +10,7 @@ from databricks.labs.dqx.llm.llm_utils import (
     get_required_check_functions_definitions,
     get_required_summary_stats,
 )
+from databricks.labs.dqx.llm.prompt_breakdown import PromptBreakdown
 
 logger = logging.getLogger(__name__)
 
@@ -68,11 +69,18 @@ class DQLLMEngine:
                 - assumptions_bullets: Assumptions made (if schema was inferred)
                 - schema_info: The final schema used (if schema was inferred)
         """
+        stats_json = (
+            json.dumps(get_required_summary_stats(summary_stats=summary_stats)) if summary_stats is not None else None
+        )
+        prompt_breakdown = PromptBreakdown.from_prompt_parts(
+            self._available_check_functions, user_input, schema_info, stats_json
+        )
+        logger.info(prompt_breakdown.render())
         with self._configurator.lm_context():
-            if summary_stats is not None:
+            if stats_json is not None:
                 return self._llm_rule_compiler.model_using_data_stats(
                     business_description=user_input or None,
-                    data_summary_stats=json.dumps(get_required_summary_stats(summary_stats=summary_stats)),
+                    data_summary_stats=stats_json,
                     available_functions=self._available_check_functions,
                 )
             return self._llm_rule_compiler.model(

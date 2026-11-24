@@ -3,7 +3,7 @@ from abc import ABC
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from databricks.labs.dqx.checks_serializer import SerializerFactory
 from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
@@ -18,6 +18,9 @@ __all__ = [
     "ProfilerConfig",
     "LLMModelConfig",
     "LLMConfig",
+    "ColumnUpstreamLineageConfig",
+    "ExternalLineageConfig",
+    "UnityCatalogMetadataConfig",
     "AnomalyConfig",
     "AnomalyParams",
     "IsolationForestConfig",
@@ -313,6 +316,92 @@ class LLMConfig:
     """Configuration for LLM usage"""
 
     model: LLMModelConfig = field(default_factory=LLMModelConfig)
+
+
+class ColumnUpstreamLineageConfig(BaseModel):
+    """Guardrails for the recursive column-upstream lineage walker.
+
+    Attributes:
+        depth: Max walk depth from the source table in hops. *None* opts into an unbounded
+            walk (still bounded by *max_nodes* and the in-CTE cycle guard).
+        lookback_days: ``INTERVAL n DAYS`` window applied against *system.access.column_lineage*
+            and *system.access.table_lineage*.
+        max_nodes: ``LIMIT`` applied inside both the anchor and the recursive member of the
+            CTE as well as at the tail — bounds per-hop expansion and total output.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    depth: int | None = 2
+    lookback_days: int = 30
+    max_nodes: int = 50
+
+    @field_validator("depth")
+    @classmethod
+    def _check_depth(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError(f"depth must be >= 1 when set, got {value}")
+        return value
+
+    @field_validator("lookback_days", "max_nodes")
+    @classmethod
+    def _check_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError(f"value must be >= 1, got {value}")
+        return value
+
+
+class ExternalLineageConfig(BaseModel):
+    """Guardrails for the SDK-based external upstream lineage collector.
+
+    Attributes:
+        max_relationships: Hard cap on *ExternalLineageInfo* items drained from the SDK
+            iterator. Each page is fetched with ``page_size=min(1000, max_relationships)`` so
+            the collector stops as soon as the cap is reached.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_relationships: int = 50
+
+    @field_validator("max_relationships")
+    @classmethod
+    def _check_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError(f"max_relationships must be >= 1, got {value}")
+        return value
+
+
+class UnityCatalogMetadataConfig(BaseModel):
+    """Opt-in Unity Catalog metadata enrichment for AI-assisted rule generation.
+
+    Instantiating with defaults enables every enrichment; set either sub-model to *None* to
+    disable just that walk. The three flat bool flags share the single *WorkspaceClient.tables*
+    call and have no further knobs.
+
+    Attributes:
+        include_table_comment: Attach the source table's UC comment to the schema prompt.
+        include_column_comments: Attach each column's UC comment to the schema prompt.
+        include_tags: Attach table + column tags collected from
+            *system.information_schema.table_tags* / *column_tags*.
+        column_upstream_lineage: Guardrails for the recursive column-upstream lineage walk.
+            *None* disables the walk entirely.
+        external_lineage: Guardrails for the external upstream lineage collector (SDK path for
+            non-UC sources such as SAP, Salesforce, Tableau). *None* disables the collector
+            entirely.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    include_table_comment: bool = True
+    include_column_comments: bool = True
+    include_tags: bool = True
+    column_upstream_lineage: ColumnUpstreamLineageConfig | None = Field(
+        default_factory=ColumnUpstreamLineageConfig,
+    )
+    external_lineage: ExternalLineageConfig | None = Field(
+        default_factory=ExternalLineageConfig,
+    )
 
 
 @dataclass(frozen=True)
