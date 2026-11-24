@@ -46,6 +46,7 @@ from databricks.labs.dqx.rule import (
     DQDatasetRule,
     requires_dbr_version,
     CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE,
+    CHECK_FUNC_MIN_DBR_VERSION_CONDITION_ATTRIBUTE,
 )
 from databricks.labs.dqx.checks_serializer import (
     ChecksSerializer,
@@ -2158,6 +2159,26 @@ def test_requires_register_rule_stacked_with_dbr_version_stacked():
 
     assert getattr(my_versioned_check, CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE) == (14, 1)
     assert CHECK_FUNC_REGISTRY.get("my_versioned_check") == "row"
+
+
+def test_requires_dbr_version_sets_condition():
+    def applies(arguments: dict[str, object]) -> bool:
+        return bool(arguments.get("strict"))
+
+    @requires_dbr_version("15.0", when=applies)
+    def my_check():
+        pass
+
+    assert getattr(my_check, CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE) == (15, 0)
+    assert getattr(my_check, CHECK_FUNC_MIN_DBR_VERSION_CONDITION_ATTRIBUTE) is applies
+
+
+def test_requires_dbr_version_without_condition_sets_no_condition():
+    @requires_dbr_version("15.0")
+    def my_check():
+        pass
+
+    assert not hasattr(my_check, CHECK_FUNC_MIN_DBR_VERSION_CONDITION_ATTRIBUTE)
 
 
 def test_requires_dbr_version_returns_same_function():

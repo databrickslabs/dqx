@@ -18,6 +18,7 @@ from databricks.labs.dqx.check_funcs import (
     is_aggr_not_equal,
     has_no_outliers,
     foreign_key,
+    is_similar_to_reference,
     compare_datasets,
     is_data_fresh_per_time_window,
     has_no_gaps_per_time_window,
@@ -31,13 +32,18 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiling_utils import calculate_median_absolute_deviation_bounds
 from databricks.labs.dqx.rule import DQDatasetRule, DQRowRule
 from databricks.labs.dqx.utils import get_column_name_or_alias
-from databricks.labs.dqx.errors import InvalidParameterError, MissingParameterError, UnsafeSqlQueryError
+from databricks.labs.dqx.errors import (
+    InvalidCheckError,
+    InvalidParameterError,
+    MissingParameterError,
+    UnsafeSqlQueryError,
+)
 
 from tests.constants import TEST_CATALOG
 
 
 SCHEMA = "a: string, b: int"
-
+EMBEDDING_SCHEMA = "a: string, embedding: array<float>"
 
 @pytest.mark.parametrize(
     "schema, merge_columns, rows",
@@ -555,6 +561,291 @@ def test_foreign_key_negate(spark: SparkSession):
         SCHEMA + ", a_exists_in_ref_ref_col: string, a_exists_in_ref_ref_col: string",
     )
     assertDataFrameEqual(actual_df, expected_condition_df)
+
+
+def test_is_similar_to_reference_levenshtein_distance(spark: SparkSession):
+    ref_df = spark.createDataFrame([["apple"], ["banana"]], "ref_col: string")
+    checks = [
+        is_similar_to_reference(["a"], ["ref_col"], {"max_distance": 1}, "ref_df"),
+        is_similar_to_reference(
+            [F.col("a")],
+            [F.col("ref_col")],
+            {"max_distance": 1, "case_sensitive": False},
+            "ref_df",
+            row_filter="b = 3",
+        ),
+    ]
+
+    actual_df = _apply_checks(_fuzzy_test_df(spark), checks, {"ref_df": ref_df}, spark)
+
+    def no_match(value: str) -> str:
+        return f"Value '{value}' in column 'a' has no similar value in reference column 'ref_col' (levenshtein)"
+
+    expected_df = spark.createDataFrame(
+        [
+            ["apple", 1, None, None],
+            ["aple", 2, None, None],
+            ["APPLE", 3, no_match("APPLE"), None],
+            ["banana", 4, None, None],
+            ["cherry", 3, no_match("cherry"), no_match("cherry")],
+            [None, 5, None, None],
+        ],
+        SCHEMA + ", a_not_similar_to_ref_ref_col: string, a_not_similar_to_ref_ref_col: string",
+    )
+    assertDataFrameEqual(actual_df, expected_df)
+
+
+def test_is_similar_to_reference_negated_similarity(spark: SparkSession):
+    ref_df = spark.createDataFrame([["apple"], ["banana"]], "ref_col: string")
+    checks = [is_similar_to_reference(["a"], ["ref_col"], {"min_similarity": 0.8}, "ref_df", negate=True)]
+
+    actual_df = _apply_checks(_fuzzy_test_df(spark), checks, {"ref_df": ref_df}, spark)
+
+    def match(value: str, distance: float) -> str:
+        return (
+            f"Value '{value}' in column 'a' has a similar value in reference column 'ref_col' "
+            f"(levenshtein, distance {distance})"
+        )
+
+    expected_df = spark.createDataFrame(
+        [
+            ["apple", 1, match("apple", 0.0)],
+            ["aple", 2, match("aple", 1.0)],
+            ["APPLE", 3, None],
+            ["banana", 4, match("banana", 0.0)],
+            ["cherry", 3, None],
+            [None, 5, None],
+        ],
+        SCHEMA + ", a_similar_to_ref_ref_col: string",
+    )
+    assertDataFrameEqual(actual_df, expected_df)
+
+
+def test_is_similar_to_reference_keeps_each_row_once(spark: SparkSession):
+    test_df = spark.createDataFrame([["aple", 1], ["aple", 1], ["apply", 2]], SCHEMA)
+    ref_df = spark.createDataFrame([["apple"], ["apple"], ["apples"], ["ample"]], "ref_col: string")
+    condition, apply = is_similar_to_reference(
+        ["a"], ["ref_col"], {"max_distance": 2, "trim_strings": True}, "ref_df", broadcast_ref=True
+    )
+
+    rows = apply(test_df, spark, {"ref_df": ref_df}).select("a", condition.alias("violation")).collect()
+
+    assert len(rows) == 3
+    assert all(row["violation"] is None for row in rows)
+
+
+def test_is_similar_to_reference_composite_key(spark: SparkSession):
+    ref_df = spark.createDataFrame([["apple", 1], ["banana", 4]], "ref_a: string, ref_b: int")
+    condition, apply = is_similar_to_reference(["a", "b"], ["ref_a", "ref_b"], {"max_distance": 1}, "ref_df")
+
+    rows = apply(_fuzzy_test_df(spark), spark, {"ref_df": ref_df}).select("a", condition.alias("violation")).collect()
+    flagged = {row["a"] for row in rows if row["violation"] is not None}
+
+    assert len(rows) == 6
+    assert flagged == {"aple", "APPLE", "cherry"}
+
+
+def test_is_similar_to_reference_composite_key_skips_nulls(spark: SparkSession):
+    test_df = spark.createDataFrame([["apple", None], [None, 1], ["aple", 1], ["cherry", 1]], SCHEMA)
+    ref_df = spark.createDataFrame([["apple", 1], [None, None]], "ref_a: string, ref_b: int")
+    condition, apply = is_similar_to_reference(["a", "b"], ["ref_a", "ref_b"], {"max_distance": 1}, "ref_df")
+
+    rows = apply(test_df, spark, {"ref_df": ref_df}).select("a", "b", condition.alias("violation")).collect()
+    flagged = {(row["a"], row["b"]) for row in rows if row["violation"] is not None}
+
+    assert len(rows) == 4
+    assert flagged == {("cherry", 1)}
+
+
+def test_foreign_key_with_fuzzy_match(spark: SparkSession):
+    ref_df = spark.createDataFrame([["apple"], ["banana"]], "ref_col: string")
+    checks = [foreign_key(["a"], ["ref_col"], "ref_df", fuzzy_match={"max_distance": 1, "case_sensitive": False})]
+
+    actual_df = _apply_checks(_fuzzy_test_df(spark), checks, {"ref_df": ref_df}, spark)
+
+    expected_df = spark.createDataFrame(
+        [
+            ["apple", 1, None],
+            ["aple", 2, None],
+            ["APPLE", 3, None],
+            ["banana", 4, None],
+            [
+                "cherry",
+                3,
+                "Value 'cherry' in column 'a' has no similar value in reference column 'ref_col' (levenshtein)",
+            ],
+            [None, 5, None],
+        ],
+        SCHEMA + ", a_not_exists_in_ref_ref_col: string",
+    )
+    assertDataFrameEqual(actual_df, expected_df)
+
+
+def test_foreign_key_exact_match_is_unchanged_by_fuzzy_support(spark: SparkSession):
+    ref_df = spark.createDataFrame([["apple"]], "ref_col: string")
+    checks = [foreign_key(["a"], ["ref_col"], "ref_df")]
+
+    actual_df = _apply_checks(_fuzzy_test_df(spark), checks, {"ref_df": ref_df}, spark)
+    flagged = {row["a"] for row in actual_df.collect() if row["a_not_exists_in_ref_ref_col"] is not None}
+
+    assert flagged == {"aple", "APPLE", "banana", "cherry"}
+
+
+def _dbr_version(spark: SparkSession) -> tuple[int, int] | None:
+    version = (spark.sql("select current_version().dbr_version as v").collect()[0]["v"] or "").removeprefix("dlt:")
+    parts = version.split(".")
+    if not parts[0].isdigit():
+        return None
+    minor = parts[1] if len(parts) > 1 and parts[1].isdigit() else "99"
+    return int(parts[0]), int(minor)
+
+
+def test_vector_matching_runtime_is_supported_on_serverless(ws, spark: SparkSession, skip_if_classic_compute):
+    test_df = spark.createDataFrame([["near", [1.0, 0.0]], ["far", [6.0, 8.0]]], EMBEDDING_SCHEMA)
+    ref_df = spark.createDataFrame([[[0.0, 0.0]]], "ref_embedding: array<float>")
+    rule = DQDatasetRule(
+        criticality="error",
+        check_func=is_similar_to_reference,
+        columns=["embedding"],
+        check_func_kwargs={
+            "ref_columns": ["ref_embedding"],
+            "ref_df_name": "ref_df",
+            "fuzzy_match": {"method": "vector_l2", "max_distance": 1},
+        },
+    )
+
+    rows = DQEngine(ws).apply_checks(test_df, [rule], ref_dfs={"ref_df": ref_df}).select("a", "_errors").collect()
+
+    assert {row["a"] for row in rows if row["_errors"]} == {"far"}
+
+
+def test_is_similar_to_reference_vector_l2(spark: SparkSession, skip_if_classic_compute):
+    test_df = spark.createDataFrame(
+        [["exact", [0.0, 0.0]], ["boundary", [3.0, 0.0]], ["far", [6.0, 0.0]], ["missing", None]],
+        EMBEDDING_SCHEMA,
+    )
+    ref_df = spark.createDataFrame([[[0.0, 0.0]], [[3.0, 4.0]]], "ref_embedding: array<float>")
+    condition, apply = is_similar_to_reference(
+        ["embedding"], ["ref_embedding"], {"method": "vector_l2", "max_distance": 3}, "ref_df"
+    )
+
+    rows = apply(test_df, spark, {"ref_df": ref_df}).select("a", condition.alias("violation")).collect()
+
+    assert len(rows) == 4
+    assert {row["a"] for row in rows if row["violation"] is not None} == {"far"}
+
+
+def test_is_similar_to_reference_vector_cosine(spark: SparkSession, skip_if_classic_compute):
+    test_df = spark.createDataFrame(
+        [["same", [1.0, 0.0]], ["boundary", [2.0, 0.0]], ["diagonal", [1.0, 1.0]], ["zero", [0.0, 0.0]]],
+        EMBEDDING_SCHEMA,
+    )
+    ref_df = spark.createDataFrame([[[1.0, 0.0]]], "ref_embedding: array<float>")
+    checks = [
+        is_similar_to_reference(
+            ["embedding"], ["ref_embedding"], {"method": "vector_cosine", "min_similarity": 1.0}, "ref_df"
+        ),
+        is_similar_to_reference(
+            ["embedding"],
+            ["ref_embedding"],
+            {"method": "vector_cosine", "max_distance": 0.5},
+            "ref_df",
+            negate=True,
+        ),
+    ]
+
+    actual = test_df
+    for _, apply in checks:
+        actual = apply(actual, spark, {"ref_df": ref_df})
+    rows = actual.select("a", *[condition for condition, _ in checks]).collect()
+    not_similar = {row["a"] for row in rows if row["embedding_not_similar_to_ref_ref_embedding"] is not None}
+    similar = {row["a"] for row in rows if row["embedding_similar_to_ref_ref_embedding"] is not None}
+
+    assert len(rows) == 4
+    assert not_similar == {"diagonal", "zero"}
+    assert similar == {"same", "boundary", "diagonal"}
+
+
+def test_foreign_key_with_vector_fuzzy_match(spark: SparkSession, skip_if_classic_compute):
+    test_df = spark.createDataFrame([["near", [1.0, 0.0]], ["far", [6.0, 8.0]]], EMBEDDING_SCHEMA)
+    ref_df = spark.createDataFrame([[[0.0, 0.0]]], "ref_embedding: array<float>")
+    condition, apply = foreign_key(
+        ["embedding"], ["ref_embedding"], "ref_df", fuzzy_match={"method": "vector_l2", "max_distance": 1}
+    )
+
+    rows = apply(test_df, spark, {"ref_df": ref_df}).select("a", condition.alias("violation")).collect()
+    violations = {row["a"]: row["violation"] for row in rows}
+
+    assert violations["near"] is None
+    assert violations["far"] == (
+        "Value '[6.0, 8.0]' in column 'embedding' has no similar value in reference column 'ref_embedding' "
+        "(vector_l2)"
+    )
+
+
+def test_compare_datasets_with_vector_l2_row_matching_breaks_ties(spark: SparkSession, skip_if_classic_compute):
+    df = spark.createDataFrame(
+        [([0.0, 0.0], "origin"), ([1.5, 2.0], "tie"), ([6.0, 0.0], "far")], "embedding array<float>, value string"
+    )
+    ref_df = spark.createDataFrame(
+        [([3.0, 4.0], "corner"), ([0.0, 0.0], "zero"), ([0.0, 0.0], "origin")], "embedding array<float>, value string"
+    )
+    condition, apply = compare_datasets(
+        columns=["embedding"],
+        ref_columns=["embedding"],
+        ref_df_name="ref_df",
+        fuzzy_match={"method": "vector_l2", "max_distance": 3},
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("value", condition.alias("violation")).collect()
+    actual = {row["value"]: row["violation"] for row in rows}
+
+    assert len(rows) == 3
+    assert actual["origin"] is None
+    assert json.loads(actual["tie"]) == {
+        "row_missing": False,
+        "row_extra": False,
+        "changed": {"value": {"df": "tie", "ref": "origin"}},
+    }
+    assert json.loads(actual["far"]) == {"row_missing": False, "row_extra": True, "changed": {"value": {"df": "far"}}}
+
+
+def test_compare_datasets_with_vector_cosine_row_matching_breaks_ties(spark: SparkSession, skip_if_classic_compute):
+    df = spark.createDataFrame([([1.0, 1.0], "diagonal")], "embedding array<float>, value string")
+    ref_df = spark.createDataFrame(
+        [([1.0, 0.0], "east"), ([0.0, 1.0], "north")], "embedding array<float>, value string"
+    )
+    condition, apply = compare_datasets(
+        columns=["embedding"],
+        ref_columns=["embedding"],
+        ref_df_name="ref_df",
+        fuzzy_match={"method": "vector_cosine", "min_similarity": 0.7},
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select(condition.alias("violation")).collect()
+
+    assert [json.loads(row["violation"]) for row in rows] == [
+        {"row_missing": False, "row_extra": False, "changed": {"value": {"df": "diagonal", "ref": "north"}}}
+    ]
+
+
+def test_is_similar_to_reference_vector_fails_on_unsupported_runtime(ws, spark: SparkSession):
+    version = _dbr_version(spark)
+    if version is None or version >= (18, 1):
+        pytest.skip("Requires a known Databricks Runtime below 18.1")
+    test_df = spark.createDataFrame([["a", [1.0, 0.0]]], EMBEDDING_SCHEMA)
+    rule = DQDatasetRule(
+        check_func=is_similar_to_reference,
+        columns=["embedding"],
+        check_func_kwargs={
+            "ref_columns": ["embedding"],
+            "ref_df_name": "ref_df",
+            "fuzzy_match": {"method": "vector_l2", "max_distance": 0.5},
+        },
+    )
+
+    with pytest.raises(InvalidCheckError, match=r"require Databricks Runtime >= 18\.1"):
+        DQEngine(ws).apply_checks(test_df, [rule], ref_dfs={"ref_df": test_df})
 
 
 def test_is_aggr_not_greater_than(spark: SparkSession):
@@ -5763,3 +6054,63 @@ def test_is_unique_trim_strings_with_lower_expression(
         (1, " abc "),
         (2, "different"),
     ]
+
+
+def test_compare_datasets_with_fuzzy_row_matching(spark: SparkSession):
+    df = spark.createDataFrame([("john", 1), ("jane", 2), ("zed", 3), (None, 4)], "id string, value int")
+    ref_df = spark.createDataFrame([("jon", 1), ("jane", 5)], "id string, value int")
+    condition, apply = compare_datasets(
+        columns=["id"], ref_columns=["id"], ref_df_name="ref_df", fuzzy_match={"max_distance": 1}
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("id", "value", condition.alias("violation")).collect()
+    actual = {row["value"]: row["violation"] for row in rows}
+
+    assert len(rows) == 4
+    assert actual[1] is None
+    assert json.loads(actual[2]) == {
+        "row_missing": False,
+        "row_extra": False,
+        "changed": {"value": {"df": "2", "ref": "5"}},
+    }
+    assert json.loads(actual[3]) == {"row_missing": False, "row_extra": True, "changed": {"value": {"df": "3"}}}
+    assert json.loads(actual[4]) == {"row_missing": False, "row_extra": True, "changed": {"value": {"df": "4"}}}
+
+
+def test_compare_datasets_fuzzy_row_matching_breaks_ties_by_reference_values(spark: SparkSession):
+    df = spark.createDataFrame([("john", 1), ("john", 1)], "id string, value int")
+    ref_df = spark.createDataFrame([("jon", 7), ("jon", 1), ("joh", 9)], "id string, value int")
+    condition, apply = compare_datasets(
+        columns=["id"], ref_columns=["id"], ref_df_name="ref_df", fuzzy_match={"max_distance": 1}
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select(condition.alias("violation")).collect()
+
+    assert len(rows) == 2
+    assert [json.loads(row["violation"]) for row in rows] == [
+        {"row_missing": False, "row_extra": False, "changed": {"value": {"df": "1", "ref": "9"}}}
+    ] * 2
+
+
+def test_compare_datasets_fuzzy_row_matching_respects_row_filter(spark: SparkSession):
+    df = spark.createDataFrame([("john", 1), ("zed", 3)], "id string, value int")
+    ref_df = spark.createDataFrame([("JON", 1)], "id string, value int")
+    condition, apply = compare_datasets(
+        columns=["id"],
+        ref_columns=["id"],
+        ref_df_name="ref_df",
+        row_filter="value = 1",
+        fuzzy_match={"min_similarity": 0.75, "case_sensitive": False},
+    )
+
+    rows = apply(df, spark, {"ref_df": ref_df}).select("id", condition.alias("violation")).collect()
+
+    assert len(rows) == 2
+    assert all(row["violation"] is None for row in rows)
+
+
+def _fuzzy_test_df(spark: SparkSession) -> DataFrame:
+    return spark.createDataFrame(
+        [["apple", 1], ["aple", 2], ["APPLE", 3], ["banana", 4], ["cherry", 3], [None, 5]],
+        SCHEMA,
+    )

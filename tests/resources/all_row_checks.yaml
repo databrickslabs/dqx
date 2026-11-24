@@ -139,6 +139,29 @@
       column: col3
       value: col2
 
+# is_similar_to check (levenshtein distance to a string literal)
+- criticality: error
+  check:
+    function: is_similar_to
+    arguments:
+      column: col1
+      value: "'val1'"
+      fuzzy_match:
+        method: levenshtein
+        max_distance: 1
+
+# is_similar_to check (normalized levenshtein similarity to another column)
+- criticality: warn
+  check:
+    function: is_similar_to
+    arguments:
+      column: col1
+      value: col11
+      fuzzy_match:
+        min_similarity: 0.75
+        case_sensitive: false
+        trim_strings: true
+
 # is_not_equal_to check (string literal)
 - criticality: error
   check:

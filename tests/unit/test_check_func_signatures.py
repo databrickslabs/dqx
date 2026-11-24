@@ -26,6 +26,7 @@ EXPECTED_PARAMETER_ORDER = {
     "is_not_null_and_is_in_list": ("column", "allowed", "case_sensitive"),
     "is_in_list": ("column", "allowed", "case_sensitive"),
     "is_not_in_list": ("column", "forbidden", "case_sensitive"),
+    "is_similar_to": ("column", "value", "fuzzy_match"),
     "sql_expression": ("expression", "msg", "name", "negate", "columns"),
     "is_older_than_col2_for_n_days": ("column1", "column2", "days", "negate"),
     "is_older_than_n_days": ("column", "days", "curr_date", "negate"),
@@ -68,6 +69,17 @@ EXPECTED_PARAMETER_ORDER = {
         "negate",
         "row_filter",
         "null_safe",
+        "broadcast_ref",
+        "fuzzy_match",
+    ),
+    "is_similar_to_reference": (
+        "columns",
+        "ref_columns",
+        "fuzzy_match",
+        "ref_df_name",
+        "ref_table",
+        "negate",
+        "row_filter",
         "broadcast_ref",
     ),
     "sql_query": (
@@ -141,6 +153,7 @@ EXPECTED_PARAMETER_ORDER = {
         "abs_tolerance",
         "rel_tolerance",
         "raise_on_duplicate_keys",
+        "fuzzy_match",
     ),
     "is_data_fresh_per_time_window": (
         "column",
@@ -222,7 +235,8 @@ EXPECTED_PARAMETER_KIND_OVERRIDES = {
         KEYWORD_ONLY,
         KEYWORD_ONLY,
         KEYWORD_ONLY,
-    )
+    ),
+    "compare_datasets": (*(POSITIONAL_OR_KEYWORD,) * 12, KEYWORD_ONLY),
 }
 
 

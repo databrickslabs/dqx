@@ -19,8 +19,21 @@ from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
 
+from databricks.labs.dqx.fuzzy_matching import (
+    VECTOR_MATCH_MIN_DBR_VERSION,
+    FuzzyMatcher,
+    FuzzyMatchOptions,
+    build_fuzzy_matcher,
+    match_best_reference_rows,
+    uses_vector_matching,
+)
 from databricks.labs.dqx.profiling_utils import median_absolute_deviation_bounds_df
-from databricks.labs.dqx.rule import register_rule, register_for_original_columns_preselection, row_preserving
+from databricks.labs.dqx.rule import (
+    register_rule,
+    register_for_original_columns_preselection,
+    requires_dbr_version,
+    row_preserving,
+)
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
     is_sql_query_safe,
@@ -1383,6 +1396,72 @@ def is_not_equal_to(
     )
 
 
+@requires_dbr_version(VECTOR_MATCH_MIN_DBR_VERSION, when=uses_vector_matching)
+@register_rule("row")
+def is_similar_to(
+    column: str | Column,
+    value: int | float | str | list[float] | Column,
+    fuzzy_match_options: FuzzyMatchOptions,
+) -> Column:
+    """Checks whether the values in the input column are similar to the given value. Each row is compared with
+    the input *value*. Rows where the column or *value* is NULL pass the check. A distance that is undefined
+    for non-NULL values, such as the cosine similarity of a zero vector, fails the check.
+
+    The following matching methods are supported:
+        - *levenshtein*: string edit distance computed with Spark's *levenshtein*. Values are cast to string.
+          Similarity is *1 - distance / max(length)*.
+        - *vector_cosine* and *vector_l2*: distance between *array<float>* embeddings computed with the
+          Databricks SQL *vector_cosine_similarity* and *vector_l2_distance* functions. Embeddings must be
+          computed beforehand, for example with *ai_query*. Requires Databricks Runtime 18.1 or above; *DQEngine*
+          raises *InvalidCheckError* when applying the check on older runtimes. Embeddings of different lengths
+          raise Spark's *VECTOR_DIMENSION_MISMATCH* error.
+
+    Args:
+        column: Column to check. Can be a string column name or a column expression.
+        value: Value to compare with. Can be a number, a string literal in single quotes (e.g. *"'apple'"*),
+               a column name or SQL expression, a Spark Column, or for vector methods a list of floats.
+        fuzzy_match_options: Fuzzy matching options:
+            - *method*: *levenshtein* (default), *vector_cosine* or *vector_l2*.
+            - *max_distance*: maximum distance of a match: edit distance for *levenshtein*,
+              *1 - cosine similarity* for *vector_cosine*, L2 distance for *vector_l2*.
+            - *min_similarity*: minimum similarity of a match, between 0 and 1. Not supported for *vector_l2*.
+              Exactly one of *max_distance* and *min_similarity* is required.
+            - *case_sensitive*: whether *levenshtein* matching is case-sensitive (default True).
+            - *trim_strings*: whether *levenshtein* matching trims leading and trailing whitespace (default False).
+
+    Returns:
+        Column: A Spark Column condition that fails if the column value is not similar to the given value.
+
+    Raises:
+        MissingParameterError: If *value* or *fuzzy_match* is None.
+        InvalidParameterError: If *fuzzy_match* is invalid, or *value* does not suit the method.
+    """
+    matcher = build_fuzzy_matcher(fuzzy_match_options, 1)
+    if matcher is None:
+        raise MissingParameterError("'fuzzy_match' is required; use 'is_equal_to' for exact matching.")
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    value_expr = _similarity_value_expr(value, matcher)
+    left, right = matcher.normalize(col_expr), matcher.normalize(value_expr)
+    distance = matcher.method.distance(left, right)
+    max_length = None if matcher.is_vector else F.greatest(F.length(left), F.length(right))
+    within_threshold = F.coalesce(matcher.within_threshold(distance, max_length), F.lit(False))
+
+    return make_condition(
+        col_expr.isNotNull() & value_expr.isNotNull() & ~within_threshold,
+        F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in column '{col_expr_str}' is not similar to value '"),
+            value_expr.cast("string"),
+            F.lit(f"' ({matcher.method.value}"),
+            F.concat(F.lit(", distance "), distance.cast("string")),
+            F.lit(")"),
+        ),
+        f"{col_str_norm}_not_similar_to_value",
+    )
+
+
 @register_rule("row")
 def is_not_less_than(
     column: str | Column,
@@ -2713,6 +2792,7 @@ def is_unique(
     return condition, apply
 
 
+@requires_dbr_version(VECTOR_MATCH_MIN_DBR_VERSION, when=uses_vector_matching)
 @row_preserving
 @register_rule("dataset")
 def foreign_key(
@@ -2724,6 +2804,7 @@ def foreign_key(
     row_filter: str | None = None,
     null_safe: bool = False,
     broadcast_ref: bool = False,
+    fuzzy_match_options: FuzzyMatchOptions | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build a foreign key check condition and closure for dataset-level validation.
@@ -2747,6 +2828,11 @@ def foreign_key(
             If False, skips NULL values in the foreign key columns. False is a default.
         broadcast_ref: If True, adds a broadcast hint to the deduplicated reference values. Values are copied to every
             executor. Enable this option only for small reference tables. False is a default.
+        fuzzy_match_options: Optional fuzzy matching options. When None (default), key values must be equal. Otherwise
+            each row is matched to its most similar reference value and fails when none is within the threshold. Keys:
+            *method* (*levenshtein* (default), *vector_cosine* or *vector_l2*), exactly one of *max_distance* or
+            *min_similarity*, and for *levenshtein* the flags *case_sensitive* (default True) and *trim_strings*
+            (default False). See *is_similar_to_reference* for the semantics, cost and runtime requirements.
 
     Returns:
         A tuple of:
@@ -2760,8 +2846,25 @@ def foreign_key(
             - if both *ref_df_name* and *ref_table* are provided.
             - if the number of *columns* and *ref_columns* do not match.
             - if *ref_df_name* is not found in the provided *ref_dfs* dictionary.
+            - if *fuzzy_match* is invalid, or combined with *null_safe*.
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
+
+    matcher = build_fuzzy_matcher(fuzzy_match_options, len(columns))
+    if matcher is not None:
+        if null_safe:
+            raise InvalidParameterError("'null_safe' is not supported with fuzzy matching; NULL keys never match.")
+        return _similar_reference_check(
+            columns,
+            ref_columns,
+            ref_df_name,
+            ref_table,
+            matcher,
+            negate,
+            row_filter,
+            broadcast_ref,
+            as_foreign_key=True,
+        )
 
     key = _resolve_foreign_key_columns(columns, ref_columns, null_safe)
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
@@ -2843,6 +2946,78 @@ def foreign_key(
     )
 
     return condition, apply
+
+
+@requires_dbr_version(VECTOR_MATCH_MIN_DBR_VERSION, when=uses_vector_matching)
+@row_preserving
+@register_rule("dataset")
+def is_similar_to_reference(
+        columns: list[str | Column],
+        ref_columns: list[str | Column],
+        fuzzy_match: FuzzyMatchOptions,
+        ref_df_name: str | None = None,
+        ref_table: str | None = None,
+        negate: bool = False,
+        row_filter: str | None = None,
+        broadcast_ref: bool = False,
+) -> tuple[Column, Callable]:
+    """
+    Build a fuzzy reference check condition and closure for dataset-level validation.Flags rows whose key values
+    have no sufficiently similar value (or, if *negate=True*, have a similar value) in the reference columns of
+    another DataFrame or table. Each row is compared with its single best-matching reference value, and the row
+    count is unchanged. NULL keys are skipped.
+
+    Supported match methods:
+        - *levenshtein*: string edit distance. Values are cast to string. For composite keys, distances are summed
+          and similarity is *1 - distance / max(length)* over all key columns. Every distinct source key is
+          compared with every distinct reference key, so the cost is quadratic; keep the reference small and
+          consider enabling *broadcast_ref* for better performance.
+        - *vector_cosine* and *vector_l2*: nearest-neighbor search with the Databricks SQL *NEAREST BY* join over a
+          single *array<float>* embedding column. Embeddings must be computed beforehand. Requires Databricks
+          Runtime 18.1 or above; *DQEngine* raises *InvalidCheckError* when applying the check on older runtimes.
+
+    Args:
+        columns: List of column names (str) or Column expressions in the dataset.
+        ref_columns: List of column names (str) or Column expressions in the reference dataset.
+        fuzzy_match: Fuzzy matching options:
+            - *method*: *levenshtein* (default), *vector_cosine* or *vector_l2*.
+            - *max_distance*: maximum distance of a match: total edit distance for *levenshtein*,
+              *1 - cosine similarity* for *vector_cosine*, L2 distance for *vector_l2*.
+            - *min_similarity*: minimum similarity of a match, between 0 and 1. Not supported for *vector_l2*.
+              Exactly one of *max_distance* and *min_similarity* is required.
+            - *case_sensitive*: whether *levenshtein* matching is case-sensitive (default True).
+            - *trim_strings*: whether *levenshtein* matching trims leading and trailing whitespace (default False).
+        ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
+        ref_table: Name of the reference table (used when reading from catalog).
+        negate: If True, the check fails when a similar value exists in the reference.
+        row_filter: Optional SQL expression for filtering rows before checking. Auto-injected from the check filter.
+        broadcast_ref: If True, adds a broadcast hint to the distinct reference values. False is a default.
+
+    Returns:
+        A tuple of:
+            - A Spark Column representing the condition for violations.
+            - A closure that applies the check by matching against the reference.
+
+    Raises:
+        MissingParameterError:
+            - if neither *ref_df_name* nor *ref_table* is provided.
+            - if *fuzzy_match* is None.
+        InvalidParameterError:
+            - if both *ref_df_name* and *ref_table* are provided.
+            - if the number of *columns* and *ref_columns* do not match.
+            - if *fuzzy_match* is invalid.
+            - if either DataFrame is streaming.
+
+    Note:
+        Fuzzy matching requires batch DataFrames. To check a stream, apply the check inside *foreachBatch*.
+    """
+    _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
+    matcher = build_fuzzy_matcher(fuzzy_match, len(columns))
+    if matcher is None:
+        raise MissingParameterError("'fuzzy_match' is required; use 'foreign_key' for exact matching.")
+    return _similar_reference_check(
+        columns, ref_columns, ref_df_name, ref_table, matcher, negate, row_filter, broadcast_ref, as_foreign_key=False
+    )
 
 
 @row_preserving
@@ -3614,6 +3789,7 @@ def aggr_matches_dataset(
     return condition, apply
 
 
+@requires_dbr_version(VECTOR_MATCH_MIN_DBR_VERSION, when=uses_vector_matching)
 @register_rule("dataset")
 def compare_datasets(
     columns: list[str | Column],
@@ -3628,6 +3804,8 @@ def compare_datasets(
     abs_tolerance: float | None = None,
     rel_tolerance: float | None = None,
     raise_on_duplicate_keys: bool = False,
+    *,
+    fuzzy_match: FuzzyMatchOptions | None = None,
 ) -> tuple[Column, Callable]:
     """
     Dataset-level check that compares two datasets and returns a condition for changed rows,
@@ -3660,6 +3838,12 @@ def compare_datasets(
     *raise_on_duplicate_keys* to True to skip this pairing work and use a single join instead; this
     is the more efficient option on large datasets, at the cost of an eager uniqueness check that
     raises if duplicates are present.
+
+    With *fuzzy_match*, each source row is paired with its single best-matching reference row on the
+    matching columns, and then compared as usual. Several source rows can pair with the same reference row,
+    a source row with no reference row within the threshold is reported as *row_extra*, and NULL keys never
+    match. Fuzzy matching cannot be combined with *check_missing_records* or *raise_on_duplicate_keys*. See
+    *is_similar_to_reference* for the match methods, their quadratic cost and runtime requirements.
 
     The log containing detailed differences is written to the message field of the check result as a JSON string.
 
@@ -3713,7 +3897,10 @@ def compare_datasets(
         *InvalidParameterError* if duplicates are present. If False (default), pair duplicate-key rows lazily
         by compared values using per-group row-number windows; this is robust to duplicates but sorts both
         datasets on the compared columns.
-
+      fuzzy_match: Optional fuzzy row matching options. When None (default), rows match on equal keys. Otherwise
+        each source row is paired with its most similar reference row. Keys: *method* (*levenshtein* (default),
+        *vector_cosine* or *vector_l2*), exactly one of *max_distance* or *min_similarity*, and for *levenshtein*
+        the flags *case_sensitive* (default True) and *trim_strings* (default False).
 
     Returns:
       Tuple[Column, Callable]:
@@ -3730,8 +3917,16 @@ def compare_datasets(
             - if either DataFrame is streaming; dataset comparison requires bounded inputs.
             - if *raise_on_duplicate_keys* is True and the matching columns do not uniquely identify
               rows in either dataset.
+            - if *fuzzy_match* is invalid, or combined with *check_missing_records* or
+              *raise_on_duplicate_keys*.
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
+
+    matcher = build_fuzzy_matcher(fuzzy_match, len(columns))
+    if matcher is not None and (check_missing_records or raise_on_duplicate_keys):
+        raise InvalidParameterError(
+            "Fuzzy matching cannot be combined with 'check_missing_records' or 'raise_on_duplicate_keys'."
+        )
 
     abs_tolerance = 0.0 if abs_tolerance is None else abs_tolerance
     rel_tolerance = 0.0 if rel_tolerance is None else rel_tolerance
@@ -3748,9 +3943,6 @@ def compare_datasets(
 
     unique_id = uuid.uuid4().hex
     condition_col = f"__compare_status_{unique_id}"
-    row_missing_col = f"__row_missing_{unique_id}"
-    row_extra_col = f"__row_extra_{unique_id}"
-    columns_changed_col = f"__columns_changed_{unique_id}"
     filter_col = f"__filter_{uuid.uuid4().hex}"
 
     def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
@@ -3785,82 +3977,29 @@ def compare_datasets(
         # determine skipped columns: present in df, not compared, and not PK
         skipped_columns = [col for col in df.columns if col not in compare_columns and col not in pk_column_names]
 
-        # Keep rows outside the check filter in the output while giving in-scope rows priority for reference
-        # pairing, so an excluded row cannot consume the reference slot that an in-scope row needs (issue
-        # #1504). Coalesce NULL to false to match Spark filter semantics. The scope controls pairing
-        # below. An out-of-scope row can pair with a reference only when its key has no
-        # in-scope source rows, preserving the existing behavior for wholly excluded key groups.
+        row_missing_col = f"__row_missing_{unique_id}"
+        row_extra_col = f"__row_extra_{unique_id}"
+        columns_changed_col = f"__columns_changed_{unique_id}"
         df = df.withColumn(filter_col, safe_filter_expr(row_filter))
-        pairing_scope_col = f"__match_scope_{unique_id}"
-        df, ref_df = (
-            df.withColumn(pairing_scope_col, F.coalesce(F.col(filter_col), F.lit(False))),
-            ref_df.withColumn(pairing_scope_col, F.lit(True)),
-        )
-
-        # A per-group sequence number is appended to the join keys so that _add_row_diffs can tell a
-        # present row whose matching-key value is null (matched via null-safe equality) apart from a
-        # missing side of the join. Without it, both look "null" and the row is wrongly flagged as both
-        # missing and extra. Both the lazy and eager paths need this signal.
-        row_number_col = f"__match_row_number_{unique_id}"
-        pairing_phase_col = None
-        in_scope_key_col = None
-        if not raise_on_duplicate_keys:
-            df, ref_df, pairing_phase_col, in_scope_key_col = _add_lazy_pairing_columns(
+        if matcher is None:
+            results, join_columns, ref_join_columns = _pair_rows_exactly(
                 df,
                 ref_df,
                 pk_column_names,
                 ref_pk_column_names,
                 compare_columns,
-                pairing_scope_col,
-                row_number_col,
+                filter_col,
                 unique_id,
                 null_safe_row_matching,
+                check_missing_records,
+                raise_on_duplicate_keys,
                 row_filter_active=bool(row_filter),
             )
         else:
-            match_count_col = f"__match_count_{unique_id}"
-            for dataset_name, dataset, matching_columns in (
-                ("source", df, pk_column_names),
-                ("reference", ref_df, ref_pk_column_names),
-            ):
-                matchable_rows = dataset.where(F.col(pairing_scope_col)) if dataset_name == "source" else dataset
-                if not null_safe_row_matching:
-                    matchable_rows = matchable_rows.dropna(subset=matching_columns)
-                duplicate_keys = matchable_rows.groupBy(*matching_columns).agg(F.count("*").alias(match_count_col))
-                if not duplicate_keys.where(F.col(match_count_col) > 1).isEmpty():
-                    raise InvalidParameterError(
-                        f"The {dataset_name} dataset contains duplicate matching keys for columns: "
-                        f"{', '.join(matching_columns)}."
-                    )
-            # In-scope source keys and all reference keys are unique here (the checks above raised
-            # otherwise), so a constant sequence number of 1 pairs them one-to-one without a window
-            # shuffle. Out-of-scope source rows are intentionally excluded from the uniqueness check
-            # and may still share a key and take the same 1: they are kept in the output but suppressed
-            # by _add_compare_condition (filter is false and they are not missing), so their pairing
-            # with a reference row never surfaces a violation.
-            df = df.withColumn(row_number_col, F.lit(1))
-            ref_df = ref_df.withColumn(row_number_col, F.lit(1))
+            results, join_columns, ref_join_columns = _pair_rows_fuzzily(
+                df, ref_df, pk_column_names, ref_pk_column_names, matcher, unique_id, spark
+            )
 
-        # The source and reference key lists stay symmetric so the join keys line up.
-        join_columns = [*pk_column_names, row_number_col]
-        ref_join_columns = [*ref_pk_column_names, row_number_col]
-
-        df = df.alias("df")
-        ref_df = ref_df.alias("ref_df")
-
-        results = _match_paired_rows(
-            df,
-            ref_df,
-            pk_column_names,
-            ref_pk_column_names,
-            compare_columns,
-            pairing_scope_col,
-            in_scope_key_col,
-            row_number_col,
-            pairing_phase_col,
-            check_missing_records,
-            null_safe_row_matching,
-        )
         results = _add_row_diffs(results, join_columns, ref_join_columns, row_missing_col, row_extra_col)
         results = _add_column_diffs(
             results, compare_columns, columns_changed_col, null_safe_column_value_matching, abs_tolerance, rel_tolerance
@@ -4728,6 +4867,263 @@ def _generate_field_presence_checks(
             validations.extend(child_checks)
 
     return validations
+
+
+def _similarity_value_expr(value: int | float | str | list[float] | Column, matcher: FuzzyMatcher) -> Column:
+    """
+    Resolves the *value* argument of *is_similar_to*.
+
+    Args:
+        value: A number, string or Column, resolved like *is_equal_to* resolves its value, or for vector methods
+            a list of floats.
+        matcher: The matcher configuration.
+
+    Returns:
+        The value expression; a list becomes an *array<float>* literal.
+
+    Raises:
+        MissingParameterError: If *value* is None.
+        InvalidParameterError: If *value* is a list for *levenshtein*, an empty or non-numeric list, or a
+            number for a vector method.
+    """
+    if value is None:
+        raise MissingParameterError("'value' is required.")
+    if isinstance(value, list):
+        if not matcher.is_vector:
+            raise InvalidParameterError(f"A list 'value' requires a vector method, not '{matcher.method.value}'.")
+        if not value or any(isinstance(item, bool) or not isinstance(item, (int, float)) for item in value):
+            raise InvalidParameterError("A list 'value' must be a non-empty list of numbers.")
+        return F.array(*[F.lit(float(item)) for item in value]).cast("array<float>")
+    if matcher.is_vector and isinstance(value, (int, float)):
+        raise InvalidParameterError(
+            f"'{matcher.method.value}' requires an embedding 'value': a list of floats, a column or an expression."
+        )
+    return get_limit_expr(value)
+
+
+def _similar_reference_check(
+    columns: list[str | Column],
+    ref_columns: list[str | Column],
+    ref_df_name: str | None,
+    ref_table: str | None,
+    matcher: FuzzyMatcher,
+    negate: bool,
+    row_filter: str | None,
+    broadcast_ref: bool,
+    *,
+    as_foreign_key: bool,
+) -> tuple[Column, Callable]:
+    """
+    Builds the condition and closure shared by fuzzy *foreign_key* and *is_similar_to_reference* checks.
+
+    Args:
+        columns: Source key columns (names or expressions).
+        ref_columns: Reference key columns, matched to *columns* by position.
+        ref_df_name: Name of the reference DataFrame.
+        ref_table: Name of the reference table.
+        matcher: The matcher configuration.
+        negate: Whether a row fails when a similar reference value exists, rather than when none exists.
+        row_filter: Optional SQL expression selecting the rows to check.
+        broadcast_ref: Whether to add a broadcast hint to the distinct reference keys.
+        as_foreign_key: Whether to name the result like *foreign_key* rather than *is_similar_to_reference*.
+
+    Returns:
+        A tuple of the violation condition and the closure that applies the check.
+    """
+    key = _resolve_foreign_key_columns(columns, ref_columns, null_safe=False)
+    unique_str = uuid.uuid4().hex
+    condition_col = f"__{key.source_name}_{unique_str}"
+    distance_col = f"__distance_{key.source_name}_{unique_str}"
+    ref_key_names = [f"__ref_key_{index}_{unique_str}" for index in range(len(ref_columns))]
+
+    def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+        """
+        Apply the fuzzy reference check logic to the DataFrame.
+
+        Args:
+            df: The input DataFrame to validate.
+            spark: SparkSession used if reading a reference table and for vector matching.
+            ref_dfs: Dictionary of reference DataFrames (by name).
+
+        Returns:
+            The DataFrame with additional condition and distance columns.
+        """
+        ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
+        ref_keys = ref_df.select(
+            *[_get_column_expr(column).alias(name) for column, name in zip(ref_columns, ref_key_names)]
+        ).distinct()
+        matched = match_best_reference_rows(
+            df, ref_keys, columns, ref_key_names, matcher, distance_col, spark, broadcast_ref
+        )
+        in_scope = reduce(
+            py_operator.and_,
+            [_get_column_expr(column).isNotNull() for column in columns],
+            safe_filter_expr(row_filter),
+        )
+        has_match = F.col(distance_col).isNotNull()
+        return matched.withColumn(condition_col, in_scope & (has_match if negate else ~has_match))
+
+    if as_foreign_key:
+        alias = f"{key.source_name}_{'exists_in' if negate else 'not_exists_in'}_ref_{key.reference_name}"
+    else:
+        alias = f"{key.source_name}_{'similar_to' if negate else 'not_similar_to'}_ref_{key.reference_name}"
+
+    condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.concat_ws(
+            "",
+            F.lit("Value '"),
+            F.when(key.source_display_expression.isNull(), F.lit("null")).otherwise(
+                key.source_display_expression.cast("string")
+            ),
+            F.lit(
+                f"' in column '{key.source_display}' has {'a' if negate else 'no'} similar value in reference column '"
+            ),
+            F.lit(key.reference_display),
+            F.lit(f"' ({matcher.method.value}"),
+            F.concat(F.lit(", distance "), F.col(distance_col).cast("string")),
+            F.lit(")"),
+        ),
+        alias=alias,
+    )
+
+    return condition, apply
+
+
+def _pair_rows_exactly(
+    df: DataFrame,
+    ref_df: DataFrame,
+    pk_column_names: list[str],
+    ref_pk_column_names: list[str],
+    compare_columns: list[str],
+    filter_col: str,
+    unique_id: str,
+    null_safe_row_matching: bool | None,
+    check_missing_records: bool | None,
+    raise_on_duplicate_keys: bool,
+    *,
+    row_filter_active: bool,
+) -> tuple[DataFrame, list[str], list[str]]:
+    """
+    Joins source rows to reference rows on equal matching keys, pairing duplicate keys one-to-one.
+
+    Args:
+        df: The source DataFrame with *filter_col*.
+        ref_df: The reference DataFrame.
+        pk_column_names: Source matching-key columns.
+        ref_pk_column_names: Reference matching-key columns, matched to *pk_column_names* by position.
+        compare_columns: Columns compared for value equality.
+        filter_col: Boolean column marking in-scope source rows.
+        unique_id: Run-unique suffix for helper column names.
+        null_safe_row_matching: Whether matching keys treat nulls as equal.
+        check_missing_records: Whether to use a full outer join so reference-only rows are reported.
+        raise_on_duplicate_keys: Whether to require unique matching keys and pair rows with a single join.
+        row_filter_active: Whether a row filter is set, which selects exact-value pairing.
+
+    Returns:
+        The joined DataFrame (aliased "df" and "ref_df") and the source and reference join-key columns.
+
+    Raises:
+        InvalidParameterError: If *raise_on_duplicate_keys* is True and either dataset has duplicate keys.
+    """
+    pairing_scope_col = f"__match_scope_{unique_id}"
+    df, ref_df = (
+        df.withColumn(pairing_scope_col, F.coalesce(F.col(filter_col), F.lit(False))),
+        ref_df.withColumn(pairing_scope_col, F.lit(True)),
+    )
+    row_number_col = f"__match_row_number_{unique_id}"
+    pairing_phase_col = None
+    in_scope_key_col = None
+    if not raise_on_duplicate_keys:
+        df, ref_df, pairing_phase_col, in_scope_key_col = _add_lazy_pairing_columns(
+            df,
+            ref_df,
+            pk_column_names,
+            ref_pk_column_names,
+            compare_columns,
+            pairing_scope_col,
+            row_number_col,
+            unique_id,
+            null_safe_row_matching,
+            row_filter_active=row_filter_active,
+        )
+    else:
+        match_count_col = f"__match_count_{unique_id}"
+        for dataset_name, dataset, matching_columns in (
+            ("source", df, pk_column_names),
+            ("reference", ref_df, ref_pk_column_names),
+        ):
+            matchable_rows = dataset.where(F.col(pairing_scope_col)) if dataset_name == "source" else dataset
+            if not null_safe_row_matching:
+                matchable_rows = matchable_rows.dropna(subset=matching_columns)
+            duplicate_keys = matchable_rows.groupBy(*matching_columns).agg(F.count("*").alias(match_count_col))
+            if not duplicate_keys.where(F.col(match_count_col) > 1).isEmpty():
+                raise InvalidParameterError(
+                    f"The {dataset_name} dataset contains duplicate matching keys for columns: "
+                    f"{', '.join(matching_columns)}."
+                )
+        df = df.withColumn(row_number_col, F.lit(1))
+        ref_df = ref_df.withColumn(row_number_col, F.lit(1))
+
+    # The source and reference key lists stay symmetric so the join keys line up.
+    join_columns = [*pk_column_names, row_number_col]
+    ref_join_columns = [*ref_pk_column_names, row_number_col]
+
+    results = _match_paired_rows(
+        df.alias("df"),
+        ref_df.alias("ref_df"),
+        pk_column_names,
+        ref_pk_column_names,
+        compare_columns,
+        pairing_scope_col,
+        in_scope_key_col,
+        row_number_col,
+        pairing_phase_col,
+        check_missing_records,
+        null_safe_row_matching,
+    )
+    return results, join_columns, ref_join_columns
+
+
+def _pair_rows_fuzzily(
+    df: DataFrame,
+    ref_df: DataFrame,
+    pk_column_names: list[str],
+    ref_pk_column_names: list[str],
+    matcher: FuzzyMatcher,
+    unique_id: str,
+    spark: SparkSession,
+) -> tuple[DataFrame, list[str], list[str]]:
+    """
+    Joins every source row to its best fuzzy-matching reference row.
+
+    A constant source column and the match distance serve as the non-null join sentinels used by
+    *_add_row_diffs*, so unmatched source rows are reported as extra and no row is reported as missing.
+
+    Args:
+        df: The source DataFrame.
+        ref_df: The reference DataFrame.
+        pk_column_names: Source matching-key columns.
+        ref_pk_column_names: Reference matching-key columns, matched to *pk_column_names* by position.
+        matcher: The matcher configuration.
+        unique_id: Run-unique suffix for helper column names.
+        spark: The active SparkSession.
+
+    Returns:
+        The joined DataFrame (aliased "df" and "ref_df") and the source and reference join-key columns.
+    """
+    present_col = f"__row_present_{unique_id}"
+    distance_col = f"__match_distance_{unique_id}"
+    results = match_best_reference_rows(
+        df.withColumn(present_col, F.lit(1)),
+        ref_df,
+        pk_column_names,
+        ref_pk_column_names,
+        matcher,
+        distance_col,
+        spark,
+    )
+    return results, [*pk_column_names, present_col], [*ref_pk_column_names, distance_col]
 
 
 def _pairing_value_order(df: DataFrame, ref_df: DataFrame, compare_columns: list[str]) -> list[Column]:

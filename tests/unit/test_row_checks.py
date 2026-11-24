@@ -11,6 +11,7 @@ from databricks.labs.dqx.check_funcs import (
     get_normalized_column_and_expr,
     is_equal_to,
     is_not_equal_to,
+    is_similar_to,
     is_in_range,
     is_not_in_range,
     is_not_greater_than,
@@ -517,3 +518,52 @@ def test_row_check_rejects_invalid_arguments(
 ):
     with pytest.raises(expected_error, match=re.escape(expected_message)):
         check_func(**kwargs)
+
+
+def test_is_similar_to_builds_levenshtein_condition():
+    condition = str(is_similar_to("a", "'apple'", {"max_distance": 1}))
+    assert "levenshtein(CAST(a AS STRING), CAST('apple' AS STRING))" in condition
+    assert "AS a_not_similar_to_value" in condition
+
+
+def test_is_similar_to_normalizes_levenshtein_values():
+    condition = str(is_similar_to("a", "b", {"min_similarity": 0.8, "case_sensitive": False, "trim_strings": True}))
+    assert "levenshtein(lower(trim(CAST(a AS STRING))), lower(trim(CAST(b AS STRING))))" in condition
+    assert "greatest(length(lower(trim(CAST(a AS STRING)))), length(lower(trim(CAST(b AS STRING)))))" in condition
+
+
+@pytest.mark.parametrize(
+    "method, sql_function", [("vector_cosine", "vector_cosine_similarity"), ("vector_l2", "vector_l2_distance")]
+)
+def test_is_similar_to_builds_vector_condition_from_a_list(method, sql_function):
+    condition = str(is_similar_to("e", [0.5, 1], {"method": method, "max_distance": 0.2}))
+    assert f"CallFunction('{sql_function}', e, CAST(array(0.5, 1.0) AS ARRAY<FLOAT>))" in condition
+
+
+def test_is_similar_to_compares_vector_columns():
+    condition = str(is_similar_to("e", "ref_e", {"method": "vector_l2", "max_distance": 0.2}))
+    assert "CallFunction('vector_l2_distance', e, ref_e)" in condition
+
+
+def test_is_similar_to_skips_null_values():
+    condition = str(is_similar_to("a", "b", {"max_distance": 1}))
+    assert "and(and(isNotNull(a), isNotNull(b)), not(coalesce(" in condition
+
+
+@pytest.mark.parametrize(
+    "value, fuzzy_match, error, message",
+    [
+        (None, {"max_distance": 1}, MissingParameterError, "'value' is required"),
+        ("'a'", None, MissingParameterError, "'fuzzy_match' is required"),
+        ("'a'", {"method": "jaro_winkler", "max_distance": 1}, InvalidParameterError, "Invalid fuzzy match method"),
+        ("'a'", {}, InvalidParameterError, "exactly one of 'max_distance' or 'min_similarity'"),
+        ([0.1], {"max_distance": 1}, InvalidParameterError, "A list 'value' requires a vector method"),
+        ([], {"method": "vector_l2", "max_distance": 1}, InvalidParameterError, "non-empty list of numbers"),
+        (["x"], {"method": "vector_l2", "max_distance": 1}, InvalidParameterError, "non-empty list of numbers"),
+        ([True], {"method": "vector_l2", "max_distance": 1}, InvalidParameterError, "non-empty list of numbers"),
+        (0.5, {"method": "vector_cosine", "max_distance": 1}, InvalidParameterError, "requires an embedding 'value'"),
+    ],
+)
+def test_is_similar_to_rejects_invalid_arguments(value, fuzzy_match, error, message):
+    with pytest.raises(error, match=message):
+        is_similar_to("a", value, fuzzy_match)

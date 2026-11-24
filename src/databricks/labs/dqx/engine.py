@@ -49,6 +49,7 @@ from databricks.labs.dqx.reporting_columns import ColumnArguments, DefaultColumn
 from databricks.labs.dqx.rule import (
     Criticality,
     CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE,
+    CHECK_FUNC_MIN_DBR_VERSION_CONDITION_ATTRIBUTE,
     CHECK_FUNC_ROW_PRESERVING_ATTRIBUTE,
     DQDatasetRule,
     DQRule,
@@ -489,7 +490,8 @@ class DQEngineCore(DQEngineCoreBase):
     def _validate_dbr_version_requirements(self, checks: list[DQRule]) -> None:
         """Raise InvalidCheckError if the current Databricks Runtime version is below the version required by any check.
 
-        The requirement is declared by decorating a check function with *requires_dbr_version("major.minor")*.
+        The requirement is declared by decorating a check function with *requires_dbr_version("major.minor")*,
+        optionally with a *when* condition that limits it to rules whose arguments satisfy the condition.
         The current DBR version is resolved via the *current_version().dbr_version* Spark SQL function and compared
         as a *(major, minor)* tuple. The version string may carry a suffix (for example *"18.2.x-photon-scala2.13"*
         on serverless or *"15.4 LTS"*), and in Lakeflow Spark Declarative Pipelines it carries a runtime prefix
@@ -510,9 +512,7 @@ class DQEngineCore(DQEngineCoreBase):
                 version string has no leading *major.minor* and cannot be parsed.
         """
         versioned = {
-            c.check_func.__name__: getattr(c.check_func, CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE)
-            for c in checks
-            if getattr(c.check_func, CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE, None) is not None
+            c.check_func.__name__: required for c in checks if (required := _required_dbr_version(c)) is not None
         }
 
         if not versioned:
@@ -759,6 +759,28 @@ def _keeps_input_rows(check: DQRule) -> bool:
     with the *row_preserving* decorator; unmarked (e.g. custom) checks are treated as possibly changing the rows.
     """
     return isinstance(check, DQRowRule) or getattr(check.check_func, CHECK_FUNC_ROW_PRESERVING_ATTRIBUTE, False)
+
+
+def _required_dbr_version(check: DQRule) -> tuple[int, int] | None:
+    """
+    Returns the minimum Databricks Runtime version that *check* requires, or None if it has no requirement.
+
+    A requirement declared with a *when* condition applies only when the condition holds for the check's
+    arguments, bound by parameter name.
+
+    Args:
+        check: The rule to inspect.
+
+    Returns:
+        The required *(major, minor)* version, or None.
+    """
+    required = getattr(check.check_func, CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE, None)
+    condition = getattr(check.check_func, CHECK_FUNC_MIN_DBR_VERSION_CONDITION_ATTRIBUTE, None)
+    if required is None or condition is None:
+        return required
+    args, kwargs = check.prepare_check_func_args_and_kwargs()
+    arguments = inspect.signature(check.check_func).bind_partial(*args, **kwargs).arguments
+    return required if condition(dict(arguments)) else None
 
 
 def persist_if_supported(df: DataFrame, spark: SparkSession) -> bool:

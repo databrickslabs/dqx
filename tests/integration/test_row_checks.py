@@ -7,6 +7,7 @@ from pyspark.testing.utils import assertDataFrameEqual
 from pyspark.errors import AnalysisException
 
 from databricks.labs.dqx.check_funcs import (
+    is_similar_to,
     is_equal_to,
     is_not_equal_to,
     is_in_range,
@@ -54,6 +55,8 @@ from databricks.labs.dqx.check_funcs import (
 )
 from databricks.labs.dqx.pii import pii_detection_funcs
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.rule import DQRowRule
 
 SCHEMA = "a: string, b: int"
 
@@ -5575,3 +5578,101 @@ def test_col_is_in_list_bare_string_resolves_as_column(spark):
         checked_schema,
     )
     assertDataFrameEqual(actual, expected)
+
+
+def test_is_similar_to_levenshtein(spark: SparkSession):
+    test_df = spark.createDataFrame(
+        [
+            ["apple", "apple"],
+            ["aple", "apply"],
+            ["APPLE ", "apple"],
+            ["cherry", "berry"],
+            [None, "apple"],
+            ["kiwi", None],
+        ],
+        "a: string, b: string",
+    )
+
+    actual = test_df.select(
+        is_similar_to("a", "'apple'", {"max_distance": 1}).alias("max_distance"),
+        is_similar_to("a", "'apple'", {"min_similarity": 0.8, "case_sensitive": False, "trim_strings": True}).alias(
+            "normalized"
+        ),
+        is_similar_to("a", "b", {"max_distance": 2}).alias("column_value"),
+    )
+
+    def not_similar(value: str, other: str, distance: float) -> str:
+        return f"Value '{value}' in column 'a' is not similar to value '{other}' (levenshtein, distance {distance})"
+
+    expected = spark.createDataFrame(
+        [
+            [None, None, None],
+            [None, None, None],
+            [not_similar("APPLE ", "apple", 6.0), None, not_similar("APPLE ", "apple", 6.0)],
+            [not_similar("cherry", "apple", 6.0), not_similar("cherry", "apple", 6.0), None],
+            [None, None, None],
+            [not_similar("kiwi", "apple", 5.0), not_similar("kiwi", "apple", 5.0), None],
+        ],
+        "max_distance: string, normalized: string, column_value: string",
+    )
+    assertDataFrameEqual(actual, expected)
+
+
+def test_is_similar_to_levenshtein_similarity_boundary(spark: SparkSession):
+    test_df = spark.createDataFrame([["abcd"], ["abce"], ["abxy"]], "a: string")
+
+    rows = test_df.select("a", is_similar_to("a", "'abcd'", {"min_similarity": 0.75}).alias("violation")).collect()
+
+    assert {row["a"] for row in rows if row["violation"] is not None} == {"abxy"}
+
+
+def test_is_similar_to_vector_l2(spark: SparkSession, skip_if_classic_compute):
+    test_df = spark.createDataFrame(
+        [["exact", [0.0, 0.0]], ["boundary", [3.0, 4.0]], ["far", [6.0, 8.0]], ["missing", None]],
+        "a: string, embedding: array<float>",
+    )
+
+    rows = test_df.select(
+        "a", is_similar_to("embedding", [0.0, 0.0], {"method": "vector_l2", "max_distance": 5}).alias("violation")
+    ).collect()
+    violations = {row["a"]: row["violation"] for row in rows}
+
+    assert {name for name, violation in violations.items() if violation is not None} == {"far"}
+    assert violations["far"] == (
+        "Value '[6.0, 8.0]' in column 'embedding' is not similar to value '[0.0, 0.0]' (vector_l2, distance 10.0)"
+    )
+
+
+def test_is_similar_to_vector_cosine_between_columns(spark: SparkSession, skip_if_classic_compute):
+    test_df = spark.createDataFrame(
+        [
+            ["same", [1.0, 0.0], [2.0, 0.0]],
+            ["orthogonal", [1.0, 0.0], [0.0, 1.0]],
+            ["zero", [0.0, 0.0], [1.0, 0.0]],
+            ["missing", [1.0, 0.0], None],
+        ],
+        "a: string, embedding: array<float>, ref_embedding: array<float>",
+    )
+
+    rows = test_df.select(
+        "a",
+        is_similar_to("embedding", "ref_embedding", {"method": "vector_cosine", "min_similarity": 1.0}).alias(
+            "violation"
+        ),
+    ).collect()
+
+    assert {row["a"] for row in rows if row["violation"] is not None} == {"orthogonal", "zero"}
+
+
+def test_is_similar_to_vector_is_supported_on_serverless(ws, spark: SparkSession, skip_if_classic_compute):
+    test_df = spark.createDataFrame([["near", [1.0, 0.0]], ["far", [0.0, 1.0]]], "a: string, embedding: array<float>")
+    rule = DQRowRule(
+        criticality="error",
+        check_func=is_similar_to,
+        column="embedding",
+        check_func_kwargs={"value": [1.0, 0.0], "fuzzy_match": {"method": "vector_cosine", "max_distance": 0.1}},
+    )
+
+    rows = DQEngine(ws).apply_checks(test_df, [rule]).select("a", "_errors").collect()
+
+    assert {row["a"] for row in rows if row["_errors"]} == {"far"}
