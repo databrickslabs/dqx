@@ -31,6 +31,7 @@ __all__ = [
     "normalize_bound_args",
     "register_for_original_columns_preselection",
     "CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE",
+    "CHECK_FUNC_MIN_DBR_VERSION_CONDITION_ATTRIBUTE",
     "register_rule",
     "requires_dbr_version",
     "row_preserving",
@@ -41,6 +42,7 @@ CHECK_FUNC_REGISTRY: dict[str, str] = {}
 CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION: set[str] = set()
 
 CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE = "dqx_requires_dbr_version"
+CHECK_FUNC_MIN_DBR_VERSION_CONDITION_ATTRIBUTE = "dqx_requires_dbr_version_when"
 CHECK_FUNC_ROW_PRESERVING_ATTRIBUTE = "dqx_row_preserving"
 
 
@@ -60,13 +62,16 @@ def register_for_original_columns_preselection() -> Callable:
     return wrapper
 
 
-def requires_dbr_version(version: str) -> Callable:
+def requires_dbr_version(version: str, when: Callable[[dict[str, object]], bool] | None = None) -> Callable:
     """Annotates a check function with a minimum Databricks Runtime version requirement.
 
     Parses *version* into a *(major, minor)* tuple and sets it as the
     *dqx_requires_dbr_version* attribute on the decorated function. The engine reads
     this attribute before execution and raises an error if the current Databricks
     Runtime version is lower than the required one, failing the entire run.
+
+    When *when* is given, the requirement applies only to rules for which *when* returns True. The engine
+    calls it with the rule's check function arguments, bound by parameter name.
 
     Example usage:
 
@@ -79,6 +84,8 @@ def requires_dbr_version(version: str) -> Callable:
 
     Args:
         version: The minimum required Databricks Runtime version in *"major.minor"* format (e.g., *"15.1"*).
+        when: Optional predicate over the rule's check function arguments that decides whether the
+            requirement applies. The requirement always applies when omitted.
 
     Returns:
         A decorator that annotates the function with the DBR version requirement.
@@ -102,6 +109,8 @@ def requires_dbr_version(version: str) -> Callable:
 
     def wrapper(func: Callable) -> Callable:
         setattr(func, CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE, parsed)
+        if when is not None:
+            setattr(func, CHECK_FUNC_MIN_DBR_VERSION_CONDITION_ATTRIBUTE, when)
         return func
 
     return wrapper

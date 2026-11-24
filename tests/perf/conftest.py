@@ -75,7 +75,8 @@ def all_row_checks():
 def all_dataset_checks():
     file_path = Path(__file__).parent.parent / "resources" / "all_dataset_checks.yaml"
     with open(file_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        checks = yaml.safe_load(f)
+    return [check for check in checks if "fuzzy_matching_options" not in check["check"].get("arguments", {})]
 
 
 @pytest.fixture

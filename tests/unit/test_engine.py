@@ -724,6 +724,84 @@ def test_validate_dbr_version_accepts_dlt_prefixed_version_meeting_requirement_i
     engine._validate_dbr_version_requirements([DQRowRule(check_func=_check_requires_dbr_17_1, column="a")])
 
 
+_VECTOR_MATCH = {"method": "vector_cosine", "min_similarity": 0.9}
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        DQRowRule(
+            check_func=check_funcs.is_similar_to,
+            column="a",
+            check_func_kwargs={"value": [0.1, 0.2], "fuzzy_matching_options": _VECTOR_MATCH},
+        ),
+        DQRowRule(check_func=check_funcs.is_similar_to, column="a", check_func_args=[[0.1, 0.2], _VECTOR_MATCH]),
+        DQDatasetRule(
+            check_func=check_funcs.foreign_key,
+            columns=["a"],
+            check_func_kwargs={"ref_columns": ["a"], "ref_df_name": "ref", "fuzzy_matching_options": _VECTOR_MATCH},
+        ),
+        DQDatasetRule(
+            check_func=check_funcs.is_similar_to_reference,
+            columns=["a"],
+            check_func_kwargs={"ref_columns": ["a"], "ref_df_name": "ref", "fuzzy_matching_options": _VECTOR_MATCH},
+        ),
+        DQDatasetRule(
+            check_func=check_funcs.compare_datasets,
+            columns=["a"],
+            check_func_kwargs={"ref_columns": ["a"], "ref_df_name": "ref", "fuzzy_matching_options": _VECTOR_MATCH},
+        ),
+    ],
+)
+@pytest.mark.parametrize("dbr_version", ["18.0", "17.3", "15.4 LTS"])
+def test_apply_checks_requires_dbr_18_1_for_vector_fuzzy_matching(rule, dbr_version):
+    engine = _engine_returning_dbr_version(dbr_version)
+    df = Mock()
+    df.columns = ["a"]
+    with pytest.raises(InvalidCheckError, match=r"require Databricks Runtime >= 18\.1"):
+        engine.apply_checks(df, [rule])
+
+
+@pytest.mark.parametrize("dbr_version", ["18.1", "18.2.x-photon-scala2.13", "18.x-photon-scala2.13", "19.0"])
+def test_validate_dbr_version_accepts_vector_fuzzy_matching_on_dbr_18_1_and_above(dbr_version):
+    engine = _engine_returning_dbr_version(dbr_version)
+    rule = DQRowRule(
+        check_func=check_funcs.is_similar_to,
+        column="a",
+        check_func_kwargs={"value": [0.1, 0.2], "fuzzy_matching_options": _VECTOR_MATCH},
+    )
+    engine._validate_dbr_version_requirements([rule])
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        DQRowRule(
+            check_func=check_funcs.is_similar_to,
+            column="a",
+            check_func_kwargs={"value": "'x'", "fuzzy_matching_options": {"max_distance": 1}},
+        ),
+        DQDatasetRule(
+            check_func=check_funcs.foreign_key,
+            columns=["a"],
+            check_func_kwargs={
+                "ref_columns": ["a"],
+                "ref_df_name": "ref",
+                "fuzzy_matching_options": {"max_distance": 1},
+            },
+        ),
+        DQDatasetRule(
+            check_func=check_funcs.foreign_key,
+            columns=["a"],
+            check_func_kwargs={"ref_columns": ["a"], "ref_df_name": "ref"},
+        ),
+    ],
+)
+def test_validate_dbr_version_skips_non_vector_fuzzy_matching(rule):
+    engine = _engine_with_sql_side_effect(AnalysisException("current_version() not found"))
+    engine._validate_dbr_version_requirements([rule])
+
+
 @pytest.mark.parametrize(
     "dbr_version, pipelines_id",
     [("dlt:18.3.8-delta-pipelines-photon", None), ("other:18.3", None), ("other:18.3", "pipeline-123")],

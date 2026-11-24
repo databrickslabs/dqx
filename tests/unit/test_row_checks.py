@@ -11,6 +11,7 @@ from databricks.labs.dqx.check_funcs import (
     get_normalized_column_and_expr,
     is_equal_to,
     is_not_equal_to,
+    is_similar_to,
     is_in_range,
     is_not_in_range,
     is_not_greater_than,
@@ -517,3 +518,22 @@ def test_row_check_rejects_invalid_arguments(
 ):
     with pytest.raises(expected_error, match=re.escape(expected_message)):
         check_func(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "value, fuzzy_matching_options, error, message",
+    [
+        (None, {"max_distance": 1}, MissingParameterError, "'value' is required"),
+        ("'a'", None, MissingParameterError, "'fuzzy_match' is required"),
+        ("'a'", {"method": "jaro_winkler", "max_distance": 1}, InvalidParameterError, "Invalid fuzzy match method"),
+        ("'a'", {}, InvalidParameterError, "exactly one of 'max_distance' or 'min_similarity'"),
+        ([0.1], {"max_distance": 1}, InvalidParameterError, "A list 'value' requires a vector method"),
+        ([], {"method": "vector_l2", "max_distance": 1}, InvalidParameterError, "non-empty list of numbers"),
+        (["x"], {"method": "vector_l2", "max_distance": 1}, InvalidParameterError, "non-empty list of numbers"),
+        ([True], {"method": "vector_l2", "max_distance": 1}, InvalidParameterError, "non-empty list of numbers"),
+        (0.5, {"method": "vector_cosine", "max_distance": 1}, InvalidParameterError, "requires an embedding 'value'"),
+    ],
+)
+def test_is_similar_to_rejects_invalid_arguments(value, fuzzy_matching_options, error, message):
+    with pytest.raises(error, match=message):
+        is_similar_to("a", value, fuzzy_matching_options)

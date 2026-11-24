@@ -164,6 +164,50 @@
       - ref_col2
       ref_df_name: ref_df_key
 
+# foreign_key check with fuzzy (levenshtein) matching
+- criticality: error
+  check:
+    function: foreign_key
+    arguments:
+      columns:
+      - col1
+      ref_columns:
+      - ref_col1
+      ref_df_name: ref_df_key
+      fuzzy_matching_options:
+        method: levenshtein
+        max_distance: 1
+        case_sensitive: false
+
+# is_similar_to_reference check using levenshtein distance
+- criticality: error
+  check:
+    function: is_similar_to_reference
+    arguments:
+      columns:
+      - col1
+      ref_columns:
+      - ref_col1
+      ref_df_name: ref_df_key
+      fuzzy_matching_options:
+        max_distance: 1
+      broadcast_ref: true
+
+# is_similar_to_reference check using normalized levenshtein similarity
+- criticality: warn
+  check:
+    function: is_similar_to_reference
+    arguments:
+      columns:
+      - col1
+      ref_columns:
+      - ref_col1
+      ref_df_name: ref_df_key
+      fuzzy_matching_options:
+        method: levenshtein
+        min_similarity: 0.75
+        trim_strings: true
+
 # sql_query check with merge_columns (row-level validation)
 - criticality: error
   check:
@@ -211,6 +255,19 @@
       - ref_col1
       - ref_col2
       ref_df_name: ref_df_key
+
+# compare_datasets check with fuzzy row matching
+- criticality: error
+  check:
+    function: compare_datasets
+    arguments:
+      columns:
+      - col1
+      ref_columns:
+      - ref_col1
+      ref_df_name: ref_df_key
+      fuzzy_matching_options:
+        max_distance: 1
 
 # aggr_matches_dataset check — row count matches the reference dataset (validates ingestion completeness)
 - criticality: error
