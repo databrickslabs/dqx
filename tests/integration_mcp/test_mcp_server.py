@@ -632,12 +632,13 @@ def _assert_tool_calls_are_instrumented(client: McpClient, table: str) -> None:
 
 
 def _runner_reference_read_paths(ws: WorkspaceClient, ref_table: str, runner_sp: str) -> list[str]:
-    """List every way *runner_sp* could read *ref_table* directly, without the caller's OBO view.
+    """List the ways *runner_sp* could read *ref_table* without the caller's OBO view.
 
-    Covers ownership of the table, its schema, and its catalog, plus direct and inherited SELECT or
-    ALL_PRIVILEGES from Unity Catalog's effective-permissions API. It does not detect metastore-admin
-    rights. An inspection failure is reported as a path, because an unverified precondition must not
-    count as a proven one.
+    Covers ownership of the table, its schema, or its catalog (counted as read access, which errs
+    toward failing), plus direct and inherited SELECT or ALL_PRIVILEGES granted to *runner_sp*
+    itself. It does not inspect grants through group membership or metastore-admin rights. An
+    inspection failure is reported as a path, because an unverified precondition must not count as
+    a proven one.
     """
     try:
         return _ownership_read_paths(ws, ref_table, runner_sp) + _privilege_read_paths(ws, ref_table, runner_sp)
@@ -675,19 +676,22 @@ def _assert_runner_cannot_read_reference_table(ref_table: str, runner_sp: str) -
     the tables, so that configuration covers the reference-view path and says so instead.
     """
     ws = WorkspaceClient()  # the seeding identity, which is also the default runner
-    if not runner_sp or runner_sp.lower() == (ws.current_user.me().user_name or "").lower():
-        sys.stderr.write(
-            "note: the runner is the deploying identity, which owns the seeded tables, so the foreign_key "
-            "step covers the reference-view path but not the authorization boundary. Set "
-            "DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID to a dedicated runner SP to cover it.\n"
-        )
+    if not runner_sp:
+        reason = "the deployment did not report the runner identity"
+    elif runner_sp.lower() == (ws.current_user.me().user_name or "").lower():
+        reason = "the runner is the deploying identity, which owns the seeded tables"
+    else:
+        read_paths = _runner_reference_read_paths(ws, ref_table, runner_sp)
+        assert not read_paths, f"the runner can read {ref_table} without the caller's view: {'; '.join(read_paths)}"
         return
-    read_paths = _runner_reference_read_paths(ws, ref_table, runner_sp)
-    assert not read_paths, f"the runner can read {ref_table} directly: {'; '.join(read_paths)}"
+    sys.stderr.write(
+        f"note: {reason}, so the foreign_key step covers the reference-view path but not the authorization "
+        "boundary. Set DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID to a dedicated runner SP to cover it.\n"
+    )
 
 
 def _assert_foreign_key_violation_reads_reference_view(run: dict) -> None:
-    """Only Grace's 'IN' row violates the foreign key, and no generated view name is exposed."""
+    """Only Grace's 'IN' row violates the foreign key, and no generated view name leaks into the result."""
     summary = {rule["rule_name"]: rule["error_count"] for rule in run["rule_summary"]}
     assert summary.get(COUNTRY_FOREIGN_KEY) == 1, run["rule_summary"]
     violating = [
@@ -696,7 +700,8 @@ def _assert_foreign_key_violation_reads_reference_view(run: dict) -> None:
         if any(error["name"] == COUNTRY_FOREIGN_KEY for error in row.get("_errors") or [])
     ]
     assert violating == [7], run["error_sample"]
-    # Checks reach the runner keyed by the original table name, never the generated view name.
+    # The violation above is the proof that the reference view was read. This only guards against
+    # internal temp-view names leaking into the result returned to the caller.
     assert not _GENERATED_VIEW_NAME.search(json.dumps(run, default=str)), run
 
 
