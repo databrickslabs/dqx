@@ -700,9 +700,113 @@ def _assert_foreign_key_violation_reads_reference_view(run: dict) -> None:
         if any(error["name"] == COUNTRY_FOREIGN_KEY for error in row.get("_errors") or [])
     ]
     assert violating == [7], run["error_sample"]
-    # The violation above is the proof that the reference view was read. This only guards against
-    # internal temp-view names leaking into the result returned to the caller.
+    # With a dedicated runner SP that cannot read the reference table (checked by
+    # _assert_runner_cannot_read_reference_table), the violation above proves the reference view was
+    # read. When the runner is the deploying identity, it could read the table directly, so the step
+    # then only covers the reference-view path. This guards against internal temp-view names leaking
+    # into the result returned to the caller.
     assert not _GENERATED_VIEW_NAME.search(json.dumps(run, default=str)), run
+
+
+def _reference_checks_for_every_supported_function(table: str, ref_table: str) -> list[dict]:
+    """One check for each function that takes *ref_table*, plus the reference-view edge cases.
+
+    Only the two foreign_key checks can fail, each on Grace's 'IN' row. The second spells the
+    reference table in upper case, so the server must de-duplicate it onto the same view (Unity
+    Catalog names are case-insensitive). The other three reference the monitored table itself,
+    which the server serves from the monitored table's own view.
+    """
+    upper_case_reference = country_foreign_key_check(ref_table.upper())
+    upper_case_reference["name"] = f"{COUNTRY_FOREIGN_KEY}_upper"
+    return [
+        country_foreign_key_check(ref_table),
+        upper_case_reference,
+        {
+            "name": "customer_count_matches_itself",
+            "criticality": "error",
+            "check": {"function": "aggr_matches_dataset", "arguments": {"column": "customer_id", "ref_table": table}},
+        },
+        {
+            "name": "schema_matches_itself",
+            "criticality": "error",
+            "check": {"function": "has_valid_schema", "arguments": {"ref_table": table}},
+        },
+        {
+            "name": "rows_match_themselves",
+            "criticality": "error",
+            "check": {
+                "function": "compare_datasets",
+                "arguments": {"columns": ["customer_id"], "ref_columns": ["customer_id"], "ref_table": table},
+            },
+        },
+    ]
+
+
+def _assert_every_reference_function_reads_its_view(client: McpClient, table: str, ref_table: str) -> None:
+    """Every reference-capable check runs through the caller's views, not the runner's own grants.
+
+    Covers each check function the server adapts (foreign_key, aggr_matches_dataset,
+    has_valid_schema in reference mode, compare_datasets), a reference that differs from another
+    only by case, and references to the monitored table itself.
+    """
+    run = client.call(
+        "run_checks", {"table_name": table, "checks": _reference_checks_for_every_supported_function(table, ref_table)}
+    )
+    summary = {rule["rule_name"]: rule["error_count"] for rule in run["rule_summary"]}
+    assert summary == {COUNTRY_FOREIGN_KEY: 1, f"{COUNTRY_FOREIGN_KEY}_upper": 1}, run["rule_summary"]
+    assert run["invalid_rows"] == 1, run
+    assert not _GENERATED_VIEW_NAME.search(json.dumps(run, default=str)), run
+
+
+def _temp_views(tmp_schema: str) -> set[str]:
+    rows = execute_sql(
+        f"SELECT table_name FROM {CATALOG}.information_schema.views WHERE lower(table_schema) = '{tmp_schema.lower()}'"
+    )
+    return {row[0] for row in rows}
+
+
+def _assert_bad_reference_tables_fail_before_submission(
+    client: McpClient, table: str, seed_schema: str, tmp_schema: str
+) -> None:
+    """A reference the caller cannot expose fails the call up front and leaves no temp view behind.
+
+    The server creates the monitored table's view first, so each case also proves it drops that view
+    when a reference fails. A missing table fails view creation; a name that is not catalog.schema.table
+    is rejected before any SQL runs.
+    """
+    before = _temp_views(tmp_schema) if tmp_schema else set()
+    cases = {
+        f"{seed_schema}.no_such_reference_table": "Cannot create a temporary view over reference table",
+        "not_a_three_part_name": "Invalid reference table name",
+    }
+    for ref_table, expected in cases.items():
+        arguments = {"table_name": table, "checks": [country_foreign_key_check(ref_table)]}
+        result = _mcp_request(
+            client.url, client.current_token(), "tools/call", {"name": "run_checks", "arguments": arguments}
+        )
+        text = json.dumps(result, default=str)
+        assert result.get("isError") and expected in text, f"{ref_table!r} should fail with '{expected}': {result}"
+        assert "run_id" not in text, f"{ref_table!r} must fail before a job is submitted: {result}"
+    if tmp_schema:
+        leaked = _temp_views(tmp_schema) - before
+        assert not leaked, f"a failed reference left temp views behind: {sorted(leaked)}"
+
+
+def _assert_apply_reads_reference_view(client: McpClient, table: str, ref_table: str) -> None:
+    """apply_checks_and_save_to_table gives the runner the same reference views as run_checks."""
+    applied = client.call(
+        "apply_checks_and_save_to_table",
+        {
+            "table_name": table,
+            "checks": [country_foreign_key_check(ref_table)],
+            "output_name": "customers_fk_clean",
+            "quarantine_name": "customers_fk_quarantine",
+            "mode": "overwrite",
+        },
+    )
+    # Only Grace's 'IN' row violates the foreign key.
+    assert applied["quarantine_rows"] == 1, applied
+    assert applied["output_rows"] == EXPECTED_TOTAL_ROWS - 1, applied
 
 
 def test_mcp_server_end_to_end(workspace_auth, app_auth):
@@ -766,6 +870,13 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
         assert run["valid_rows"] == EXPECTED_TOTAL_ROWS - EXPECTED_INVALID_ROWS
         assert run["error_sample"] and run["rule_summary"]
         _assert_foreign_key_violation_reads_reference_view(run)
+
+        # 8b. Every reference-capable check function, case-insensitive de-duplication and
+        #     self-references; bad references fail up front without leaking views; and the
+        #     persisting tool gets the same reference views.
+        _assert_every_reference_function_reads_its_view(client, table, data["ref_table"])
+        _assert_bad_reference_tables_fail_before_submission(client, table, data["schema"], app.get("tmp_schema") or "")
+        _assert_apply_reads_reference_view(client, table, data["ref_table"])
 
         # 9-10. Persisting tools (save_checks -> load_checks round-trip, then
         #       apply_checks_and_save_to_table) — both write to the caller's private per-user schema.
