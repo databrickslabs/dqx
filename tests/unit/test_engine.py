@@ -603,14 +603,7 @@ def test_preselect_original_columns_no_op_when_columns_already_in_kwargs(monkeyp
 # --- Streaming support validation tests ---
 
 
-def _streaming_df(columns: list[str]) -> Mock:
-    df = create_autospec(engine_module.DataFrame)
-    df.columns = columns
-    df.isStreaming = True
-    return df
-
-
-def test_apply_checks_rejects_streaming_unsupported_dataset_checks():
+def test_apply_checks_rejects_streaming_unsupported_dataset_checks(make_streaming_df):
     ws = create_autospec(WorkspaceClient)
     spark = create_autospec(SparkSession)
     engine = DQEngineCore(workspace_client=ws, spark=spark)
@@ -627,7 +620,7 @@ def test_apply_checks_rejects_streaming_unsupported_dataset_checks():
     ]
 
     with pytest.raises(InvalidCheckError, match="not supported on streaming DataFrames") as exc_info:
-        engine.apply_checks(_streaming_df(["a"]), checks)
+        engine.apply_checks(make_streaming_df(["a"]), checks)
 
     message = str(exc_info.value)
     assert "a_count_max (is_aggr_not_greater_than), a_unique (is_unique)" in message
@@ -635,14 +628,14 @@ def test_apply_checks_rejects_streaming_unsupported_dataset_checks():
     assert "foreachBatch" in message
 
 
-def test_apply_checks_and_split_rejects_streaming_unsupported_dataset_checks():
+def test_apply_checks_and_split_rejects_streaming_unsupported_dataset_checks(make_streaming_df):
     ws = create_autospec(WorkspaceClient)
     spark = create_autospec(SparkSession)
     engine = DQEngineCore(workspace_client=ws, spark=spark)
     checks = [DQDatasetRule(criticality="error", check_func=check_funcs.is_unique, columns=["a"], name="a_unique")]
 
     with pytest.raises(InvalidCheckError, match=r"not supported on streaming DataFrames.*a_unique \(is_unique\)"):
-        engine.apply_checks_and_split(_streaming_df(["a"]), checks)
+        engine.apply_checks_and_split(make_streaming_df(["a"]), checks)
 
 
 # --- DBR version validation error path tests ---

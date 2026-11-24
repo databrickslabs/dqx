@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, Mock, create_autospec
 
 import pytest
 from databricks.sdk import WorkspaceClient
+from pyspark.sql import DataFrame
 
 from databricks.labs.dqx.actions.base import ActionContext, ActionServices
 from databricks.labs.dqx.actions.delivery import WebhookClient
@@ -55,3 +56,16 @@ def profiler(mock_workspace_client, mock_spark):
     inst = DQProfiler(workspace_client=mock_workspace_client, spark=mock_spark)
     inst.llm_engine = None
     return inst
+
+
+@pytest.fixture
+def make_streaming_df():
+    """Factory for an autospec streaming DataFrame with the given columns."""
+
+    def create(columns: list[str]) -> DataFrame:
+        df = create_autospec(DataFrame)
+        df.columns = columns
+        df.isStreaming = True
+        return df
+
+    return create

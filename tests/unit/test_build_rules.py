@@ -2193,8 +2193,9 @@ def test_not_supported_in_streaming_stacked_with_register_rule():
     assert CHECK_FUNC_REGISTRY.get("my_streaming_unsupported_check") == "dataset"
 
 
-# Every built-in dataset-level check must declare whether it runs on a streaming DataFrame, so a new check cannot
-# skip the decision. True means marked with not_supported_in_streaming.
+# Every dataset-level check in the core and geo check modules must declare whether it runs on a streaming DataFrame,
+# so a new check cannot skip the decision. True means marked with not_supported_in_streaming. The anomaly check
+# (has_no_row_anomalies) lives in an optional module and is left out: the anomaly docs support scoring streams.
 STREAMING_UNSUPPORTED_DATASET_CHECKS = {
     "is_unique": True,
     "is_aggr_not_greater_than": True,
