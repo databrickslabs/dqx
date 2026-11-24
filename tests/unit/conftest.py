@@ -2,9 +2,9 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, Mock, create_autospec
 
 import pytest
-from databricks.sdk import WorkspaceClient
 from pyspark.sql import DataFrame
 
+from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.actions.base import ActionContext, ActionServices
 from databricks.labs.dqx.actions.delivery import WebhookClient
 from databricks.labs.dqx.actions.secrets import SecretResolver
