@@ -70,8 +70,9 @@ _NON_ORDERABLE_PHYSICAL_TYPE = re.compile(
 # A date or timestamp string a range check reads as one on every supported Python version. get_limit_expr reads a
 # string without ':' as a date and a digit-only string as SQL, so a timestamp needs hours and minutes.
 _ISO_DATE_OR_TIMESTAMP = re.compile(
-    r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.(?:\d{3}|\d{6}))?)?(?:Z|[+-]\d{2}:\d{2})?)?"
+    r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:\d{2})?)?"
 )
+_FRACTIONAL_SECONDS = re.compile(r"\.\d{1,6}")
 # Range checks pass integer bounds to Spark as 64-bit literals.
 _INT64_MIN = -(2**63)
 _INT64_MAX = 2**63 - 1
@@ -116,8 +117,9 @@ def _parse_range_bound(value: object) -> tuple[str, _BoundValue] | None:
 
     A range check reads any string limit other than an ISO date or timestamp as a column name or SQL expression,
     which a contract value must not become. So a bound is a finite number (a 64-bit one if an integer), a date YAML
-    loaded from an unquoted value, or an ISO date or timestamp string. A 'Z' offset is passed as '+00:00', which
-    every supported Python version parses.
+    loaded from an unquoted value, or an ISO date or timestamp string with at most 6 fractional second digits. A 'Z'
+    offset is passed as '+00:00' and fractional seconds are padded to 6 digits, which every supported Python version
+    parses.
     """
     if isinstance(value, bool):
         return None
@@ -130,6 +132,7 @@ def _parse_range_bound(value: object) -> tuple[str, _BoundValue] | None:
     if not isinstance(value, str) or not _ISO_DATE_OR_TIMESTAMP.fullmatch(value):
         return None
     text = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+    text = _FRACTIONAL_SECONDS.sub(lambda fraction: fraction.group().ljust(7, "0"), text)
     try:
         datetime.datetime.fromisoformat(text)  # rejects impossible dates such as 2024-02-30
     except ValueError:
@@ -331,8 +334,6 @@ def _describe_bound(bound: _RangeBound) -> str:
 
 def _empty_range_reason(bounds: list[_RangeBound]) -> str | None:
     """Return why no value can satisfy every bound, or None if some value can."""
-    if len({bound.kind for bound in bounds}) > 1:
-        return "the bounds mix numbers with dates or timestamps"
     for low in (bound for bound in bounds if bound.lower):
         for high in (bound for bound in bounds if not bound.lower):
             if low.kind == _NUMBER_BOUND:
@@ -1175,6 +1176,12 @@ class DataContractRulesGenerator(DQEngineBase):
             if bound is not None:
                 bounds.append(bound)
         if not bounds:
+            return []
+        if len({bound.kind for bound in bounds}) > 1:
+            logger.warning(
+                f"Skipping range bounds on '{sanitize_for_logging(column_path)}': "
+                "the bounds mix numbers with dates or timestamps."
+            )
             return []
         cast_type = _text_cast_type(logical_type, physical_type, bounds, opts)
         wall_clock = _compares_wall_clock(logical_type, physical_type, cast_type, bounds)

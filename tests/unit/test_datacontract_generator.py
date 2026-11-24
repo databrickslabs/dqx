@@ -2619,6 +2619,38 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 {"min_limit": "2024-01-01T00:00:00+00:00", "max_limit": "2024-12-31T00:00:00+00:00"},
                 "out_of_range",
             ),
+            (
+                "timestamp",
+                "TIMESTAMP",
+                {"minimum": "2024-01-01T12:00:00.1Z"},
+                "is_not_less_than",
+                {"limit": "2024-01-01T12:00:00.100000+00:00"},
+                "below_minimum",
+            ),
+            (
+                "timestamp",
+                "TIMESTAMP",
+                {"minimum": "2024-01-01T12:00:00.12+01:00"},
+                "is_not_less_than",
+                {"limit": "2024-01-01T12:00:00.120000+01:00"},
+                "below_minimum",
+            ),
+            (
+                "timestamp",
+                "TIMESTAMP",
+                {"maximum": "2024-01-01T12:00:00.1234"},
+                "is_not_greater_than",
+                {"limit": "2024-01-01T12:00:00.123400+00:00"},
+                "above_maximum",
+            ),
+            (
+                "timestamp",
+                "TIMESTAMP",
+                {"maximum": "2024-01-01 12:00:00.12345Z"},
+                "is_not_greater_than",
+                {"limit": "2024-01-01 12:00:00.123450+00:00"},
+                "above_maximum",
+            ),
         ],
     )
     def test_range_bounds_generate_row_level_checks(
@@ -2702,6 +2734,12 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 "Skipping maximum on 'value': '2024-02-30' is not a date or timestamp.",
             ),
             (
+                "timestamp",
+                "TIMESTAMP",
+                {"minimum": "2024-01-01T12:00:00.1234567Z"},
+                "Skipping minimum on 'value': '2024-01-01T12:00:00.1234567Z' is not a date or timestamp.",
+            ),
+            (
                 "string",
                 "STRING",
                 {"minimum": 5},
@@ -2763,6 +2801,16 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 "no value is at least 2030-01-01 and at most 2020-01-01",
             ),
             (None, {"minimum": 1, "maximum": "2020-01-01"}, "the bounds mix numbers with dates or timestamps"),
+            (
+                None,
+                {"minimum": 1, "maximum": "2024-01-01T12:00:00"},
+                "the bounds mix numbers with dates or timestamps",
+            ),
+            (
+                None,
+                {"minimum": "2024-01-01T12:00:00Z", "maximum": 10},
+                "the bounds mix numbers with dates or timestamps",
+            ),
         ],
     )
     def test_unusable_range_is_skipped_with_warning(self, generator, caplog, logical_type, options, reason):
@@ -3191,6 +3239,16 @@ class TestDataContractGeneratorRangeBoundValues(DataContractGeneratorTestBase):
                 {"maximum": datetime.datetime(2024, 1, 1, 12, 0, 0, 123456)},
                 "is_not_greater_than",
                 {"limit": "TIMESTAMP_NTZ '2024-01-01 12:00:00.123456'"},
+            ),
+            (
+                {"maximum": "2024-01-01T12:00:00.1"},
+                "is_not_greater_than",
+                {"limit": "TIMESTAMP_NTZ '2024-01-01 12:00:00.100000'"},
+            ),
+            (
+                {"minimum": "2024-01-01T09:00:00.12Z", "defaultTimezone": "Australia/Sydney"},
+                "is_not_less_than",
+                {"limit": "TIMESTAMP_NTZ '2024-01-01 20:00:00.120000'"},
             ),
             # A wall-clock bound in a daylight saving gap is kept as written, not moved to 03:30
             (
