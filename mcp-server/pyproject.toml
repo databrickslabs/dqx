@@ -8,7 +8,9 @@ dependencies = [
     # (the manifest the Databricks App installs). mcp/pydantic come in via fastmcp;
     # databricks-labs-dqx is NOT a server dep — only the runner notebook uses it, and
     # it is installed via the job environment spec in databricks.yml.
-    "fastmcp>=2.12.5",
+    # Cap fastmcp below its next major: the App installs requirements.txt with pip, so an open
+    # bound ships whatever FastMCP is newest, not the version uv.lock resolves and CI tests.
+    "fastmcp>=3.1.1,<4",
     "starlette",
     "uvicorn>=0.34.2",
     "databricks-sdk>=0.60.0",

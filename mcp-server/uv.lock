@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.11, <3.13"
 
 [options]
-exclude-newer = "2026-10-19T18:42:32.799793Z"
+exclude-newer = "2026-11-17T20:40:58.540628Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -622,7 +622,7 @@ dependencies = [
 requires-dist = [
     { name = "certifi", specifier = ">=2026.10.19" },
     { name = "databricks-sdk", specifier = ">=0.60.0" },
-    { name = "fastmcp", specifier = ">=2.12.5" },
+    { name = "fastmcp", specifier = ">=3.1.1,<4" },
     { name = "starlette" },
     { name = "uvicorn", specifier = ">=0.34.2" },
 ]
