@@ -295,6 +295,8 @@ _OLTP_RETENTION_TABLES: tuple[tuple[str, str], ...] = (
     ("dq_resolved_rules_history", "changed_at"),
     ("dq_schedule_configs_history", "changed_at"),
 )
+# dq_lifecycle_history is audit metadata, not run data. Its event rows and
+# comparison snapshots are deliberately excluded from retention sweeps.
 
 
 class SchedulerService:
