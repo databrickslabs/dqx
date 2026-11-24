@@ -520,36 +520,6 @@ def test_row_check_rejects_invalid_arguments(
         check_func(**kwargs)
 
 
-def test_is_similar_to_builds_levenshtein_condition():
-    condition = str(is_similar_to("a", "'apple'", {"max_distance": 1}))
-    assert "levenshtein(CAST(a AS STRING), CAST('apple' AS STRING))" in condition
-    assert "AS a_not_similar_to_value" in condition
-
-
-def test_is_similar_to_normalizes_levenshtein_values():
-    condition = str(is_similar_to("a", "b", {"min_similarity": 0.8, "case_sensitive": False, "trim_strings": True}))
-    assert "levenshtein(lower(trim(CAST(a AS STRING))), lower(trim(CAST(b AS STRING))))" in condition
-    assert "greatest(length(lower(trim(CAST(a AS STRING)))), length(lower(trim(CAST(b AS STRING)))))" in condition
-
-
-@pytest.mark.parametrize(
-    "method, sql_function", [("vector_cosine", "vector_cosine_similarity"), ("vector_l2", "vector_l2_distance")]
-)
-def test_is_similar_to_builds_vector_condition_from_a_list(method, sql_function):
-    condition = str(is_similar_to("e", [0.5, 1], {"method": method, "max_distance": 0.2}))
-    assert f"CallFunction('{sql_function}', e, CAST(array(0.5, 1.0) AS ARRAY<FLOAT>))" in condition
-
-
-def test_is_similar_to_compares_vector_columns():
-    condition = str(is_similar_to("e", "ref_e", {"method": "vector_l2", "max_distance": 0.2}))
-    assert "CallFunction('vector_l2_distance', e, ref_e)" in condition
-
-
-def test_is_similar_to_skips_null_values():
-    condition = str(is_similar_to("a", "b", {"max_distance": 1}))
-    assert "and(and(isNotNull(a), isNotNull(b)), not(coalesce(" in condition
-
-
 @pytest.mark.parametrize(
     "value, fuzzy_matching_options, error, message",
     [

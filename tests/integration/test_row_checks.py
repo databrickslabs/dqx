@@ -5621,9 +5621,9 @@ def test_is_similar_to_levenshtein(spark: SparkSession):
 def test_is_similar_to_levenshtein_similarity_boundary(spark: SparkSession):
     test_df = spark.createDataFrame([["abcd"], ["abce"], ["abxy"]], "a: string")
 
-    rows = test_df.select("a", is_similar_to("a", "'abcd'", {"min_similarity": 0.75}).alias("violation")).collect()
+    rows = test_df.select("a", is_similar_to("a", "'abcd'", {"min_similarity": 0.75})).collect()
 
-    assert {row["a"] for row in rows if row["violation"] is not None} == {"abxy"}
+    assert {row["a"] for row in rows if row["a_not_similar_to_value"] is not None} == {"abxy"}
 
 
 def test_is_similar_to_vector_l2(spark: SparkSession, skip_if_classic_compute):

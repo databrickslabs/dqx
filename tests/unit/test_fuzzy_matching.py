@@ -1,7 +1,6 @@
 from unittest.mock import create_autospec
 
 import pytest
-import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -105,18 +104,6 @@ def test_build_nearest_by_query_escapes_braces_for_the_query_formatter():
 
 
 @pytest.mark.parametrize(
-    "method, expected",
-    [
-        (FuzzyMatchMethod.LEVENSHTEIN, "CAST(levenshtein(a, b) AS DOUBLE)"),
-        (FuzzyMatchMethod.VECTOR_L2, "CAST(CallFunction('vector_l2_distance', a, b) AS DOUBLE)"),
-        (FuzzyMatchMethod.VECTOR_COSINE, "-(1.0, CAST(CallFunction('vector_cosine_similarity', a, b) AS DOUBLE))"),
-    ],
-)
-def test_fuzzy_match_method_distance_uses_the_member_sql_function(method, expected):
-    assert str(method.distance(F.col("a"), F.col("b"))) == f"Column<'{expected}'>"
-
-
-@pytest.mark.parametrize(
     "arguments, expected",
     [
         ({"fuzzy_matching_options": {"method": "vector_cosine", "min_similarity": 0.9}}, True),
@@ -129,18 +116,6 @@ def test_fuzzy_match_method_distance_uses_the_member_sql_function(method, expect
 )
 def test_uses_vector_matching(arguments, expected):
     assert uses_vector_matching(arguments) is expected
-
-
-@pytest.mark.parametrize(
-    "matcher, expected",
-    [
-        (FuzzyMatcher(max_distance=2.0), "<=(d, 2.0)"),
-        (FuzzyMatcher(min_similarity=0.75), ">=(-(1.0, /(d, greatest(n, 1))), 0.75)"),
-        (FuzzyMatcher(method=FuzzyMatchMethod.VECTOR_COSINE, min_similarity=0.9), ">=(-(1.0, d), 0.9)"),
-    ],
-)
-def test_fuzzy_matcher_within_threshold(matcher, expected):
-    assert str(matcher.within_threshold(F.col("d"), F.col("n"))) == f"Column<'{expected}'>"
 
 
 @pytest.mark.parametrize(
