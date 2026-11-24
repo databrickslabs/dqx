@@ -38,6 +38,33 @@ jobs:
           files: coverage-unit.xml
           flags: unit
 
+  # MCP server unit tests, so the `main` baseline has the same `mcp-unit` flag as PRs (push.yml).
+  mcp-unit:
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup environment
+        uses: ./.github/actions/setup-env
+
+      - name: Run MCP server tests
+        run: make mcp-test
+
+      - name: Run mocked MCP runner tests with DQX dependencies
+        run: make mcp-runner-test
+
+      - name: Publish MCP unit test coverage
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
+        with:
+          use_oidc: true
+          files: coverage-mcp-unit.xml,coverage-mcp-runner.xml
+          flags: mcp-unit
+
   integration:
     environment: tool
     runs-on:

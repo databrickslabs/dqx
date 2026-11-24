@@ -258,8 +258,17 @@ app-ai-eval: ## Measure Studio AI suggestion quality against live endpoints (cos
 # needs anyio, which ships transitively. With UV_FROZEN=1 we can't add pytest
 # to the lock from here, so inject it ephemerally with ``uv run --with pytest``
 # over the synced runtime env (anyio's pytest plugin handles the async tests).
+#
+# Both MCP unit targets write coverage for Codecov's mcp-unit flag. They run from the repo root
+# and share the integration suite's .coveragerc, so their paths match the remotely collected
+# mcp flag (mcp-server/server/..., mcp-server/runner/src/dqx_mcp_runner/...). A bare --cov sets
+# no source roots, so the report names each file by its full repo path; the rcfile's [report]
+# include keeps only the MCP source.
+MCP_COV := --cov --cov-config=tests/integration_mcp/.coveragerc
+
 mcp-test: ## Run MCP server pytest suite (K=<expr> filter)
-	cd mcp-server && uv run --with pytest pytest tests/ \
+	uv run --project mcp-server --with pytest --with pytest-cov pytest -c mcp-server/pyproject.toml mcp-server/tests/ \
+	  $(MCP_COV) --cov-report=xml:coverage-mcp-unit.xml \
 	  $(if $(K),-k "$(K)")
 
 # Static type-check the MCP server (parity with app-check). basedpyright is not in mcp-server's
@@ -275,7 +284,8 @@ mcp-check: ## Type-check the MCP server with basedpyright (standard mode, errors
 # skip when runner imports are unavailable, so import them first: a broken dependency fails here.
 mcp-runner-test: ## Test runner reference handling and cleanup without a live Spark session
 	PYTHONPATH=mcp-server/runner/src $(UV_RUN) python -c "import dqx_mcp_runner.runner, databricks.labs.dqx.engine, pyspark.sql"
-	$(UV_RUN) pytest -c mcp-server/pyproject.toml mcp-server/tests/test_runner_reference_views.py -q
+	$(UV_RUN) pytest -c mcp-server/pyproject.toml mcp-server/tests/test_runner_reference_views.py -q \
+	  $(MCP_COV) --cov-report=xml:coverage-mcp-runner.xml
 
 # One-command MCP server deploy (parity with app-deploy). Ensures the runner-wheel volume
 # exists, deploys the bundle (app + runner job + setup job), runs the one-time setup job (UC
