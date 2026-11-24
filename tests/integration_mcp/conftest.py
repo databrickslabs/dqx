@@ -676,6 +676,9 @@ _CUSTOMERS_ROWS = """
  (NULL, 'Peggy',   'peggy@example.com',   39,  'US', DATE'2024-01-05', 180.00)
 """
 
+# Countries a customer may reference. 'IN' (Grace, row 7) is absent, so it is the only FK violation.
+_REF_COUNTRY_ROWS = "('US'), ('UK'), ('DE'), ('FR')"
+
 # Public so the test can also pass it as inline `contract_content` (the tool accepts either a
 # volume path or the contract text) without reaching into a private name.
 CONTRACT_YAML = """\
@@ -804,6 +807,13 @@ def seed_demo_data(app_sp: str, runner_sp: str = "") -> Iterator[dict[str, str]]
     )
     run_sql(f"INSERT INTO {table} VALUES {_CUSTOMERS_ROWS.strip()}")
 
+    # Reference table for the foreign_key check. Deliberately NOT granted to the runner SP: the
+    # runner must read it through the caller's OBO view. 'IN' is omitted, so exactly one customer
+    # row violates the key (the NULL country is skipped by foreign_key's ANSI null semantics).
+    ref_table = f"{fq_schema}.ref_countries"
+    run_sql(f"CREATE TABLE {ref_table} (code STRING)")
+    run_sql(f"INSERT INTO {ref_table} VALUES {_REF_COUNTRY_ROWS}")
+
     # The contract is read by the runner job as the runner SP, so it must live somewhere the runner
     # SP can read — a UC volume in the seed schema. Reading a volume file via FUSE open() needs
     # USE SCHEMA on the parent schema *and* READ VOLUME on the volume (USE CATALOG comes from setup).
@@ -834,6 +844,7 @@ def seed_demo_data(app_sp: str, runner_sp: str = "") -> Iterator[dict[str, str]]
     try:
         yield {
             "table": table,
+            "ref_table": ref_table,
             "schema": fq_schema,
             "contract": contract_path,
             "workspace_contract": ws_contract_path,

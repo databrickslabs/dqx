@@ -101,6 +101,30 @@ def test_duplicate_tables_share_one_full_view(function: str) -> None:
     assert all(arguments_of(check)["ref_df_name"] == REFERENCE for check in result.checks)
 
 
+def test_names_differing_only_by_case_share_one_view_and_keep_their_spelling() -> None:
+    requested: list[str] = []
+
+    def create_view(reference: str) -> str:
+        requested.append(reference)
+        return VIEW
+
+    result = build_reference_views([make_check(), make_check("CAT.Sch.Parent")], create_view)
+
+    assert requested == [REFERENCE]
+    assert [arguments_of(check)["ref_df_name"] for check in result.checks] == [REFERENCE, "CAT.Sch.Parent"]
+    assert result.ref_views == {REFERENCE: VIEW, "CAT.Sch.Parent": VIEW}
+
+
+def test_self_reference_matches_the_monitored_table_case_insensitively() -> None:
+    def create_view(reference: str) -> str:
+        raise AssertionError("The full monitored view should be reused")
+
+    result = build_reference_views(
+        [make_check("Cat.Sch.Parent")], create_view, monitored_table_fqn=REFERENCE, monitored_view_fqn=VIEW
+    )
+    assert result.ref_views == {"Cat.Sch.Parent": VIEW}
+
+
 @pytest.mark.parametrize("function", REFERENCE_FUNCTIONS)
 def test_rewritten_checks_do_not_depend_on_generated_view_names(function: str) -> None:
     checks = [make_check(function=function)]
@@ -240,12 +264,12 @@ def test_invalid_names_fail_without_creating_a_view_or_exposing_control_characte
     def create_view(table: str) -> str:
         raise AssertionError("An invalid reference must fail before view creation")
 
-    with pytest.raises(ValueError, match="Invalid reference table name") as error:
+    with pytest.raises(ValueError, match="Invalid reference table name in check at index 0") as error:
         build_reference_views([make_check(reference)], create_view)
 
     rendered = "".join(traceback.format_exception(error.value))
     assert "Only alphanumeric" not in rendered  # The underlying validator's raw error is suppressed.
-    assert "SELECT" not in str(error.value)
+    assert reference not in rendered  # The untrusted name is never echoed, so no sanitizer is relied on.
     assert "\n" not in str(error.value)
     assert "\x1b" not in rendered
 

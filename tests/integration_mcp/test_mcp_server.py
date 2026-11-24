@@ -12,6 +12,7 @@ agent-in-the-loop check runs last (skipped if the serving endpoint is unreachabl
 """
 
 import json
+import re
 import sys
 import time
 from collections.abc import Callable
@@ -23,6 +24,7 @@ from tests.integration_mcp.conftest import (
     AI_QUERY_ENDPOINT,
     CATALOG,
     CONTRACT_YAML,
+    RUNNER_SP,
     McpClient,
     _mcp_request,
     _tool_payload,
@@ -47,6 +49,9 @@ EXPLICIT_CHECKS: list[dict] = [
 ]
 EXPECTED_TOTAL_ROWS = 10
 EXPECTED_INVALID_ROWS = 4
+
+# Generated temp-view names (v_<epoch>_<hex>) must never appear in check results.
+_GENERATED_VIEW_NAME = re.compile(r"\bv_\d+_[0-9a-f]+\b")
 
 ALL_TOOLS = {
     "get_workflow",
@@ -610,6 +615,83 @@ def _assert_tool_calls_are_instrumented(client: McpClient, table: str) -> None:
     )
 
 
+def _runner_reference_read_paths(ws: WorkspaceClient, ref_table: str, runner_sp: str) -> list[str]:
+    """List every way *runner_sp* could read *ref_table* directly, without the caller's OBO view.
+
+    Covers ownership of the table, its schema, and its catalog, plus direct and inherited SELECT or
+    ALL_PRIVILEGES from Unity Catalog's effective-permissions API. It does not detect metastore-admin
+    rights. An inspection failure is reported as a path, because an unverified precondition must not
+    count as a proven one.
+    """
+    try:
+        return _ownership_read_paths(ws, ref_table, runner_sp) + _privilege_read_paths(ws, ref_table, runner_sp)
+    except Exception as exc:  # noqa: BLE001 — an uninspectable grant model is reported, not assumed safe
+        return [f"could not inspect grants ({type(exc).__name__})"]
+
+
+def _ownership_read_paths(ws: WorkspaceClient, ref_table: str, runner_sp: str) -> list[str]:
+    """Securables in *ref_table*'s hierarchy that *runner_sp* owns, which implies read access."""
+    catalog, schema, _ = ref_table.split(".")
+    owners = {
+        ref_table: ws.tables.get(ref_table).owner,
+        f"{catalog}.{schema}": ws.schemas.get(f"{catalog}.{schema}").owner,
+        catalog: ws.catalogs.get(catalog).owner,
+    }
+    return [f"owns {name}" for name, owner in owners.items() if (owner or "").lower() == runner_sp.lower()]
+
+
+def _privilege_read_paths(ws: WorkspaceClient, ref_table: str, runner_sp: str) -> list[str]:
+    """Direct or inherited privileges that let *runner_sp* read *ref_table*."""
+    effective = ws.grants.get_effective("table", ref_table, principal=runner_sp)
+    grants = [grant for assignment in effective.privilege_assignments or [] for grant in assignment.privileges or []]
+    return [
+        f"{grant.privilege.value} via {grant.inherited_from_name or ref_table}"
+        for grant in grants
+        if grant.privilege and grant.privilege.value in {"SELECT", "ALL_PRIVILEGES"}
+    ]
+
+
+def _assert_reference_check_reads_through_caller_view(
+    client: McpClient, table: str, ref_table: str, runner_sp: str
+) -> None:
+    """A foreign_key check reads its reference table through the caller's OBO view.
+
+    This is the regression test for the runner reading *ref_table* directly as its own identity.
+    It proves the authorization boundary only when the runner cannot read the reference table
+    itself. CI's default runner is the deploying identity, which owns the seeded tables, so that
+    configuration covers the functional path and says so. With a dedicated runner SP configured
+    through DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID, any direct read path fails the test instead.
+    """
+    read_paths = (
+        _runner_reference_read_paths(WorkspaceClient(), ref_table, runner_sp)
+        if runner_sp
+        else ["runner identity not reported"]
+    )
+    if read_paths:
+        gap = f"the runner can read {ref_table} directly ({'; '.join(read_paths)})"
+        assert not RUNNER_SP, f"the dedicated runner SP is not isolated from the reference table: {gap}"
+        sys.stderr.write(
+            f"note: {gap}, so this run covers the reference-view path but not the authorization boundary. "
+            "Set DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID to a dedicated runner SP to cover it.\n"
+        )
+
+    checks = [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "foreign_key",
+                "arguments": {"columns": ["country"], "ref_columns": ["code"], "ref_table": ref_table},
+            },
+        }
+    ]
+    result = client.call("run_checks", {"table_name": table, "checks": checks})
+    assert result["total_rows"] == EXPECTED_TOTAL_ROWS, result
+    assert result["invalid_rows"] == 1, result
+    assert [row["country"] for row in result["error_sample"]] == ["IN"], result["error_sample"]
+    # Checks reach the runner keyed by the original table name, never the generated view name.
+    assert not _GENERATED_VIEW_NAME.search(json.dumps(result, default=str)), result
+
+
 def test_mcp_server_end_to_end(workspace_auth, app_auth):
     """Deploy the MCP app once and exercise every tool end-to-end against the seeded table."""
     host, get_token = workspace_auth  # control-plane bearer: CLI deploy + Model Serving
@@ -666,6 +748,11 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
         assert run["invalid_rows"] == EXPECTED_INVALID_ROWS
         assert run["valid_rows"] == EXPECTED_TOTAL_ROWS - EXPECTED_INVALID_ROWS
         assert run["error_sample"] and run["rule_summary"]
+
+        # 8b. A foreign_key reference table is read through the caller's OBO view.
+        _assert_reference_check_reads_through_caller_view(
+            client, table, data["ref_table"], app.get("runner_service_principal", "")
+        )
 
         # 9-10. Persisting tools (save_checks -> load_checks round-trip, then
         #       apply_checks_and_save_to_table) — both write to the caller's private per-user schema.

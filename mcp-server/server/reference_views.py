@@ -67,36 +67,42 @@ def build_reference_views(
 
     Returns:
         Copied checks using original table names as *ref_df_name* keys, and the
-        reference-to-view mapping. With no eligible references, returns the input.
+        reference-to-view mapping. Unity Catalog names are case-insensitive, so
+        spellings that differ only by case share one view while each check keeps
+        its own spelling. With no eligible references, returns the input.
 
     Raises:
         ValueError: A reference name is not a supported fully qualified identifier.
-        RuntimeError: A reference view cannot be created. The message safely
-            identifies the reference table and retains the underlying cause.
+            The message identifies the check by position and never echoes the name.
+        RuntimeError: A reference view cannot be created. The message identifies
+            the validated reference table and retains the underlying cause.
     """
     rewritten = copy.deepcopy(checks)
     ref_views: dict[str, str] = {}
-    for check in rewritten:
+    views_by_table: dict[str, str] = {}
+    if monitored_table_fqn and monitored_view_fqn:
+        views_by_table[monitored_table_fqn.lower()] = monitored_view_fqn
+    for index, check in enumerate(rewritten):
         reference = _reference_arguments(check)
         if reference is None:
             continue
         ref, arguments = reference
         if ref not in ref_views:
-            try:
-                validate_and_quote_table_name(ref)
-            except ValueError:
-                guidance = "Use an unquoted catalog.schema.table name (letters, digits, and underscores)."
-                raise ValueError(f"Invalid reference table name '{sanitize_for_log(ref)}'. {guidance}") from None
-            if monitored_table_fqn and monitored_view_fqn and ref == monitored_table_fqn:
-                ref_views[ref] = monitored_view_fqn
-            else:
+            table_key = ref.lower()
+            if table_key not in views_by_table:
                 try:
-                    ref_views[ref] = create_view(ref)
+                    validate_and_quote_table_name(ref)
+                except ValueError:
+                    guidance = "Use an unquoted catalog.schema.table name (letters, digits, and underscores)."
+                    raise ValueError(f"Invalid reference table name in check at index {index}. {guidance}") from None
+                try:
+                    views_by_table[table_key] = create_view(ref)
                 except Exception as exc:
                     guidance = "Check table existence, SELECT access, and SQL warehouse availability."
                     raise RuntimeError(
                         f"Cannot create a temporary view over reference table '{sanitize_for_log(ref)}'. {guidance}"
                     ) from exc
+            ref_views[ref] = views_by_table[table_key]
         del arguments["ref_table"]
         arguments["ref_df_name"] = ref
     return ReferenceViews(rewritten if ref_views else checks, ref_views)

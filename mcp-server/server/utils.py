@@ -17,7 +17,6 @@ import os
 import re
 import sys
 import time
-import unicodedata
 import uuid
 from typing import Any
 
@@ -27,19 +26,19 @@ logger = logging.getLogger(__name__)
 
 
 def sanitize_for_log(value: object) -> str:
-    """Replace control characters before displaying untrusted values in logs.
+    """Strip CR/LF from a value before logging to prevent log injection (CWE-117).
 
-    This includes CR/LF, terminal controls, Unicode formatting controls, and
-    Unicode line/paragraph separators that could forge or disguise log entries.
+    User-supplied values (table names, view names) may contain newlines or carriage
+    returns that could forge log entries or corrupt log pipelines. Replace them with
+    spaces before interpolating into a log message.
 
     Args:
-        value: Value to be logged.
+        value: Any value to be logged.
 
     Returns:
-        String form of *value* with control and separator characters replaced
-        by spaces. Ordinary Unicode text is preserved.
+        String form of *value* with newlines and carriage returns replaced by spaces.
     """
-    return "".join(" " if unicodedata.category(char) in ("Cc", "Cf", "Zl", "Zp") else char for char in str(value))
+    return str(value).replace("\n", " ").replace("\r", " ")
 
 
 # ── Logging configuration ────────────────────────────────────────────

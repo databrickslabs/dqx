@@ -152,6 +152,11 @@ These are natural-language prompts you can give any connected agent. Replace `<c
 For `ref_table`, use an unquoted, three-part name: `catalog.schema.table`. Each part can contain only letters, digits, and underscores. Two-part names, backtick-quoted names, and names containing hyphens or spaces are not supported by this path.
 
 You must have access to each reference table. The runner receives reference DataFrames keyed by the original table names, not standing access to the underlying tables. Tables named inside `sql_query` SQL are not automatically adapted by this mechanism.
+
+To pass those DataFrames, the server rewrites each eligible check from `ref_table` to `ref_df_name`, keeping the original table name as the value. This has two visible effects:
+
+- Rule fingerprints match across MCP runs of the same checks, but differ from the fingerprints of the same checks run directly through DQX with `ref_table`.
+- `aggr_matches_dataset` violation messages name the reference as `DataFrame '<catalog.schema.table>'` instead of `table '<catalog.schema.table>'`.
 </Admonition>
 
 ### Recommended workflow
