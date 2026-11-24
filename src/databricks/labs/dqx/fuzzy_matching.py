@@ -182,7 +182,7 @@ def uses_vector_matching(arguments: dict[str, object]) -> bool:
     Returns:
         True when *fuzzy_match* names a vector method.
     """
-    options = arguments.get("fuzzy_match")
+    options = arguments.get("fuzzy_matching_options")
     vector_methods = {method.value for method in FuzzyMatchMethod if method.uses_nearest_by_search}
     return isinstance(options, dict) and options.get("method") in vector_methods
 
