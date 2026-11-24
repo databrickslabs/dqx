@@ -40,6 +40,25 @@ class SubmissionEnvironment:
             raise RuntimeError("job submission failed")
         return 123
 
+    def submit_view_job(
+        self,
+        params: dict[str, object],
+        operation: str = "run_checks",
+        *,
+        checks: list[dict[str, object]] | None = None,
+        source_key: str | None = None,
+    ) -> int:
+        return submit_view_job(
+            operation,
+            SOURCE,
+            params,
+            create_view=self.create_view,
+            drop_view=self.drop_view,
+            submit_job=self.submit,
+            checks=checks,
+            source_key=source_key,
+        )
+
     def submit_checks(
         self,
         checks: list[dict[str, object]],
@@ -47,15 +66,7 @@ class SubmissionEnvironment:
         extra: dict[str, object] | None = None,
     ) -> int:
         """Submit a check run the way the registered check tools do."""
-        return submit_view_job(
-            operation,
-            SOURCE,
-            lambda _view: {"table_name": SOURCE, **(extra or {})},
-            create_view=self.create_view,
-            drop_view=self.drop_view,
-            submit_job=self.submit,
-            checks=checks,
-        )
+        return self.submit_view_job({"table_name": SOURCE, **(extra or {})}, operation, checks=checks)
 
 
 def fk_check(reference: str = REFERENCE) -> dict[str, object]:
@@ -170,16 +181,9 @@ def test_no_reference_checks_keep_the_existing_payload_shape() -> None:
     assert env.submitted[0][1]["checks"] == checks
 
 
-def test_job_without_checks_receives_params_built_from_its_view() -> None:
+def test_source_key_also_receives_the_source_view_name() -> None:
     env = SubmissionEnvironment()
-    submit_view_job(
-        "load_checks",
-        SOURCE,
-        lambda view: {"location": view, "run_config_name": "default"},
-        create_view=env.create_view,
-        drop_view=env.drop_view,
-        submit_job=env.submit,
-    )
+    env.submit_view_job({"run_config_name": "default"}, "load_checks", source_key="location")
     assert env.submitted == [
         ("load_checks", {"location": PRIMARY_VIEW, "run_config_name": "default", "view_name": PRIMARY_VIEW})
     ]
@@ -188,12 +192,5 @@ def test_job_without_checks_receives_params_built_from_its_view() -> None:
 def test_job_without_checks_drops_its_view_when_submission_fails() -> None:
     env = SubmissionEnvironment(fail_submission=True)
     with pytest.raises(RuntimeError, match="job submission failed"):
-        submit_view_job(
-            "profile_table",
-            SOURCE,
-            lambda _view: {"table_name": SOURCE},
-            create_view=env.create_view,
-            drop_view=env.drop_view,
-            submit_job=env.submit,
-        )
+        env.submit_view_job({"table_name": SOURCE}, "profile_table")
     assert env.dropped == [PRIMARY_VIEW]

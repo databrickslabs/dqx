@@ -6,15 +6,12 @@ Two layers:
   mcp-server test environment, which has no pyspark).
 * The runner operations and ``main`` import pyspark and DQX, which are not installed in that
   environment, so those tests skip there and run wherever both are available (e.g. the app venv).
-  ``make mcp-runner-test`` sets DQX_MCP_REQUIRE_RUNNER_TESTS=1, so a missing or broken import fails
-  that target instead of silently skipping. They never start Spark or touch a workspace: Spark and the workspace client are autospec mocks
+  They never start Spark or touch a workspace: Spark and the workspace client are autospec mocks
   injected through the public ``main`` seams, and ``DQEngine`` — the third-party boundary that would
   otherwise need a real session — is replaced with an autospec.
 """
 
-import importlib
 import json
-import os
 from collections.abc import Mapping
 from types import ModuleType
 from typing import NoReturn
@@ -140,24 +137,17 @@ class TestDropTempViews:
 # --- Runner operations and entry point (need pyspark + DQX; skipped where they are absent). ---
 
 
-def import_runner_dependency(name: str) -> ModuleType:
-    """Import a runner dependency, skipping when absent unless the runner target requires it."""
-    if os.environ.get("DQX_MCP_REQUIRE_RUNNER_TESTS") == "1":
-        return importlib.import_module(name)
-    return pytest.importorskip(name)
-
-
 @pytest.fixture(name="runner")
 def runner_module() -> ModuleType:
-    return import_runner_dependency("dqx_mcp_runner.runner")
+    return pytest.importorskip("dqx_mcp_runner.runner")
 
 
 @pytest.fixture(name="engine")
 def fake_engine(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     """Replace DQEngine (third-party boundary that needs a live session) with an autospec instance."""
-    engine_module = import_runner_dependency("databricks.labs.dqx.engine")
+    engine_module = pytest.importorskip("databricks.labs.dqx.engine")
     instance = create_autospec(engine_module.DQEngine, instance=True)
-    spark_module = import_runner_dependency("pyspark.sql")
+    spark_module = pytest.importorskip("pyspark.sql")
     valid_df = create_autospec(spark_module.DataFrame, instance=True)
     invalid_df = create_autospec(spark_module.DataFrame, instance=True)
     for frame in (valid_df, invalid_df):

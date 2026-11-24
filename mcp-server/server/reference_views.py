@@ -87,22 +87,21 @@ def build_reference_views(
         if reference is None:
             continue
         ref, arguments = reference
-        if ref not in ref_views:
-            table_key = ref.lower()
-            if table_key not in views_by_table:
-                try:
-                    validate_and_quote_table_name(ref)
-                except ValueError:
-                    guidance = "Use an unquoted catalog.schema.table name (letters, digits, and underscores)."
-                    raise ValueError(f"Invalid reference table name in check at index {index}. {guidance}") from None
-                try:
-                    views_by_table[table_key] = create_view(ref)
-                except Exception as exc:
-                    guidance = "Check table existence, SELECT access, and SQL warehouse availability."
-                    raise RuntimeError(
-                        f"Cannot create a temporary view over reference table '{sanitize_for_log(ref)}'. {guidance}"
-                    ) from exc
-            ref_views[ref] = views_by_table[table_key]
+        try:
+            validate_and_quote_table_name(ref)
+        except ValueError:
+            guidance = "Use an unquoted catalog.schema.table name (letters, digits, and underscores)."
+            raise ValueError(f"Invalid reference table name in check at index {index}. {guidance}") from None
+        table_key = ref.lower()
+        if table_key not in views_by_table:
+            try:
+                views_by_table[table_key] = create_view(ref)
+            except Exception as exc:
+                guidance = "Check table existence, SELECT access, and SQL warehouse availability."
+                raise RuntimeError(
+                    f"Cannot create a temporary view over reference table '{sanitize_for_log(ref)}'. {guidance}"
+                ) from exc
+        ref_views[ref] = views_by_table[table_key]
         del arguments["ref_table"]
         arguments["ref_df_name"] = ref
     return ReferenceViews(rewritten if ref_views else checks, ref_views)

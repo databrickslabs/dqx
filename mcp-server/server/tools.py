@@ -2,6 +2,8 @@ import logging
 import os
 from collections.abc import Callable
 
+from databricks.sdk import WorkspaceClient
+
 from server import utils
 from server.reference_views import build_reference_views
 from server.telemetry import with_telemetry
@@ -39,34 +41,29 @@ def _get_tmp_view_config() -> tuple[str, str]:
 def submit_view_job(
     operation: str,
     table_name: str,
-    build_params: Callable[[str], dict[str, object]],
+    params: dict[str, object],
     *,
     create_view: Callable[[str], str],
     drop_view: Callable[[str], None],
     submit_job: Callable[[str, dict[str, object]], int],
     checks: list[dict[str, object]] | None = None,
+    source_key: str | None = None,
 ) -> int:
     """Create the OBO temp views a runner job reads, submit the job, and clean up on failure.
 
-    Creates a full view over *table_name*. With *checks*, it also creates full reference
-    views for eligible checks: checks use original table names as *ref_df_name* keys,
-    and *ref_views* tells the runner which view supplies each reference DataFrame.
-
-    The runner drops these views in its ``finally``, but only once it starts. On any
-    failure before then (reference-view creation, or a submission error such as an unset
-    ``DQX_RUNNER_JOB_ID`` or a ``run_now`` RPC error), every view created here is dropped
-    as the OBO client that created it before re-raising, so no view leaks in the shared
-    temp schema until the TTL sweeper reaps it.
+    The runner drops the views once it starts. If anything fails before then, every view
+    created here is dropped before re-raising, so none leaks into the shared temp schema.
 
     Args:
         operation: Runner operation name (e.g. ``run_checks``).
-        table_name: Fully qualified source table.
-        build_params: Returns the operation's job params for the source view's name.
-            *view_name* is always added.
+        table_name: Fully qualified source table, exposed through a full view.
+        params: Operation-specific job params. *view_name* is added.
         create_view: Creates a full view using the caller's OBO credentials.
         drop_view: Drops one view using the caller's OBO credentials.
         submit_job: Submits the prepared payload and returns its job run ID.
-        checks: DQX check definitions (metadata format), for check runs only.
+        checks: DQX check definitions for check runs. Eligible reference checks read
+            full reference views, keyed by original table name in *ref_views*.
+        source_key: Additional param that also receives the source view's name.
 
     Returns:
         The job run ID.
@@ -80,7 +77,9 @@ def submit_view_job(
 
     try:
         view_fqn = create_owned_view(table_name)
-        params = {**build_params(view_fqn), "view_name": view_fqn}
+        params = {**params, "view_name": view_fqn}
+        if source_key:
+            params[source_key] = view_fqn
         if checks is not None:
             refs = build_reference_views(
                 checks,
@@ -99,6 +98,30 @@ def submit_view_job(
             except Exception:
                 logger.warning(f"Could not clean up temporary view '{utils.sanitize_for_log(view)}'.")
         raise
+
+
+def _submit_obo_view_job(
+    obo_ws: WorkspaceClient,
+    warehouse_id: str,
+    operation: str,
+    table_name: str,
+    params: dict[str, object],
+    *,
+    checks: list[dict[str, object]] | None = None,
+    source_key: str | None = None,
+) -> int:
+    """Run *submit_view_job* with views created and dropped by the caller's OBO client."""
+    catalog, schema = _get_tmp_view_config()
+    return submit_view_job(
+        operation,
+        table_name,
+        params,
+        create_view=lambda source: utils.create_temp_view(obo_ws, source, catalog, schema, warehouse_id),
+        drop_view=lambda view: utils.drop_view(obo_ws, view, warehouse_id),
+        submit_job=utils.submit_job_async,
+        checks=checks,
+        source_key=source_key,
+    )
 
 
 def load_tools(mcp_server):
@@ -178,15 +201,13 @@ def load_tools(mcp_server):
         logger.info(f"Profiling table: {utils.sanitize_for_log(table_name)}")
         obo_ws = utils.get_obo_client()
         warehouse_id = utils.get_warehouse_id(obo_ws)
-        catalog, schema = _get_tmp_view_config()
 
-        run_id = submit_view_job(
+        run_id = _submit_obo_view_job(
+            obo_ws,
+            warehouse_id,
             "profile_table",
             table_name,
-            lambda _view: {"table_name": table_name, "columns": columns, "options": options},
-            create_view=lambda source: utils.create_temp_view(obo_ws, source, catalog, schema, warehouse_id),
-            drop_view=lambda view: utils.drop_view(obo_ws, view, warehouse_id),
-            submit_job=utils.submit_job_async,
+            {"table_name": table_name, "columns": columns, "options": options},
         )
 
         return {
@@ -333,16 +354,9 @@ def load_tools(mcp_server):
         # verify the caller's access to the path directly.
         job_params: dict = {"run_config_name": run_config_name}
         if utils.classify_location(location) == "table":
-            warehouse_id = utils.get_warehouse_id(obo_ws)
-            catalog, schema = _get_tmp_view_config()
             # Read through the view; let the runner drop it in its finally (stateless cleanup).
-            run_id = submit_view_job(
-                "load_checks",
-                location,
-                lambda view: {**job_params, "location": view},
-                create_view=lambda source: utils.create_temp_view(obo_ws, source, catalog, schema, warehouse_id),
-                drop_view=lambda view: utils.drop_view(obo_ws, view, warehouse_id),
-                submit_job=utils.submit_job_async,
+            run_id = _submit_obo_view_job(
+                obo_ws, utils.get_warehouse_id(obo_ws), "load_checks", location, job_params, source_key="location"
             )
         else:
             utils.verify_obo_read_access(obo_ws, location)
@@ -457,15 +471,13 @@ def load_tools(mcp_server):
         logger.info(f"Running {len(checks)} checks on table: {utils.sanitize_for_log(table_name)}")
         obo_ws = utils.get_obo_client()
         warehouse_id = utils.get_warehouse_id(obo_ws)
-        catalog, schema = _get_tmp_view_config()
 
-        run_id = submit_view_job(
+        run_id = _submit_obo_view_job(
+            obo_ws,
+            warehouse_id,
             "run_checks",
             table_name,
-            lambda _view: {"table_name": table_name, "sample_size": sample_size},
-            create_view=lambda source: utils.create_temp_view(obo_ws, source, catalog, schema, warehouse_id),
-            drop_view=lambda view: utils.drop_view(obo_ws, view, warehouse_id),
-            submit_job=utils.submit_job_async,
+            {"table_name": table_name, "sample_size": sample_size},
             checks=checks,
         )
 
@@ -515,7 +527,7 @@ def load_tools(mcp_server):
         )
         obo_ws = utils.get_obo_client()
         warehouse_id = utils.get_warehouse_id(obo_ws)
-        catalog, schema = _get_tmp_view_config()
+        catalog, _schema = _get_tmp_view_config()
         output_name = utils.validate_output_name(output_name)
         quarantine_name = utils.validate_output_name(quarantine_name) if quarantine_name else None
         mode = utils.validate_write_mode(mode)
@@ -523,21 +535,19 @@ def load_tools(mcp_server):
         # The source read is governed by the caller's OBO definer's-rights view. The outputs go to
         # the caller's own SP-owned per-user schema (created + granted by the runner), so there is
         # no caller-supplied write destination and no write pre-check to get wrong.
-        params = {
-            "table_name": table_name,
-            "output_name": output_name,
-            "quarantine_name": quarantine_name,
-            "mode": mode,
-            "catalog": catalog,
-            "grant_to": utils.get_user_email(),
-        }
-        run_id = submit_view_job(
+        run_id = _submit_obo_view_job(
+            obo_ws,
+            warehouse_id,
             "apply_checks_and_save_to_table",
             table_name,
-            lambda _view: params,
-            create_view=lambda source: utils.create_temp_view(obo_ws, source, catalog, schema, warehouse_id),
-            drop_view=lambda view: utils.drop_view(obo_ws, view, warehouse_id),
-            submit_job=utils.submit_job_async,
+            {
+                "table_name": table_name,
+                "output_name": output_name,
+                "quarantine_name": quarantine_name,
+                "mode": mode,
+                "catalog": catalog,
+                "grant_to": utils.get_user_email(),
+            },
             checks=checks,
         )
 

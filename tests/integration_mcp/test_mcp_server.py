@@ -19,12 +19,12 @@ from collections.abc import Callable
 
 import requests
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import DatabricksError
 
 from tests.integration_mcp.conftest import (
     AI_QUERY_ENDPOINT,
     CATALOG,
     CONTRACT_YAML,
-    RUNNER_SP,
     McpClient,
     _mcp_request,
     _tool_payload,
@@ -52,6 +52,22 @@ EXPECTED_INVALID_ROWS = 4
 
 # Generated temp-view names (v_<epoch>_<hex>) must never appear in check results.
 _GENERATED_VIEW_NAME = re.compile(r"\bv_\d+_[0-9a-f]+\b")
+
+# Grace (customer 7, already invalid for age -3) is the only customer whose country, 'IN', is absent
+# from the seeded reference table. The NULL country is skipped by foreign_key's ANSI null semantics.
+COUNTRY_FOREIGN_KEY = "country_in_ref_countries"
+
+
+def country_foreign_key_check(ref_table: str) -> dict:
+    return {
+        "name": COUNTRY_FOREIGN_KEY,
+        "criticality": "error",
+        "check": {
+            "function": "foreign_key",
+            "arguments": {"columns": ["country"], "ref_columns": ["code"], "ref_table": ref_table},
+        },
+    }
+
 
 ALL_TOOLS = {
     "get_workflow",
@@ -625,7 +641,7 @@ def _runner_reference_read_paths(ws: WorkspaceClient, ref_table: str, runner_sp:
     """
     try:
         return _ownership_read_paths(ws, ref_table, runner_sp) + _privilege_read_paths(ws, ref_table, runner_sp)
-    except Exception as exc:  # noqa: BLE001 — an uninspectable grant model is reported, not assumed safe
+    except DatabricksError as exc:
         return [f"could not inspect grants ({type(exc).__name__})"]
 
 
@@ -651,45 +667,37 @@ def _privilege_read_paths(ws: WorkspaceClient, ref_table: str, runner_sp: str) -
     ]
 
 
-def _assert_reference_check_reads_through_caller_view(
-    client: McpClient, table: str, ref_table: str, runner_sp: str
-) -> None:
-    """A foreign_key check reads its reference table through the caller's OBO view.
+def _assert_runner_cannot_read_reference_table(ref_table: str, runner_sp: str) -> None:
+    """Fail if a dedicated runner can read *ref_table* without the caller's OBO view.
 
-    This is the regression test for the runner reading *ref_table* directly as its own identity.
-    It proves the authorization boundary only when the runner cannot read the reference table
-    itself. CI's default runner is the deploying identity, which owns the seeded tables, so that
-    configuration covers the functional path and says so. With a dedicated runner SP configured
-    through DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID, any direct read path fails the test instead.
+    The foreign_key step proves the authorization boundary only when the runner cannot read the
+    reference table itself. CI's default runner is the deploying identity, which seeds and owns
+    the tables, so that configuration covers the reference-view path and says so instead.
     """
-    read_paths = (
-        _runner_reference_read_paths(WorkspaceClient(), ref_table, runner_sp)
-        if runner_sp
-        else ["runner identity not reported"]
-    )
-    if read_paths:
-        gap = f"the runner can read {ref_table} directly ({'; '.join(read_paths)})"
-        assert not RUNNER_SP, f"the dedicated runner SP is not isolated from the reference table: {gap}"
+    ws = WorkspaceClient()  # the seeding identity, which is also the default runner
+    if not runner_sp or runner_sp.lower() == (ws.current_user.me().user_name or "").lower():
         sys.stderr.write(
-            f"note: {gap}, so this run covers the reference-view path but not the authorization boundary. "
-            "Set DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID to a dedicated runner SP to cover it.\n"
+            "note: the runner is the deploying identity, which owns the seeded tables, so the foreign_key "
+            "step covers the reference-view path but not the authorization boundary. Set "
+            "DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID to a dedicated runner SP to cover it.\n"
         )
+        return
+    read_paths = _runner_reference_read_paths(ws, ref_table, runner_sp)
+    assert not read_paths, f"the runner can read {ref_table} directly: {'; '.join(read_paths)}"
 
-    checks = [
-        {
-            "criticality": "error",
-            "check": {
-                "function": "foreign_key",
-                "arguments": {"columns": ["country"], "ref_columns": ["code"], "ref_table": ref_table},
-            },
-        }
+
+def _assert_foreign_key_violation_reads_reference_view(run: dict) -> None:
+    """Only Grace's 'IN' row violates the foreign key, and no generated view name is exposed."""
+    summary = {rule["rule_name"]: rule["error_count"] for rule in run["rule_summary"]}
+    assert summary.get(COUNTRY_FOREIGN_KEY) == 1, run["rule_summary"]
+    violating = [
+        row["customer_id"]
+        for row in run["error_sample"]
+        if any(error["name"] == COUNTRY_FOREIGN_KEY for error in row.get("_errors") or [])
     ]
-    result = client.call("run_checks", {"table_name": table, "checks": checks})
-    assert result["total_rows"] == EXPECTED_TOTAL_ROWS, result
-    assert result["invalid_rows"] == 1, result
-    assert [row["country"] for row in result["error_sample"]] == ["IN"], result["error_sample"]
+    assert violating == [7], run["error_sample"]
     # Checks reach the runner keyed by the original table name, never the generated view name.
-    assert not _GENERATED_VIEW_NAME.search(json.dumps(result, default=str)), result
+    assert not _GENERATED_VIEW_NAME.search(json.dumps(run, default=str)), run
 
 
 def test_mcp_server_end_to_end(workspace_auth, app_auth):
@@ -742,17 +750,17 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
         assert client.call("validate_checks", {"checks": from_contract["rules"]})["valid"] is True
         _assert_contract_sources(client, data["contract"], data["workspace_contract"])
 
-        # 8. run_checks — flags exactly the known-dirty rows.
-        run = client.call("run_checks", {"table_name": table, "checks": EXPLICIT_CHECKS})
+        # 8. run_checks — flags exactly the known-dirty rows. The foreign_key check reads a reference
+        #    table the runner is not granted, through the caller's OBO view. Its only violating row
+        #    is already invalid, so the row counts are unchanged.
+        _assert_runner_cannot_read_reference_table(data["ref_table"], app.get("runner_service_principal", ""))
+        checks = [*EXPLICIT_CHECKS, country_foreign_key_check(data["ref_table"])]
+        run = client.call("run_checks", {"table_name": table, "checks": checks})
         assert run["total_rows"] == EXPECTED_TOTAL_ROWS
         assert run["invalid_rows"] == EXPECTED_INVALID_ROWS
         assert run["valid_rows"] == EXPECTED_TOTAL_ROWS - EXPECTED_INVALID_ROWS
         assert run["error_sample"] and run["rule_summary"]
-
-        # 8b. A foreign_key reference table is read through the caller's OBO view.
-        _assert_reference_check_reads_through_caller_view(
-            client, table, data["ref_table"], app.get("runner_service_principal", "")
-        )
+        _assert_foreign_key_violation_reads_reference_view(run)
 
         # 9-10. Persisting tools (save_checks -> load_checks round-trip, then
         #       apply_checks_and_save_to_table) — both write to the caller's private per-user schema.

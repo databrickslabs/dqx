@@ -115,16 +115,6 @@ def test_names_differing_only_by_case_share_one_view_and_keep_their_spelling() -
     assert result.ref_views == {REFERENCE: VIEW, "CAT.Sch.Parent": VIEW}
 
 
-def test_self_reference_matches_the_monitored_table_case_insensitively() -> None:
-    def create_view(reference: str) -> str:
-        raise AssertionError("The full monitored view should be reused")
-
-    result = build_reference_views(
-        [make_check("Cat.Sch.Parent")], create_view, monitored_table_fqn=REFERENCE, monitored_view_fqn=VIEW
-    )
-    assert result.ref_views == {"Cat.Sch.Parent": VIEW}
-
-
 @pytest.mark.parametrize("function", REFERENCE_FUNCTIONS)
 def test_rewritten_checks_do_not_depend_on_generated_view_names(function: str) -> None:
     checks = [make_check(function=function)]
@@ -248,13 +238,16 @@ def test_no_references_is_a_noop() -> None:
     assert not result.ref_views
 
 
-def test_self_reference_reuses_the_monitored_full_view() -> None:
-    def create_view(reference: str) -> str:
+@pytest.mark.parametrize("reference", (REFERENCE, "Cat.Sch.Parent"))
+def test_self_reference_reuses_the_monitored_full_view(reference: str) -> None:
+    def create_view(table: str) -> str:
         raise AssertionError("The full monitored view should be reused")
 
-    result = build_reference_views([make_check()], create_view, monitored_table_fqn=REFERENCE, monitored_view_fqn=VIEW)
-    assert result.ref_views == {REFERENCE: VIEW}
-    assert arguments_of(result.checks[0])["ref_df_name"] == REFERENCE
+    result = build_reference_views(
+        [make_check(reference)], create_view, monitored_table_fqn=REFERENCE, monitored_view_fqn=VIEW
+    )
+    assert result.ref_views == {reference: VIEW}
+    assert arguments_of(result.checks[0])["ref_df_name"] == reference
 
 
 @pytest.mark.parametrize(
