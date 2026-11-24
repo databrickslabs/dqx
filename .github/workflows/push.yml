@@ -203,14 +203,3 @@ jobs:
 
       - name: Run mocked MCP runner tests with DQX dependencies
         run: make mcp-runner-test
-
-      - name: Publish MCP unit test coverage
-        # Adds the mocked unit tests to the remotely collected `mcp` flag (mcp.yml), which only sees
-        # what the end-to-end suite executes. Skip on `push: main`, like the unit upload: the main
-        # baseline comes from nightly.yml.
-        if: github.event_name != 'push'
-        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
-        with:
-          use_oidc: true
-          files: coverage-mcp-unit.xml,coverage-mcp-runner.xml
-          flags: mcp-unit

@@ -53,7 +53,6 @@ nosetests.xml
 coverage.xml
 coverage-unit.xml
 coverage-integration.xml
-coverage-mcp-*.xml
 *.cover
 *.py,cover
 .hypothesis/
