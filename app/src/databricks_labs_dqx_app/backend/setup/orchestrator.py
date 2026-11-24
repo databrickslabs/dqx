@@ -1023,7 +1023,8 @@ class SetupOrchestrator:
             return await asyncio.to_thread(
                 bound.checkers.check_runner_access, resolved.job_id, reader_ws=reader_ws, reader_sql=reader_sql
             )
-        except Exception:
+        except Exception as error:
+            logger.error(f"Task-runner reconciliation failed ({_diagnostic(error)})")
             return _failed(
                 SetupStepId.TASK_RUNNER,
                 "task_runner_reconciliation_failed",
@@ -1130,9 +1131,18 @@ def _upcoming_step(
 
 
 def _diagnostic(error: Exception) -> str:
+    """Describe *error* for a log line without its message, which can carry workspace or user details.
+
+    Only the exception type and its validated API error code and SQLSTATE are included.
+    """
+    parts = [type(error).__name__]
+    error_code = getattr(error, "error_code", None)
+    if isinstance(error_code, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", error_code):
+        parts.append(error_code)
     sqlstate = getattr(error, "sqlstate", None)
-    suffix = f", SQLSTATE {sqlstate}" if isinstance(sqlstate, str) and re.fullmatch(r"[0-9A-Z]{5}", sqlstate) else ""
-    return f"{type(error).__name__}{suffix}"
+    if isinstance(sqlstate, str) and re.fullmatch(r"[0-9A-Z]{5}", sqlstate):
+        parts.append(f"SQLSTATE {sqlstate}")
+    return ", ".join(parts)
 
 
 def _display(value: str) -> str:
