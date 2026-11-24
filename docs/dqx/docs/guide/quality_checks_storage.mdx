@@ -406,6 +406,12 @@ fingerprint = compute_rule_set_fingerprint(rules)
 
 The fingerprint is a deterministic SHA-256 hash of the rule set. The order of checks does not matter. `for_each_column` is included in the fingerprint (sorted for determinism).
 
+`user_metadata` is included in the fingerprint, so changing only `user_metadata` produces a new fingerprint and `save_checks` writes a new version. Key order does not matter. A rule without `user_metadata` (absent, `null`, or empty) keeps the same fingerprint it had in earlier releases.
+
+<Admonition type="info" title="Change from DQX 0.17.2 and earlier">
+In DQX 0.17.2 and earlier, `user_metadata` was not included in the fingerprint, so saving checks that differed from a stored version only in `user_metadata` was a no-op. After upgrading, rules that carry `user_metadata` get new fingerprints, so the first `save_checks` call writes a new version even if nothing changed.
+</Admonition>
+
 <Admonition type="info" title="What is not included in the fingerprint">
-`user_metadata` is intentionally **not** included in the fingerprint. Two rule sets that differ only in `user_metadata` values will produce the same fingerprint. As a result, calling `save_checks` with a checks payload that is identical to an already-saved version — except for `user_metadata` — will be treated as a no-op and **no new version will be written**. If you need to record a new version, change the rule logic (function, arguments, filter, name, or criticality).
+`message_expr` is not included in the fingerprint. Saving checks that differ from a stored version only in `message_expr` is a no-op.
 </Admonition>

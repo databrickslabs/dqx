@@ -412,8 +412,9 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
             run_config_name, the save is skipped and the method returns without writing. This applies regardless
             of config.mode (including "overwrite"). So a call with mode="overwrite" and a checks payload
             that hashes to an existing fingerprint will not overwrite (e.g. if only non-fingerprinted metadata changed).
-            In particular, editing ONLY *message_expr* (or ONLY *user_metadata*) on an existing rule set is a no-op,
-            because compute_rule_fingerprint hashes only name/criticality/function/arguments/filter/for_each_column.
+            In particular, editing ONLY *message_expr* on an existing rule set is a no-op, because
+            compute_rule_fingerprint hashes only name/criticality/function/arguments/filter/for_each_column and
+            *user_metadata*. Editing *user_metadata* changes the fingerprint, so it is written as a new version.
 
             Mode behavior:
             - **overwrite**: If the fingerprint differs, replaces all rows for this run_config_name with the new
@@ -719,8 +720,9 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             run_config_name, the save is skipped and the method returns without writing or deleting. This applies
             regardless of config.mode (including "overwrite"). The fingerprint check is performed before any
             overwrite delete, so an existing matching fingerprint always results in a no-op. In particular,
-            editing ONLY *message_expr* (or ONLY *user_metadata*) on an existing rule set is a no-op, because
-            compute_rule_fingerprint hashes only name/criticality/function/arguments/filter/for_each_column.
+            editing ONLY *message_expr* on an existing rule set is a no-op, because compute_rule_fingerprint
+            hashes only name/criticality/function/arguments/filter/for_each_column and *user_metadata*. Editing
+            *user_metadata* changes the fingerprint, so it is written as a new version.
 
             Mode behavior:
             - **overwrite**: If the fingerprint differs, deletes all rows for this run_config_name and inserts
