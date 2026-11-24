@@ -45,6 +45,7 @@ from tests.constants import TEST_CATALOG
 SCHEMA = "a: string, b: int"
 EMBEDDING_SCHEMA = "a: string, embedding: array<float>"
 
+
 @pytest.mark.parametrize(
     "schema, merge_columns, rows",
     [
@@ -659,7 +660,9 @@ def test_is_similar_to_reference_composite_key_skips_nulls(spark: SparkSession):
 
 def test_foreign_key_with_fuzzy_match(spark: SparkSession):
     ref_df = spark.createDataFrame([["apple"], ["banana"]], "ref_col: string")
-    checks = [foreign_key(["a"], ["ref_col"], "ref_df", fuzzy_match={"max_distance": 1, "case_sensitive": False})]
+    checks = [
+        foreign_key(["a"], ["ref_col"], "ref_df", fuzzy_matching_options={"max_distance": 1, "case_sensitive": False})
+    ]
 
     actual_df = _apply_checks(_fuzzy_test_df(spark), checks, {"ref_df": ref_df}, spark)
 
@@ -710,7 +713,7 @@ def test_vector_matching_runtime_is_supported_on_serverless(ws, spark: SparkSess
         check_func_kwargs={
             "ref_columns": ["ref_embedding"],
             "ref_df_name": "ref_df",
-            "fuzzy_match": {"method": "vector_l2", "max_distance": 1},
+            "fuzzy_matching_options": {"method": "vector_l2", "max_distance": 1},
         },
     )
 
@@ -770,7 +773,7 @@ def test_foreign_key_with_vector_fuzzy_match(spark: SparkSession, skip_if_classi
     test_df = spark.createDataFrame([["near", [1.0, 0.0]], ["far", [6.0, 8.0]]], EMBEDDING_SCHEMA)
     ref_df = spark.createDataFrame([[[0.0, 0.0]]], "ref_embedding: array<float>")
     condition, apply = foreign_key(
-        ["embedding"], ["ref_embedding"], "ref_df", fuzzy_match={"method": "vector_l2", "max_distance": 1}
+        ["embedding"], ["ref_embedding"], "ref_df", fuzzy_matching_options={"method": "vector_l2", "max_distance": 1}
     )
 
     rows = apply(test_df, spark, {"ref_df": ref_df}).select("a", condition.alias("violation")).collect()
@@ -794,7 +797,7 @@ def test_compare_datasets_with_vector_l2_row_matching_breaks_ties(spark: SparkSe
         columns=["embedding"],
         ref_columns=["embedding"],
         ref_df_name="ref_df",
-        fuzzy_match={"method": "vector_l2", "max_distance": 3},
+        fuzzy_matching_options={"method": "vector_l2", "max_distance": 3},
     )
 
     rows = apply(df, spark, {"ref_df": ref_df}).select("value", condition.alias("violation")).collect()
@@ -819,7 +822,7 @@ def test_compare_datasets_with_vector_cosine_row_matching_breaks_ties(spark: Spa
         columns=["embedding"],
         ref_columns=["embedding"],
         ref_df_name="ref_df",
-        fuzzy_match={"method": "vector_cosine", "min_similarity": 0.7},
+        fuzzy_matching_options={"method": "vector_cosine", "min_similarity": 0.7},
     )
 
     rows = apply(df, spark, {"ref_df": ref_df}).select(condition.alias("violation")).collect()
@@ -840,7 +843,7 @@ def test_is_similar_to_reference_vector_fails_on_unsupported_runtime(ws, spark: 
         check_func_kwargs={
             "ref_columns": ["embedding"],
             "ref_df_name": "ref_df",
-            "fuzzy_match": {"method": "vector_l2", "max_distance": 0.5},
+            "fuzzy_matching_options": {"method": "vector_l2", "max_distance": 0.5},
         },
     )
 
@@ -6060,7 +6063,7 @@ def test_compare_datasets_with_fuzzy_row_matching(spark: SparkSession):
     df = spark.createDataFrame([("john", 1), ("jane", 2), ("zed", 3), (None, 4)], "id string, value int")
     ref_df = spark.createDataFrame([("jon", 1), ("jane", 5)], "id string, value int")
     condition, apply = compare_datasets(
-        columns=["id"], ref_columns=["id"], ref_df_name="ref_df", fuzzy_match={"max_distance": 1}
+        columns=["id"], ref_columns=["id"], ref_df_name="ref_df", fuzzy_matching_options={"max_distance": 1}
     )
 
     rows = apply(df, spark, {"ref_df": ref_df}).select("id", "value", condition.alias("violation")).collect()
@@ -6081,7 +6084,7 @@ def test_compare_datasets_fuzzy_row_matching_breaks_ties_by_reference_values(spa
     df = spark.createDataFrame([("john", 1), ("john", 1)], "id string, value int")
     ref_df = spark.createDataFrame([("jon", 7), ("jon", 1), ("joh", 9)], "id string, value int")
     condition, apply = compare_datasets(
-        columns=["id"], ref_columns=["id"], ref_df_name="ref_df", fuzzy_match={"max_distance": 1}
+        columns=["id"], ref_columns=["id"], ref_df_name="ref_df", fuzzy_matching_options={"max_distance": 1}
     )
 
     rows = apply(df, spark, {"ref_df": ref_df}).select(condition.alias("violation")).collect()
@@ -6100,7 +6103,7 @@ def test_compare_datasets_fuzzy_row_matching_respects_row_filter(spark: SparkSes
         ref_columns=["id"],
         ref_df_name="ref_df",
         row_filter="value = 1",
-        fuzzy_match={"min_similarity": 0.75, "case_sensitive": False},
+        fuzzy_matching_options={"min_similarity": 0.75, "case_sensitive": False},
     )
 
     rows = apply(df, spark, {"ref_df": ref_df}).select("id", condition.alias("violation")).collect()

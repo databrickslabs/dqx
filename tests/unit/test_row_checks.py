@@ -551,7 +551,7 @@ def test_is_similar_to_skips_null_values():
 
 
 @pytest.mark.parametrize(
-    "value, fuzzy_match, error, message",
+    "value, fuzzy_matching_options, error, message",
     [
         (None, {"max_distance": 1}, MissingParameterError, "'value' is required"),
         ("'a'", None, MissingParameterError, "'fuzzy_match' is required"),
@@ -564,6 +564,6 @@ def test_is_similar_to_skips_null_values():
         (0.5, {"method": "vector_cosine", "max_distance": 1}, InvalidParameterError, "requires an embedding 'value'"),
     ],
 )
-def test_is_similar_to_rejects_invalid_arguments(value, fuzzy_match, error, message):
+def test_is_similar_to_rejects_invalid_arguments(value, fuzzy_matching_options, error, message):
     with pytest.raises(error, match=message):
-        is_similar_to("a", value, fuzzy_match)
+        is_similar_to("a", value, fuzzy_matching_options)

@@ -5670,7 +5670,10 @@ def test_is_similar_to_vector_is_supported_on_serverless(ws, spark: SparkSession
         criticality="error",
         check_func=is_similar_to,
         column="embedding",
-        check_func_kwargs={"value": [1.0, 0.0], "fuzzy_match": {"method": "vector_cosine", "max_distance": 0.1}},
+        check_func_kwargs={
+            "value": [1.0, 0.0],
+            "fuzzy_matching_options": {"method": "vector_cosine", "max_distance": 0.1},
+        },
     )
 
     rows = DQEngine(ws).apply_checks(test_df, [rule]).select("a", "_errors").collect()

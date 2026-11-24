@@ -733,23 +733,23 @@ _VECTOR_MATCH = {"method": "vector_cosine", "min_similarity": 0.9}
         DQRowRule(
             check_func=check_funcs.is_similar_to,
             column="a",
-            check_func_kwargs={"value": [0.1, 0.2], "fuzzy_match": _VECTOR_MATCH},
+            check_func_kwargs={"value": [0.1, 0.2], "fuzzy_matching_options": _VECTOR_MATCH},
         ),
         DQRowRule(check_func=check_funcs.is_similar_to, column="a", check_func_args=[[0.1, 0.2], _VECTOR_MATCH]),
         DQDatasetRule(
             check_func=check_funcs.foreign_key,
             columns=["a"],
-            check_func_kwargs={"ref_columns": ["a"], "ref_df_name": "ref", "fuzzy_match": _VECTOR_MATCH},
+            check_func_kwargs={"ref_columns": ["a"], "ref_df_name": "ref", "fuzzy_matching_options": _VECTOR_MATCH},
         ),
         DQDatasetRule(
             check_func=check_funcs.is_similar_to_reference,
             columns=["a"],
-            check_func_kwargs={"ref_columns": ["a"], "ref_df_name": "ref", "fuzzy_match": _VECTOR_MATCH},
+            check_func_kwargs={"ref_columns": ["a"], "ref_df_name": "ref", "fuzzy_matching_options": _VECTOR_MATCH},
         ),
         DQDatasetRule(
             check_func=check_funcs.compare_datasets,
             columns=["a"],
-            check_func_kwargs={"ref_columns": ["a"], "ref_df_name": "ref", "fuzzy_match": _VECTOR_MATCH},
+            check_func_kwargs={"ref_columns": ["a"], "ref_df_name": "ref", "fuzzy_matching_options": _VECTOR_MATCH},
         ),
     ],
 )
@@ -768,7 +768,7 @@ def test_validate_dbr_version_accepts_vector_fuzzy_matching_on_dbr_18_1_and_abov
     rule = DQRowRule(
         check_func=check_funcs.is_similar_to,
         column="a",
-        check_func_kwargs={"value": [0.1, 0.2], "fuzzy_match": _VECTOR_MATCH},
+        check_func_kwargs={"value": [0.1, 0.2], "fuzzy_matching_options": _VECTOR_MATCH},
     )
     engine._validate_dbr_version_requirements([rule])
 
@@ -779,12 +779,16 @@ def test_validate_dbr_version_accepts_vector_fuzzy_matching_on_dbr_18_1_and_abov
         DQRowRule(
             check_func=check_funcs.is_similar_to,
             column="a",
-            check_func_kwargs={"value": "'x'", "fuzzy_match": {"max_distance": 1}},
+            check_func_kwargs={"value": "'x'", "fuzzy_matching_options": {"max_distance": 1}},
         ),
         DQDatasetRule(
             check_func=check_funcs.foreign_key,
             columns=["a"],
-            check_func_kwargs={"ref_columns": ["a"], "ref_df_name": "ref", "fuzzy_match": {"max_distance": 1}},
+            check_func_kwargs={
+                "ref_columns": ["a"],
+                "ref_df_name": "ref",
+                "fuzzy_matching_options": {"max_distance": 1},
+            },
         ),
         DQDatasetRule(
             check_func=check_funcs.foreign_key,

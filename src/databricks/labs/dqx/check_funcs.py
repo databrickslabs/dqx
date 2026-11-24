@@ -1401,7 +1401,7 @@ def is_not_equal_to(
 def is_similar_to(
     column: str | Column,
     value: int | float | str | list[float] | Column,
-    fuzzy_match_options: FuzzyMatchOptions,
+    fuzzy_matching_options: FuzzyMatchOptions,
 ) -> Column:
     """Checks whether the values in the input column are similar to the given value. Each row is compared with
     the input *value*. Rows where the column or *value* is NULL pass the check. A distance that is undefined
@@ -1420,7 +1420,7 @@ def is_similar_to(
         column: Column to check. Can be a string column name or a column expression.
         value: Value to compare with. Can be a number, a string literal in single quotes (e.g. *"'apple'"*),
                a column name or SQL expression, a Spark Column, or for vector methods a list of floats.
-        fuzzy_match_options: Fuzzy matching options:
+        fuzzy_matching_options: Fuzzy matching options:
             - *method*: *levenshtein* (default), *vector_cosine* or *vector_l2*.
             - *max_distance*: maximum distance of a match: edit distance for *levenshtein*,
               *1 - cosine similarity* for *vector_cosine*, L2 distance for *vector_l2*.
@@ -1436,7 +1436,7 @@ def is_similar_to(
         MissingParameterError: If *value* or *fuzzy_match* is None.
         InvalidParameterError: If *fuzzy_match* is invalid, or *value* does not suit the method.
     """
-    matcher = build_fuzzy_matcher(fuzzy_match_options, 1)
+    matcher = build_fuzzy_matcher(fuzzy_matching_options, 1)
     if matcher is None:
         raise MissingParameterError("'fuzzy_match' is required; use 'is_equal_to' for exact matching.")
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
@@ -2804,7 +2804,7 @@ def foreign_key(
     row_filter: str | None = None,
     null_safe: bool = False,
     broadcast_ref: bool = False,
-    fuzzy_match_options: FuzzyMatchOptions | None = None,
+    fuzzy_matching_options: FuzzyMatchOptions | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build a foreign key check condition and closure for dataset-level validation.
@@ -2828,7 +2828,7 @@ def foreign_key(
             If False, skips NULL values in the foreign key columns. False is a default.
         broadcast_ref: If True, adds a broadcast hint to the deduplicated reference values. Values are copied to every
             executor. Enable this option only for small reference tables. False is a default.
-        fuzzy_match_options: Optional fuzzy matching options. When None (default), key values must be equal. Otherwise
+        fuzzy_matching_options: Optional fuzzy matching options. When None (default), key values must be equal. Otherwise
             each row is matched to its most similar reference value and fails when none is within the threshold. Keys:
             *method* (*levenshtein* (default), *vector_cosine* or *vector_l2*), exactly one of *max_distance* or
             *min_similarity*, and for *levenshtein* the flags *case_sensitive* (default True) and *trim_strings*
@@ -2850,7 +2850,7 @@ def foreign_key(
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
-    matcher = build_fuzzy_matcher(fuzzy_match_options, len(columns))
+    matcher = build_fuzzy_matcher(fuzzy_matching_options, len(columns))
     if matcher is not None:
         if null_safe:
             raise InvalidParameterError("'null_safe' is not supported with fuzzy matching; NULL keys never match.")
@@ -2952,14 +2952,14 @@ def foreign_key(
 @row_preserving
 @register_rule("dataset")
 def is_similar_to_reference(
-        columns: list[str | Column],
-        ref_columns: list[str | Column],
-        fuzzy_match: FuzzyMatchOptions,
-        ref_df_name: str | None = None,
-        ref_table: str | None = None,
-        negate: bool = False,
-        row_filter: str | None = None,
-        broadcast_ref: bool = False,
+    columns: list[str | Column],
+    ref_columns: list[str | Column],
+    fuzzy_matching_options: FuzzyMatchOptions,
+    ref_df_name: str | None = None,
+    ref_table: str | None = None,
+    negate: bool = False,
+    row_filter: str | None = None,
+    broadcast_ref: bool = False,
 ) -> tuple[Column, Callable]:
     """
     Build a fuzzy reference check condition and closure for dataset-level validation.Flags rows whose key values
@@ -2979,7 +2979,7 @@ def is_similar_to_reference(
     Args:
         columns: List of column names (str) or Column expressions in the dataset.
         ref_columns: List of column names (str) or Column expressions in the reference dataset.
-        fuzzy_match: Fuzzy matching options:
+        fuzzy_matching_options: Fuzzy matching options:
             - *method*: *levenshtein* (default), *vector_cosine* or *vector_l2*.
             - *max_distance*: maximum distance of a match: total edit distance for *levenshtein*,
               *1 - cosine similarity* for *vector_cosine*, L2 distance for *vector_l2*.
@@ -3012,7 +3012,7 @@ def is_similar_to_reference(
         Fuzzy matching requires batch DataFrames. To check a stream, apply the check inside *foreachBatch*.
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
-    matcher = build_fuzzy_matcher(fuzzy_match, len(columns))
+    matcher = build_fuzzy_matcher(fuzzy_matching_options, len(columns))
     if matcher is None:
         raise MissingParameterError("'fuzzy_match' is required; use 'foreign_key' for exact matching.")
     return _similar_reference_check(
@@ -3805,7 +3805,7 @@ def compare_datasets(
     rel_tolerance: float | None = None,
     raise_on_duplicate_keys: bool = False,
     *,
-    fuzzy_match: FuzzyMatchOptions | None = None,
+    fuzzy_matching_options: FuzzyMatchOptions | None = None,
 ) -> tuple[Column, Callable]:
     """
     Dataset-level check that compares two datasets and returns a condition for changed rows,
@@ -3839,7 +3839,7 @@ def compare_datasets(
     is the more efficient option on large datasets, at the cost of an eager uniqueness check that
     raises if duplicates are present.
 
-    With *fuzzy_match*, each source row is paired with its single best-matching reference row on the
+    With *fuzzy_matching_options*, each source row is paired with its single best-matching reference row on the
     matching columns, and then compared as usual. Several source rows can pair with the same reference row,
     a source row with no reference row within the threshold is reported as *row_extra*, and NULL keys never
     match. Fuzzy matching cannot be combined with *check_missing_records* or *raise_on_duplicate_keys*. See
@@ -3897,7 +3897,7 @@ def compare_datasets(
         *InvalidParameterError* if duplicates are present. If False (default), pair duplicate-key rows lazily
         by compared values using per-group row-number windows; this is robust to duplicates but sorts both
         datasets on the compared columns.
-      fuzzy_match: Optional fuzzy row matching options. When None (default), rows match on equal keys. Otherwise
+      fuzzy_matching_options: Optional fuzzy row matching options. When None (default), rows match on equal keys. Otherwise
         each source row is paired with its most similar reference row. Keys: *method* (*levenshtein* (default),
         *vector_cosine* or *vector_l2*), exactly one of *max_distance* or *min_similarity*, and for *levenshtein*
         the flags *case_sensitive* (default True) and *trim_strings* (default False).
@@ -3922,7 +3922,7 @@ def compare_datasets(
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
-    matcher = build_fuzzy_matcher(fuzzy_match, len(columns))
+    matcher = build_fuzzy_matcher(fuzzy_matching_options, len(columns))
     if matcher is not None and (check_missing_records or raise_on_duplicate_keys):
         raise InvalidParameterError(
             "Fuzzy matching cannot be combined with 'check_missing_records' or 'raise_on_duplicate_keys'."

@@ -174,7 +174,7 @@
       ref_columns:
       - ref_col1
       ref_df_name: ref_df_key
-      fuzzy_match:
+      fuzzy_matching_options:
         method: levenshtein
         max_distance: 1
         case_sensitive: false
@@ -189,7 +189,7 @@
       ref_columns:
       - ref_col1
       ref_df_name: ref_df_key
-      fuzzy_match:
+      fuzzy_matching_options:
         max_distance: 1
       broadcast_ref: true
 
@@ -203,7 +203,7 @@
       ref_columns:
       - ref_col1
       ref_df_name: ref_df_key
-      fuzzy_match:
+      fuzzy_matching_options:
         method: levenshtein
         min_similarity: 0.75
         trim_strings: true
@@ -266,7 +266,7 @@
       ref_columns:
       - ref_col1
       ref_df_name: ref_df_key
-      fuzzy_match:
+      fuzzy_matching_options:
         max_distance: 1
 
 # aggr_matches_dataset check — row count matches the reference dataset (validates ingestion completeness)

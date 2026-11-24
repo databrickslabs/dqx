@@ -34,7 +34,7 @@ def test_build_fuzzy_matcher_reads_all_options():
 
 
 @pytest.mark.parametrize(
-    "fuzzy_match, num_columns, message",
+    "fuzzy_matching_options, num_columns, message",
     [
         (["levenshtein"], 1, "'fuzzy_match' must be a dictionary"),
         ({"max_distance": 1, "distance": 1}, 1, "Unknown 'fuzzy_match' options: distance"),
@@ -60,9 +60,9 @@ def test_build_fuzzy_matcher_reads_all_options():
         ({"method": "vector_cosine", "max_distance": 0.1}, 2, "requires exactly one embedding column"),
     ],
 )
-def test_build_fuzzy_matcher_rejects_invalid_options(fuzzy_match, num_columns, message):
+def test_build_fuzzy_matcher_rejects_invalid_options(fuzzy_matching_options, num_columns, message):
     with pytest.raises(InvalidParameterError, match=message):
-        build_fuzzy_matcher(fuzzy_match, num_columns)
+        build_fuzzy_matcher(fuzzy_matching_options, num_columns)
 
 
 def test_build_nearest_by_query_for_cosine_similarity():
@@ -119,11 +119,11 @@ def test_fuzzy_match_method_distance_uses_the_member_sql_function(method, expect
 @pytest.mark.parametrize(
     "arguments, expected",
     [
-        ({"fuzzy_match": {"method": "vector_cosine", "min_similarity": 0.9}}, True),
-        ({"fuzzy_match": {"method": "vector_l2", "max_distance": 1}}, True),
-        ({"fuzzy_match": {"method": "levenshtein", "max_distance": 1}}, False),
-        ({"fuzzy_match": {"max_distance": 1}}, False),
-        ({"fuzzy_match": None}, False),
+        ({"fuzzy_matching_options": {"method": "vector_cosine", "min_similarity": 0.9}}, True),
+        ({"fuzzy_matching_options": {"method": "vector_l2", "max_distance": 1}}, True),
+        ({"fuzzy_matching_options": {"method": "levenshtein", "max_distance": 1}}, False),
+        ({"fuzzy_matching_options": {"max_distance": 1}}, False),
+        ({"fuzzy_matching_options": None}, False),
         ({}, False),
     ],
 )

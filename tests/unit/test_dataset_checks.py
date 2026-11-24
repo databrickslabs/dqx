@@ -958,18 +958,18 @@ def _add_no_condition(df: DataFrame) -> DataFrame:
 
 def test_foreign_key_rejects_null_safe_with_fuzzy_match():
     with pytest.raises(InvalidParameterError, match="'null_safe' is not supported with fuzzy matching"):
-        check_funcs.foreign_key(["a"], ["a"], "ref_df", null_safe=True, fuzzy_match={"max_distance": 1})
+        check_funcs.foreign_key(["a"], ["a"], "ref_df", null_safe=True, fuzzy_matching_options={"max_distance": 1})
 
 
 def test_foreign_key_rejects_invalid_fuzzy_match():
     with pytest.raises(InvalidParameterError, match="exactly one of 'max_distance' or 'min_similarity'"):
-        check_funcs.foreign_key(["a"], ["a"], "ref_df", fuzzy_match={"method": "levenshtein"})
+        check_funcs.foreign_key(["a"], ["a"], "ref_df", fuzzy_matching_options={"method": "levenshtein"})
 
 
 @pytest.mark.parametrize("check_func", [check_funcs.foreign_key, check_funcs.compare_datasets])
 def test_fuzzy_match_rejects_empty_key_columns(check_func):
     with pytest.raises(InvalidParameterError, match="requires at least one key column"):
-        check_func([], [], "ref_df", fuzzy_match={"max_distance": 1})
+        check_func([], [], "ref_df", fuzzy_matching_options={"max_distance": 1})
 
 
 def test_is_similar_to_reference_rejects_empty_key_columns():
@@ -981,7 +981,11 @@ def test_foreign_key_with_fuzzy_match_keeps_foreign_key_result_name():
     rule = DQDatasetRule(
         check_func=check_funcs.foreign_key,
         columns=["a"],
-        check_func_kwargs={"ref_columns": ["ref_a"], "ref_df_name": "ref_df", "fuzzy_match": {"max_distance": 1}},
+        check_func_kwargs={
+            "ref_columns": ["ref_a"],
+            "ref_df_name": "ref_df",
+            "fuzzy_matching_options": {"max_distance": 1},
+        },
     )
     assert rule.name == "a_not_exists_in_ref_ref_a"
 
@@ -996,7 +1000,7 @@ def test_is_similar_to_reference_result_name(negate, expected_name):
         check_func_kwargs={
             "ref_columns": ["ref_a"],
             "ref_df_name": "ref_df",
-            "fuzzy_match": {"max_distance": 1},
+            "fuzzy_matching_options": {"max_distance": 1},
             "negate": negate,
         },
     )
@@ -1008,7 +1012,7 @@ def test_is_similar_to_reference_requires_fuzzy_match():
         DQDatasetRule(
             check_func=check_funcs.is_similar_to_reference,
             columns=["a"],
-            check_func_kwargs={"ref_columns": ["a"], "ref_df_name": "ref_df", "fuzzy_match": None},
+            check_func_kwargs={"ref_columns": ["a"], "ref_df_name": "ref_df", "fuzzy_matching_options": None},
         )
 
 
@@ -1040,9 +1044,9 @@ def test_is_similar_to_reference_rejects_streaming_dataframes():
 @pytest.mark.parametrize("conflict", [{"check_missing_records": True}, {"raise_on_duplicate_keys": True}])
 def test_compare_datasets_rejects_fuzzy_match_with_incompatible_options(conflict):
     with pytest.raises(InvalidParameterError, match="Fuzzy matching cannot be combined"):
-        check_funcs.compare_datasets(["id"], ["id"], "ref_df", fuzzy_match={"max_distance": 1}, **conflict)
+        check_funcs.compare_datasets(["id"], ["id"], "ref_df", fuzzy_matching_options={"max_distance": 1}, **conflict)
 
 
 def test_compare_datasets_rejects_invalid_fuzzy_match():
     with pytest.raises(InvalidParameterError, match="Unknown 'fuzzy_match' options: threshold"):
-        check_funcs.compare_datasets(["id"], ["id"], "ref_df", fuzzy_match={"threshold": 1})
+        check_funcs.compare_datasets(["id"], ["id"], "ref_df", fuzzy_matching_options={"threshold": 1})

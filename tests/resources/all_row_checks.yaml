@@ -146,7 +146,7 @@
     arguments:
       column: col1
       value: "'val1'"
-      fuzzy_match:
+      fuzzy_matching_options:
         method: levenshtein
         max_distance: 1
 
@@ -157,7 +157,7 @@
     arguments:
       column: col1
       value: col11
-      fuzzy_match:
+      fuzzy_matching_options:
         min_similarity: 0.75
         case_sensitive: false
         trim_strings: true
