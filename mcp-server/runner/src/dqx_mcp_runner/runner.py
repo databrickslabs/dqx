@@ -30,6 +30,7 @@ from databricks.sdk import WorkspaceClient
 from pyspark.sql import DataFrame, SparkSession
 
 if TYPE_CHECKING:
+    from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.profiler.profiler import DQProfile
 
 from dqx_mcp_runner.config_compat import config_has_field, config_replace
@@ -75,6 +76,25 @@ def _load_ref_dfs(spark: SparkSession, params: Mapping[str, object]) -> dict[str
     if not ref_views:
         return None
     return {ref_name: spark.table(view_name) for ref_name, view_name in ref_views.items()}
+
+
+def _check_engine(spark: SparkSession, ws: WorkspaceClient, ref_dfs: dict[str, DataFrame] | None) -> "DQEngine":
+    """Build the engine for a check run, reading each check's *ref_table* from its reference view.
+
+    Checks keep their *ref_table*, so their fingerprints and messages match the stored checks.
+    The engine opts in to serving those reads from *ref_dfs*, which the server keyed by table name.
+    """
+    from databricks.labs.dqx.config import ExtraParams
+    from databricks.labs.dqx.engine import DQEngine
+
+    if not ref_dfs:
+        return DQEngine(workspace_client=ws, spark=spark)
+    if not config_has_field(ExtraParams(), "resolve_ref_tables_from_ref_dfs"):
+        raise RuntimeError(
+            "Reference-table checks need a DQX release with ExtraParams.resolve_ref_tables_from_ref_dfs, "
+            "which the runner's installed DQX does not have. Upgrade the DQX version the runner installs."
+        )
+    return DQEngine(workspace_client=ws, spark=spark, extra_params=ExtraParams(resolve_ref_tables_from_ref_dfs=True))
 
 
 def profile_table(spark: SparkSession, ws: WorkspaceClient, params: dict) -> dict:
@@ -212,7 +232,6 @@ def apply_checks_and_save_to_table(spark: SparkSession, ws: WorkspaceClient, par
     only where it is guaranteed to have permission and users are isolated from each other.
     """
     from databricks.labs.dqx.config import InputConfig, OutputConfig
-    from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.errors import InvalidParameterError
 
     view_name = params["view_name"]
@@ -224,19 +243,20 @@ def apply_checks_and_save_to_table(spark: SparkSession, ws: WorkspaceClient, par
     grant_to = params.get("grant_to")
     if not grant_to:
         raise InvalidParameterError("A caller identity is required to create your private output schema.")
+    ref_dfs = _load_ref_dfs(spark, params)
+    engine = _check_engine(spark, ws, ref_dfs)
 
     user_schema = output_schema_for_user(grant_to)
     _ensure_output_schema(spark, catalog, user_schema, grant_to)
     output_table = qualify_output(catalog, user_schema, output_name)
     quarantine_table = qualify_output(catalog, user_schema, quarantine_name) if quarantine_name else None
 
-    engine = DQEngine(workspace_client=ws, spark=spark)
     engine.apply_checks_by_metadata_and_save_in_table(
         input_config=InputConfig(location=view_name),
         output_config=OutputConfig(location=output_table, mode=mode),
         checks=checks,
         quarantine_config=OutputConfig(location=quarantine_table, mode=mode) if quarantine_table else None,
-        ref_dfs=_load_ref_dfs(spark, params),
+        ref_dfs=ref_dfs,
     )
 
     created_tables = [tbl for tbl in (output_table, quarantine_table) if tbl]
@@ -285,15 +305,14 @@ def generate_rules_from_contract(spark: SparkSession, ws: WorkspaceClient, param
 
 def run_checks(spark: SparkSession, ws: WorkspaceClient, params: dict) -> dict:
     """Run DQX checks against a view."""
-    from databricks.labs.dqx.engine import DQEngine
-
     view_name = params["view_name"]
     checks = params["checks"]
     sample_size = params.get("sample_size", 50)
 
-    engine = DQEngine(workspace_client=ws, spark=spark)
+    ref_dfs = _load_ref_dfs(spark, params)
+    engine = _check_engine(spark, ws, ref_dfs)
     df = spark.table(view_name)
-    valid_df, invalid_df = engine.apply_checks_by_metadata_and_split(df, checks, ref_dfs=_load_ref_dfs(spark, params))
+    valid_df, invalid_df = engine.apply_checks_by_metadata_and_split(df, checks, ref_dfs=ref_dfs)
 
     error_sample = [_make_json_safe(r.asDict(recursive=True)) for r in invalid_df.limit(sample_size).collect()]
     return {

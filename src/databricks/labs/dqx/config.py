@@ -325,6 +325,11 @@ class ExtraParams:
     run_id_overwrite: str | None = None
     suppress_skipped: bool = False
     variables: dict[str, VariableValue] = field(default_factory=dict)
+    # When True, a check's *ref_table* is read from the DataFrame supplied in *ref_dfs* under that
+    # table name, if there is one, instead of from the catalog. The check is unchanged, so its
+    # fingerprint and messages still name the table. Off by default: *ref_dfs* then applies only
+    # to *ref_df_name*.
+    resolve_ref_tables_from_ref_dfs: bool = False
 
 
 @dataclass

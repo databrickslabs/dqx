@@ -178,6 +178,49 @@ def test_compare_datasets_rejects_streaming_dataframes(streaming_side: str, rais
         apply(df, spark, {"ref_df": ref_df})
 
 
+def _streaming_dataframe() -> DataFrame:
+    """A DataFrame that compare_datasets rejects as soon as it reads it, which shows where it read from."""
+    frame = create_autospec(DataFrame, instance=True)
+    frame.isStreaming = True
+    return frame
+
+
+def test_ref_table_reads_a_supplied_dataframe_when_ref_dfs_resolve_ref_tables():
+    _, apply = check_funcs.compare_datasets(columns=["id"], ref_columns=["id"], ref_table="cat.sch.ref")
+    df = create_autospec(DataFrame, instance=True)
+    df.isStreaming = False
+    spark = create_autospec(SparkSession, instance=True)
+
+    with pytest.raises(InvalidParameterError, match="does not support streaming inputs"):
+        apply(df, spark, check_funcs.RefTableDataFrames({"cat.sch.ref": _streaming_dataframe()}))
+    spark.table.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "resolves_ref_tables, supplied_name",
+    [
+        (False, "cat.sch.ref"),  # a plain dict only serves ref_df_name
+        (True, "cat.sch.other"),  # opted in, but nothing is supplied under this table's name
+    ],
+)
+def test_ref_table_reads_the_catalog_unless_a_dataframe_is_supplied_for_it(
+    resolves_ref_tables: bool, supplied_name: str
+):
+    _, apply = check_funcs.compare_datasets(columns=["id"], ref_columns=["id"], ref_table="cat.sch.ref")
+    df = create_autospec(DataFrame, instance=True)
+    df.isStreaming = False
+    supplied = create_autospec(DataFrame, instance=True)
+    ref_dfs: dict[str, DataFrame] = (
+        check_funcs.RefTableDataFrames({supplied_name: supplied}) if resolves_ref_tables else {supplied_name: supplied}
+    )
+    spark = create_autospec(SparkSession, instance=True)
+    spark.table.return_value = _streaming_dataframe()
+
+    with pytest.raises(InvalidParameterError, match="does not support streaming inputs"):
+        apply(df, spark, ref_dfs)
+    spark.table.assert_called_once_with("cat.sch.ref")
+
+
 def test_sql_query_empty_merge_columns():
     """Test that empty list for merge_columns is treated the same as None (dataset-level check)."""
     # Should not raise an error - empty list is normalized to None

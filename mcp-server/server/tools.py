@@ -81,15 +81,12 @@ def submit_view_job(
         if source_key:
             params[source_key] = view_fqn
         if checks is not None:
-            refs = build_reference_views(
-                checks,
-                create_owned_view,
-                monitored_table_fqn=table_name,
-                monitored_view_fqn=view_fqn,
+            params["checks"] = checks
+            ref_views = build_reference_views(
+                checks, create_owned_view, monitored_table_fqn=table_name, monitored_view_fqn=view_fqn
             )
-            params["checks"] = refs.checks
-            if refs.ref_views:
-                params["ref_views"] = refs.ref_views
+            if ref_views:
+                params["ref_views"] = ref_views
         return submit_job(operation, params)
     except Exception:
         for view in created_views:

@@ -5810,6 +5810,14 @@ def _reference_cache_key(columns: list[str | Column], ref_columns: list[str | Co
     return repr((tuple(ref_columns), null_safe, tuple(columns) if builds_struct else ()))
 
 
+class RefTableDataFrames(dict[str, DataFrame]):
+    """Reference DataFrames that can also supply *ref_table* reads, keyed by table name.
+
+    The engine passes *ref_dfs* in this form when *ExtraParams.resolve_ref_tables_from_ref_dfs*
+    is set, so a check's *ref_table* reads the supplied DataFrame instead of the catalog table.
+    """
+
+
 def _get_ref_df(
     ref_df_name: str | None, ref_table: str | None, ref_dfs: dict[str, DataFrame] | None, spark: SparkSession
 ) -> DataFrame:
@@ -5818,6 +5826,8 @@ def _get_ref_df(
 
     This helper fetches the reference DataFrame either from the supplied dictionary of DataFrames
     (using *ref_df_name* as the key) or by reading a table from the Unity Catalog (using *ref_table*).
+    When *ref_dfs* is a *RefTableDataFrames* holding a DataFrame under the *ref_table* name, that
+    DataFrame is used instead of the catalog table.
     It raises an error if the necessary reference source is not properly specified or cannot be found.
 
     Args:
@@ -5852,6 +5862,8 @@ def _get_ref_df(
     if not ref_table:
         raise InvalidParameterError("'ref_table' must be a non-empty string.")
 
+    if isinstance(ref_dfs, RefTableDataFrames) and ref_table in ref_dfs:
+        return ref_dfs[ref_table]
     return spark.table(ref_table)
 
 

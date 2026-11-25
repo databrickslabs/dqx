@@ -212,15 +212,8 @@ def test_registered_check_tools_forward_reference_views(tool_name: str) -> None:
     assert operation == tool_name
     assert params["view_name"] == primary_view
     assert params["ref_views"] == {reference: reference_view}
-    assert params["checks"] == [
-        {
-            "name": "fk_parent",
-            "check": {
-                "function": "foreign_key",
-                "arguments": {"columns": ["parent_id"], "ref_columns": ["id"], "ref_df_name": reference},
-            },
-        }
-    ]
+    # Checks reach DQX unchanged, so their fingerprints match the stored checks.
+    assert params["checks"] == checks
     assert checks[0]["check"]["arguments"]["ref_table"] == reference
     assert result["run_id"] == 999
     drop.assert_not_called()

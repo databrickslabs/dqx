@@ -11,6 +11,7 @@ Two layers:
   otherwise need a real session — is replaced with an autospec.
 """
 
+import dataclasses
 import json
 from collections.abc import Mapping
 from types import ModuleType
@@ -143,8 +144,14 @@ def runner_module() -> ModuleType:
 
 
 @pytest.fixture(name="engine")
-def fake_engine(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Replace DQEngine (third-party boundary that needs a live session) with an autospec instance."""
+def fake_engine(engine_factory: MagicMock) -> MagicMock:
+    """The autospec DQEngine instance the runner builds."""
+    return engine_factory.return_value
+
+
+@pytest.fixture(name="engine_factory")
+def fake_engine_factory(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Replace DQEngine (third-party boundary that needs a live session), recording how it is built."""
     engine_module = pytest.importorskip("databricks.labs.dqx.engine")
     instance = create_autospec(engine_module.DQEngine, instance=True)
     spark_module = pytest.importorskip("pyspark.sql")
@@ -155,8 +162,9 @@ def fake_engine(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         frame.limit.return_value = frame
         frame.collect.return_value = []
     instance.apply_checks_by_metadata_and_split.return_value = (valid_df, invalid_df)
-    monkeypatch.setattr(engine_module, "DQEngine", lambda *args, **kwargs: instance)
-    return instance
+    factory = MagicMock(return_value=instance)
+    monkeypatch.setattr(engine_module, "DQEngine", factory)
+    return factory
 
 
 @pytest.fixture(name="spark")
@@ -243,6 +251,47 @@ class TestReferenceDataFrameResolution:
     ) -> None:
         with pytest.raises(ValueError, match="ref_views"):
             runner.run_checks(spark, ws, {"view_name": MONITORED, "checks": [], "ref_views": ["x"]})
+
+    def test_reference_runs_opt_in_to_reading_ref_tables_from_ref_dfs(
+        self, runner: ModuleType, engine_factory: MagicMock, spark: MagicMock, ws: MagicMock
+    ) -> None:
+        runner.run_checks(spark, ws, {"view_name": MONITORED, "checks": [], "ref_views": {"cat.sch.t": REF_A}})
+
+        assert engine_factory.call_args.kwargs["extra_params"].resolve_ref_tables_from_ref_dfs is True
+
+    def test_runs_without_references_keep_the_default_engine(
+        self, runner: ModuleType, engine_factory: MagicMock, spark: MagicMock, ws: MagicMock
+    ) -> None:
+        runner.run_checks(spark, ws, {"view_name": MONITORED, "checks": []})
+
+        assert "extra_params" not in engine_factory.call_args.kwargs
+
+    def test_dqx_without_the_opt_in_fails_reference_runs_before_writing(
+        self,
+        runner: ModuleType,
+        engine_factory: MagicMock,
+        spark: MagicMock,
+        ws: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        @dataclasses.dataclass(frozen=True)
+        class OlderExtraParams:
+            suppress_skipped: bool = False
+
+        monkeypatch.setattr(pytest.importorskip("databricks.labs.dqx.config"), "ExtraParams", OlderExtraParams)
+        params = {
+            "view_name": MONITORED,
+            "checks": [],
+            "output_name": "out",
+            "catalog": "main",
+            "grant_to": "alice@example.com",
+            "ref_views": {"cat.sch.t": REF_A},
+        }
+
+        with pytest.raises(RuntimeError, match="resolve_ref_tables_from_ref_dfs"):
+            runner.apply_checks_and_save_to_table(spark, ws, params)
+        engine_factory.assert_not_called()
+        spark.sql.assert_not_called()  # no output schema was created
 
 
 class TestEntrypointCleanup:

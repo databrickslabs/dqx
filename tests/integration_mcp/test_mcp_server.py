@@ -860,12 +860,12 @@ def _ambiguous_reference_checks(ref_table: str) -> dict[str, tuple[dict, str]]:
 
 
 def _assert_ambiguous_reference_checks_reach_dqx_unchanged(client: McpClient, table: str, ref_table: str) -> None:
-    """A check the server cannot adapt unambiguously goes to DQX as written, and DQX rejects it.
+    """A check with conflicting or malformed references goes to DQX as written, and DQX rejects it.
 
-    The server rewrites ref_table only when it is the check's one and only reference. It must not
-    pick a side of a conflict (keeping ref_table over ref_df_name could check against the wrong data)
-    or repair a malformed check, so each case below has to fail with DQX's own error. The runs are
-    submitted together so they execute in parallel.
+    The server only exposes reference tables and never edits checks. It must not pick a side of a
+    conflict (keeping ref_table over ref_df_name could check against the wrong data) or repair a
+    malformed check, so each case below has to fail with DQX's own error. The runs are submitted
+    together so they execute in parallel.
     """
     cases = _ambiguous_reference_checks(ref_table)
     submitted = {
@@ -1004,7 +1004,7 @@ def _assert_reference_table_handling(client: McpClient, app: dict, data: dict) -
 
     Every reference-capable check function, case-insensitive de-duplication and self-references; bad
     references fail up front without leaking views; the persisting tool gets the same reference
-    views; checks the server must not rewrite reach DQX unchanged; and the runner refuses tampered
+    views; checks with conflicting references reach DQX unchanged; and the runner refuses tampered
     job parameters without touching anything outside its namespace.
     """
     table, ref_table, tmp_schema = data["table"], data["ref_table"], app.get("tmp_schema") or ""

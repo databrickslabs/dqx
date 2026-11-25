@@ -97,15 +97,7 @@ def test_forwards_rewritten_checks_reference_views_and_operation_params(operatio
             {
                 "view_name": PRIMARY_VIEW,
                 "table_name": SOURCE,
-                "checks": [
-                    {
-                        "name": "fk_parent",
-                        "check": {
-                            "function": "foreign_key",
-                            "arguments": {"columns": ["parent_id"], "ref_columns": ["id"], "ref_df_name": REFERENCE},
-                        },
-                    }
-                ],
+                "checks": original,  # unchanged, so fingerprints match the stored checks
                 "ref_views": {REFERENCE: REFERENCE_VIEW},
                 **extra,
             },
