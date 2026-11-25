@@ -2569,7 +2569,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 "DATE",
                 {"minimum": datetime.date(2020, 1, 1)},
                 "is_not_less_than",
-                {"limit": datetime.date(2020, 1, 1)},
+                {"limit": "2020-01-01"},
                 "below_minimum",
             ),
             (
@@ -2585,7 +2585,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 "TIMESTAMP",
                 {"minimum": datetime.datetime(2024, 1, 1, 10, 30)},
                 "is_not_less_than",
-                {"limit": datetime.datetime(2024, 1, 1, 10, 30, tzinfo=datetime.timezone.utc)},
+                {"limit": "2024-01-01T10:30:00+00:00"},
                 "below_minimum",
             ),
             (
@@ -3066,7 +3066,7 @@ class TestDataContractGeneratorRangeBoundValues(DataContractGeneratorTestBase):
                 {"minimum": "2024-01-01T10:00:00", "maximum": datetime.datetime(2024, 6, 30, 18, 0)},
                 {
                     "min_limit": "2024-01-01T10:00:00+00:00",
-                    "max_limit": datetime.datetime(2024, 6, 30, 18, 0, tzinfo=datetime.timezone.utc),
+                    "max_limit": "2024-06-30T18:00:00+00:00",
                 },
             ),
             (
@@ -3082,7 +3082,7 @@ class TestDataContractGeneratorRangeBoundValues(DataContractGeneratorTestBase):
                 "TIMESTAMP",
                 {"minimum": datetime.date(2024, 1, 1), "maximum": "2024-12-31"},
                 {
-                    "min_limit": datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+                    "min_limit": "2024-01-01T00:00:00+00:00",
                     "max_limit": "2024-12-31T00:00:00+00:00",
                 },
             ),
@@ -3095,7 +3095,7 @@ class TestDataContractGeneratorRangeBoundValues(DataContractGeneratorTestBase):
                 "STRING",
                 {"minimum": datetime.date(2024, 1, 1), "maximum": "2024-01-01T12:00:00"},
                 {
-                    "min_limit": datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+                    "min_limit": "2024-01-01T00:00:00+00:00",
                     "max_limit": "2024-01-01T12:00:00+00:00",
                 },
             ),
@@ -3127,7 +3127,7 @@ class TestDataContractGeneratorRangeBoundValues(DataContractGeneratorTestBase):
         [
             (
                 {"minimum": "2024-01-01T12:00:00", "maximum": datetime.date(2024, 1, 1)},
-                "no value is at least 2024-01-01T12:00:00+00:00 and at most 2024-01-01 00:00:00+00:00",
+                "no value is at least 2024-01-01T12:00:00+00:00 and at most 2024-01-01T00:00:00+00:00",
             ),
             (
                 {"minimum": "2024-01-01T10:00:00+00:00", "maximum": "2024-01-01T12:00:00+05:00"},
@@ -3255,6 +3255,85 @@ class TestDataContractGeneratorRangeBoundValues(DataContractGeneratorTestBase):
         rules = self._generate_range_rules(generator, prop)
 
         assert [rule["check"] for rule in rules] == [check]
+
+    @pytest.mark.parametrize(
+        "prop, check",
+        [
+            # A timestamp written with a space instead of 'T' still has a time, so text compares as timestamps
+            (
+                {"physicalType": "STRING", "logicalTypeOptions": {"minimum": "2024-01-01 10:00:00"}},
+                {
+                    "function": "is_not_less_than",
+                    "arguments": {"column": "try_cast(value AS TIMESTAMP_LTZ)", "limit": "2024-01-01T10:00:00+00:00"},
+                },
+            ),
+            # Date bounds on a DATE column stay dates, without an offset
+            (
+                {"physicalType": "DATE", "logicalTypeOptions": {"minimum": "2024-01-01", "maximum": "2024-12-31"}},
+                {
+                    "function": "is_in_range",
+                    "arguments": {"column": "value", "min_limit": "2024-01-01", "max_limit": "2024-12-31"},
+                },
+            ),
+            # Equal inclusive bounds leave one value, so they aren't an empty range
+            (
+                {
+                    "physicalType": "DATE",
+                    "logicalType": "date",
+                    "logicalTypeOptions": {"minimum": "2024-01-01", "maximum": "2024-01-01"},
+                },
+                {
+                    "function": "is_in_range",
+                    "arguments": {"column": "value", "min_limit": "2024-01-01", "max_limit": "2024-01-01"},
+                },
+            ),
+        ],
+    )
+    def test_date_and_timestamp_bounds_keep_their_kind(self, generator, prop, check):
+        """Test that a bound is a date or a timestamp by its value and column, and equal bounds still make a rule."""
+        rules = self._generate_range_rules(generator, {"name": "value", **prop})
+
+        assert [rule["check"] for rule in rules] == [check]
+
+    def test_default_timezone_that_is_not_a_zone_name_skips_bounds_with_warning(self, generator, caplog):
+        """Test that a defaultTimezone zoneinfo rejects outright, such as a path, is skipped like an unknown zone."""
+        prop = {
+            "name": "value",
+            "physicalType": "TIMESTAMP",
+            "logicalType": "timestamp",
+            "logicalTypeOptions": {"minimum": "2024-01-01T00:00:00", "defaultTimezone": "../Europe/Paris"},
+        }
+
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate_range_rules(generator, prop)
+
+        assert not rules
+        assert "Skipping range bounds on 'value': unknown defaultTimezone '../Europe/Paris'." in caplog.messages
+
+    @pytest.mark.parametrize(
+        "physical_type, options",
+        [
+            ("TIMESTAMP", {"minimum": "0001-01-01", "defaultTimezone": "Asia/Tokyo"}),
+            ("TIMESTAMP", {"maximum": "9999-12-31T23:00:00", "defaultTimezone": "America/Los_Angeles"}),
+            ("TIMESTAMP_NTZ", {"minimum": "0001-01-01T00:00:00+05:00", "defaultTimezone": "Europe/Berlin"}),
+        ],
+    )
+    def test_bounds_outside_the_utc_timestamp_range_are_skipped_with_warning(
+        self, generator, caplog, physical_type, options
+    ):
+        """Test that a bound at the edge of the date range, outside it once read in UTC, skips the range, not the run."""
+        prop = {
+            "name": "value",
+            "physicalType": physical_type,
+            "logicalType": "timestamp",
+            "logicalTypeOptions": options,
+        }
+
+        with caplog.at_level(logging.WARNING):
+            rules = self._generate_range_rules(generator, prop)
+
+        assert not rules
+        assert "Skipping range bounds on 'value': a bound is outside the range of timestamps in UTC." in caplog.messages
 
     @pytest.mark.parametrize(
         "physical_type, logical_type, options, column, limits",
@@ -3482,13 +3561,13 @@ schema:
         finally:
             os.unlink(contract_file.name)
 
-        utc = datetime.timezone.utc
+        assert json.loads(json.dumps(rules)) == rules  # YAML dates are passed as ISO text, so the rules stay JSON
         assert [(rule["name"], rule["check"]) for rule in rules] == [
             (
                 "event_date_below_minimum",
                 {
                     "function": "is_not_less_than",
-                    "arguments": {"column": "event_date", "limit": datetime.date(2020, 1, 1)},
+                    "arguments": {"column": "event_date", "limit": "2020-01-01"},
                 },
             ),
             (
@@ -3497,8 +3576,8 @@ schema:
                     "function": "is_in_range",
                     "arguments": {
                         "column": "event_ts",
-                        "min_limit": datetime.datetime(2020, 1, 1, tzinfo=utc),
-                        "max_limit": datetime.datetime(2030, 1, 1, tzinfo=utc),
+                        "min_limit": "2020-01-01T00:00:00+00:00",
+                        "max_limit": "2030-01-01T00:00:00+00:00",
                     },
                 },
             ),
@@ -4025,7 +4104,7 @@ class TestDataContractGeneratorExclusiveBounds(DataContractGeneratorTestBase):
                     (
                         "at_or_below_exclusive_minimum",
                         "is_greater_than",
-                        datetime.datetime(2024, 1, 1, 10, tzinfo=datetime.timezone.utc),
+                        "2024-01-01T10:00:00+00:00",
                     )
                 ],
             ),
