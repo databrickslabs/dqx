@@ -18,7 +18,7 @@ from collections.abc import Callable, Iterator
 from enum import Enum
 from importlib.metadata import version as package_version
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import yaml
 
@@ -117,7 +117,8 @@ def _parse_range_bound(value: object) -> tuple[str, _BoundValue] | None:
 
     A range check reads any string limit other than an ISO date or timestamp as a column name or SQL expression,
     which a contract value must not become. So a bound is a finite number (a 64-bit one if an integer), a date YAML
-    loaded from an unquoted value, or an ISO date or timestamp string with at most 6 fractional second digits. A 'Z'
+    loaded from an unquoted value (passed as ISO text, so the checks stay plain JSON), or an ISO date or timestamp
+    string with at most 6 fractional second digits. A 'Z'
     offset is passed as '+00:00' and fractional seconds are padded to 6 digits, which every supported Python version
     parses.
     """
@@ -128,7 +129,7 @@ def _parse_range_bound(value: object) -> tuple[str, _BoundValue] | None:
     if isinstance(value, float):
         return (_NUMBER_BOUND, value) if math.isfinite(value) else None
     if isinstance(value, datetime.date):  # also covers datetime.datetime
-        return _TEMPORAL_BOUND, value
+        return _TEMPORAL_BOUND, value.isoformat()
     if not isinstance(value, str) or not _ISO_DATE_OR_TIMESTAMP.fullmatch(value):
         return None
     text = f"{value[:-1]}+00:00" if value.endswith("Z") else value
@@ -191,14 +192,14 @@ def _with_offset(value: _BoundValue, zone: zoneinfo.ZoneInfo) -> _BoundValue:
     """Return a timestamp bound with an explicit UTC offset, reading one without an offset in *zone*.
 
     A date becomes midnight in *zone*. The offset is the one *zone* has at that instant, so it follows daylight
-    saving time. A string stays an ISO string; a date or datetime becomes a datetime.
+    saving time.
     """
     timestamp = _as_datetime(value)
     if timestamp.tzinfo is not None:
         return value
     local = timestamp.replace(tzinfo=zone)
     with_offset = local.astimezone(datetime.timezone(local.utcoffset() or datetime.timedelta(0)))
-    return with_offset.isoformat() if isinstance(value, str) else with_offset
+    return with_offset.isoformat()
 
 
 def _is_timestamp_field(logical_type: str | None, physical_type: str | None, bounds: list[_RangeBound]) -> bool:
@@ -283,17 +284,26 @@ def _comparable_bounds(
     *,
     wall_clock: bool,
 ) -> list[_RangeBound] | None:
-    """Return the bounds as the column compares them, or None (with a warning) for an unknown defaultTimezone.
+    """Return the bounds as the column compares them, or None (with a warning) when they can't be compared.
 
     A wall-clock column compares wall-clock times, which a daylight saving change can reorder, so its bounds are
     ordered as wall-clock times before they become TIMESTAMP_NTZ literals. Other timestamp bounds get explicit offsets.
+    A bound at the edge of the date range, such as 0001-01-01 in a zone east of UTC, falls outside it in UTC, which
+    Spark can't represent either, so the range is skipped.
     """
-    if not wall_clock:
-        return _timestamp_bounds_with_offsets(column_path, logical_type, physical_type, bounds, opts)
-    zone = _default_zone(column_path, opts)
-    if zone is None:
+    try:
+        if not wall_clock:
+            return _timestamp_bounds_with_offsets(column_path, logical_type, physical_type, bounds, opts)
+        zone = _default_zone(column_path, opts)
+        if zone is None:
+            return None
+        return [bound._replace(value=_as_wall_clock(bound.value, zone)) for bound in bounds]
+    except OverflowError:
+        logger.warning(
+            f"Skipping range bounds on '{sanitize_for_logging(column_path)}': a bound is outside the range of "
+            "timestamps in UTC."
+        )
         return None
-    return [bound._replace(value=_as_wall_clock(bound.value, zone)) for bound in bounds]
 
 
 def _unsupported_range_reason(
@@ -320,13 +330,6 @@ def _range_check(bounds: list[_RangeBound]) -> tuple[str, str, dict[str, _BoundV
     return "is_not_greater_than", "above_maximum", {"limit": bounds[0].value}  # every bound is an upper bound
 
 
-def _as_number(value: _BoundValue) -> int | float:
-    """Return a number bound as a number, so two bounds can be ordered."""
-    if isinstance(value, (int, float)):
-        return value
-    raise TypeError(f"not a number bound: {value!r}")
-
-
 def _describe_bound(bound: _RangeBound) -> str:
     """Describe what a bound requires of a value, e.g. 'at least 0'."""
     return f"{'at least' if bound.lower else 'at most'} {bound.value}"
@@ -337,7 +340,7 @@ def _empty_range_reason(bounds: list[_RangeBound]) -> str | None:
     for low in (bound for bound in bounds if bound.lower):
         for high in (bound for bound in bounds if not bound.lower):
             if low.kind == _NUMBER_BOUND:
-                empty = _as_number(low.value) > _as_number(high.value)
+                empty = cast(int | float, low.value) > cast(int | float, high.value)
             else:
                 empty = _as_datetime(low.value) > _as_datetime(high.value)
             if empty:
