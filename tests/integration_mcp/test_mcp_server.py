@@ -388,7 +388,8 @@ def _assert_rule_summary_keeps_same_named_rules_apart(client: McpClient, table: 
     """Two different rules that share a name get one rule_summary entry each, keyed by fingerprint.
 
     DQX allows rules to share a name and tells them apart by rule_fingerprint. Grouping the summary
-    by name would merge them into a single entry with combined counts (1 + 2 = 3 here).
+    by name would merge them into a single entry with combined counts (1 error + 2 warnings here).
+    One rule is an error and the other a warning, so both result columns are summarized.
     """
     shared_name = "shared_rule_name"
     checks = [
@@ -399,7 +400,7 @@ def _assert_rule_summary_keeps_same_named_rules_apart(client: McpClient, table: 
         },
         {
             "name": shared_name,
-            "criticality": "error",
+            "criticality": "warn",
             "check": {"function": "is_in_range", "arguments": {"column": "age", "min_limit": 0, "max_limit": 120}},
         },
     ]
@@ -407,9 +408,9 @@ def _assert_rule_summary_keeps_same_named_rules_apart(client: McpClient, table: 
     entries = [e for e in result["rule_summary"] if e["rule_name"] == shared_name]
     assert len(entries) == 2, result["rule_summary"]
     assert len({e["rule_fingerprint"] for e in entries}) == 2, entries
-    # customer_id NULL on 1 row, age out of range on 2 rows (see the sample-table note above).
-    assert sorted(e["error_count"] for e in entries) == [1, 2], entries
-    assert all(e["warning_count"] == 0 for e in entries), entries
+    # customer_id NULL on 1 row (error), age out of range on 2 rows (warning); see the sample-table note above.
+    counts = sorted((e["error_count"], e["warning_count"]) for e in entries)
+    assert counts == [(0, 2), (1, 0)], entries
 
 
 def _assert_failed_run_surfaces_error(client: McpClient) -> None:
