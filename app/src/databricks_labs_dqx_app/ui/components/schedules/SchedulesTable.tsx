@@ -340,6 +340,7 @@ export function SchedulesTable({
         <EditColumnsDropdown
           order={colOrder}
           labelOf={(key) => t(COLUMNS[key].labelKey)}
+          lockedLastLabel={t("schedules.actions")}
           toggleableOf={(key) => COLUMNS[key].toggleable}
           isChecked={(key) => visibleKeys.includes(key)}
           onToggle={toggleColumn}

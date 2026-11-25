@@ -686,7 +686,7 @@ export function RulesTable<F extends string = string>({
           <EditColumnsDropdown
             order={editableOrder}
             labelOf={(key) => t(COLUMNS[key].labelKey)}
-            lockedLastLabel={t(COLUMNS.actions.labelKey)}
+            lockedLastLabel={visibleKeys.includes("actions") ? t(COLUMNS.actions.labelKey) : undefined}
             toggleableOf={(key) => COLUMNS[key].toggleable}
             isChecked={(key) => visibleKeys.includes(key)}
             onToggle={toggleColumn}
