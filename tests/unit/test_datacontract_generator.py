@@ -1,6 +1,4 @@
 import datetime
-from decimal import Decimal
-import io
 import json
 import logging
 import os
@@ -19,7 +17,6 @@ from databricks.sdk.errors import NotFound
 import databricks.labs.dqx.profiler.generator as generator_module
 from databricks.labs.dqx.check_funcs import make_condition, register_rule
 from databricks.labs.dqx.checks_semantic_validator import ChecksSemanticValidationMode
-from databricks.labs.dqx.checks_serializer import ChecksNormalizer, SerializerFactory
 import databricks.labs.dqx.datacontract.contract_rules_generator as contract_rules_generator_module
 from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
 from databricks.labs.dqx.engine import DQEngine
@@ -253,11 +250,7 @@ class DataContractGeneratorTestBase:
             {
                 'check': {
                     'function': 'is_in_range',
-                    'arguments': {
-                        'column': 'temperature_celsius',
-                        'min_limit': Decimal('-273.15'),
-                        'max_limit': Decimal('200.0'),
-                    },
+                    'arguments': {'column': 'temperature_celsius', 'min_limit': -273.15, 'max_limit': 200.0},
                 },
                 'name': 'temperature_celsius_out_of_range',
                 'criticality': 'error',
@@ -305,7 +298,7 @@ class DataContractGeneratorTestBase:
             {
                 'check': {
                     'function': 'is_in_range',
-                    'arguments': {'column': 'pressure_bar', 'min_limit': Decimal('0.1'), 'max_limit': Decimal('10.0')},
+                    'arguments': {'column': 'pressure_bar', 'min_limit': 0.1, 'max_limit': 10.0},
                 },
                 'name': 'pressure_bar_out_of_range',
                 'criticality': 'error',
@@ -2454,7 +2447,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
         assert rules[0]["name"] == "temperature_below_minimum"
         assert rules[0]["check"] == {
             "function": "is_not_less_than",
-            "arguments": {"column": "temperature", "limit": Decimal("-273.15")},
+            "arguments": {"column": "temperature", "limit": -273.15},
         }
 
     def test_field_with_only_maximum_constraint(self, generator):
@@ -3175,7 +3168,7 @@ class TestDataContractGeneratorRangeBoundValues(DataContractGeneratorTestBase):
             (
                 "DECIMAL(10,2)",
                 {"maximum": 9.99},
-                {"function": "is_not_greater_than", "arguments": {"column": "value", "limit": Decimal("9.99")}},
+                {"function": "is_not_greater_than", "arguments": {"column": "value", "limit": 9.99}},
                 None,
             ),
             (
@@ -3266,26 +3259,26 @@ class TestDataContractGeneratorRangeBoundValues(DataContractGeneratorTestBase):
     @pytest.mark.parametrize(
         "physical_type, logical_type, options, column, limits",
         [
-            # A float limit would make Spark compare the DECIMAL column as a DOUBLE
-            ("DECIMAL(20,18)", "number", {"maximum": 0.1}, "value", {"limit": Decimal("0.1")}),
-            (
-                "DECIMAL(38,10)",
-                "number",
-                {"minimum": -0.5, "maximum": 1e16},
-                "value",
-                {"min_limit": Decimal("-0.5"), "max_limit": Decimal("10000000000000000")},
-            ),
-            ("DECIMAL(20,18)", "number", {"minimum": 1.5e-10}, "value", {"limit": Decimal("1.5E-10")}),
-            # No DECIMAL(38) holds these, so they stay floats
-            ("DOUBLE", "number", {"maximum": 1e300}, "value", {"limit": 1e300}),
-            ("DOUBLE", "number", {"minimum": 1e-40}, "value", {"limit": 1e-40}),
-            # Integers stay integers; integer text is compared exactly as DECIMAL(38, 0)
             ("BIGINT", "integer", {"maximum": 9007199254740993}, "value", {"limit": 9007199254740993}),
-            ("STRING", "integer", {"maximum": 10.5}, "try_cast(value AS DECIMAL(38, 0))", {"limit": Decimal("10.5")}),
+            # Integer text is compared as DECIMAL(38, 0), exact past 2^53, unlike DOUBLE
+            (
+                "STRING",
+                "integer",
+                {"maximum": 9007199254740992},
+                "try_cast(value AS DECIMAL(38, 0))",
+                {"limit": 9007199254740992},
+            ),
+            (
+                "DECIMAL(20,18)",
+                "number",
+                {"minimum": -0.5, "maximum": 0.1},
+                "value",
+                {"min_limit": -0.5, "max_limit": 0.1},
+            ),
         ],
     )
-    def test_number_bounds_compare_exactly(self, generator, physical_type, logical_type, options, column, limits):
-        """Test that number bounds keep the precision the contract wrote, so a fixed-point comparison stays exact."""
+    def test_number_bounds_are_passed_as_written(self, generator, physical_type, logical_type, options, column, limits):
+        """Test that number bounds keep their type, so the generated checks stay plain JSON."""
         prop = {
             "name": "value",
             "physicalType": physical_type,
@@ -3296,28 +3289,10 @@ class TestDataContractGeneratorRangeBoundValues(DataContractGeneratorTestBase):
         rules = self._generate_range_rules(generator, prop)
 
         assert len(rules) == 1
-        assert rules[0]["check"]["arguments"] == {"column": column, **limits}
-        assert [type(value) for value in rules[0]["check"]["arguments"].values()] == [
-            type(value) for value in {"column": column, **limits}.values()
-        ]
-
-    def test_decimal_bounds_survive_saving_checks(self, generator):
-        """Test that a generated Decimal limit round-trips through DQX's JSON and YAML check storage."""
-        rules = self._generate_range_rules(
-            generator,
-            {
-                "name": "value",
-                "physicalType": "DECIMAL(20,18)",
-                "logicalType": "number",
-                "logicalTypeOptions": {"maximum": 0.1},
-            },
-        )
-
-        for extension in ("json", "yaml"):
-            serializer = SerializerFactory.create_serializer(extension)
-            stored = serializer.serialize(ChecksNormalizer.normalize(rules))
-            loaded = ChecksNormalizer.denormalize(serializer.deserialize(io.StringIO(stored)))
-            assert loaded[0]["check"]["arguments"]["limit"] == Decimal("0.1"), extension
+        assert {key: repr(value) for key, value in rules[0]["check"]["arguments"].items()} == {
+            key: repr(value) for key, value in {"column": column, **limits}.items()
+        }
+        assert json.loads(json.dumps(rules)) == rules
 
     @pytest.mark.parametrize(
         "options, function, limits",

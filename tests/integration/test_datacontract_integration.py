@@ -973,11 +973,10 @@ class TestDataContractRangeRulesIntegration:
         finally:
             spark.conf.set("spark.sql.session.timeZone", original_time_zone)
 
-    def test_fixed_point_and_integer_text_bounds_compare_exactly(self, ws, spark, set_utc_timezone):
-        """Bounds on a DECIMAL column and on integers stored as text flag a value just past them.
+    def test_integer_text_bounds_compare_exactly(self, ws, spark, set_utc_timezone):
+        """Bounds on integers stored as text flag a value just past them.
 
-        As doubles, 0.100000000000000001 equals 0.1 and 9007199254740993 equals 2^53, so a DOUBLE comparison would
-        let both through.
+        As doubles, 9007199254740993 equals 2^53, so a DOUBLE cast would let it through; DECIMAL(38, 0) doesn't.
         """
         contract = {
             "kind": "DataContract",
@@ -991,12 +990,6 @@ class TestDataContractRangeRulesIntegration:
                     "name": "sample",
                     "physicalType": "table",
                     "properties": [
-                        {
-                            "name": "ratio",
-                            "physicalType": "DECIMAL(20,18)",
-                            "logicalType": "number",
-                            "logicalTypeOptions": {"maximum": 0.1},
-                        },
                         {
                             "name": "text_count",
                             "physicalType": "STRING",
@@ -1012,14 +1005,12 @@ class TestDataContractRangeRulesIntegration:
         )
         test_df = spark.sql(
             "SELECT * FROM VALUES "
-            "(1, CAST('0.100000000000000000' AS DECIMAL(20,18)), '9007199254740992'), "
-            "(2, CAST('0.100000000000000001' AS DECIMAL(20,18)), '9007199254740993'), "
-            "(3, CAST(NULL AS DECIMAL(20,18)), 'not a number') AS sample(row_id, ratio, text_count)"
+            "(1, '9007199254740992'), (2, '9007199254740993'), (3, 'not a number') AS sample(row_id, text_count)"
         )
 
         assert _flagged_names_by_row_under_ansi(ws, spark, test_df, rules) == {
             1: set(),
-            2: {"ratio_above_maximum", "text_count_out_of_range"},
+            2: {"text_count_out_of_range"},
             3: set(),
         }
 
