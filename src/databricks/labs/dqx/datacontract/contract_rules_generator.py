@@ -9,13 +9,13 @@ See: https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-
 
 import datetime
 import json
-from decimal import Decimal
 import logging
 import math
 import re
 import zoneinfo
 from collections import Counter
 from collections.abc import Callable, Iterator
+from decimal import Decimal
 from enum import Enum
 from importlib.metadata import version as package_version
 from pathlib import Path
@@ -98,7 +98,7 @@ _TEXT_CAST_TYPE_BY_LOGICAL_TYPE = {
     "date": "DATE",
     "timestamp": "TIMESTAMP_LTZ",
     "datetime": "TIMESTAMP_LTZ",
-    "integer": "DECIMAL(38, 0)",  # exact for any integer a 64-bit bound can be compared with, unlike DOUBLE
+    "integer": "DECIMAL(38, 0)",  # exact for integers up to 38 digits, unlike DOUBLE beyond 2^53
     "number": "DOUBLE",
 }
 
