@@ -7,15 +7,18 @@ data type (e.g. STRING, INT, ARRAY<STRING>, DECIMAL(10,2)). No ODCS→Unity mapp
 See: https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-ref-datatypes
 """
 
+import datetime
 import json
 import logging
+import math
 import re
+import zoneinfo
 from collections import Counter
 from collections.abc import Callable, Iterator
 from enum import Enum
 from importlib.metadata import version as package_version
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import yaml
 
@@ -53,6 +56,320 @@ if TYPE_CHECKING:  # pragma: no cover
     from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
 
 logger = logging.getLogger(__name__)
+
+_TEXT_PHYSICAL_TYPE = re.compile(r"^\s*(STRING|VARCHAR|CHAR)\b", re.IGNORECASE)
+_NUMERIC_PHYSICAL_TYPE = re.compile(r"^\s*(TINYINT|SMALLINT|INT|BIGINT|FLOAT|DOUBLE|DECIMAL)\b", re.IGNORECASE)
+_TEMPORAL_PHYSICAL_TYPE = re.compile(r"^\s*(DATE|TIMESTAMP|TIMESTAMP_NTZ)\b", re.IGNORECASE)
+_TIMESTAMP_PHYSICAL_TYPE = re.compile(r"^\s*(TIMESTAMP|TIMESTAMP_NTZ)\b", re.IGNORECASE)
+_NTZ_PHYSICAL_TYPE = re.compile(r"^\s*TIMESTAMP_NTZ\b", re.IGNORECASE)
+# Physical types Spark can't compare with a number, date or timestamp. Only these are skipped: physicalType can name
+# another platform's type (e.g. INTEGER or NUMBER(10,2)) when schema validation is off, and its bounds still work.
+_NON_ORDERABLE_PHYSICAL_TYPE = re.compile(
+    r"^\s*(BOOLEAN|BINARY|VARIANT|ARRAY|MAP|STRUCT|GEOMETRY|GEOGRAPHY|INTERVAL|VOID)\b", re.IGNORECASE
+)
+# A date or timestamp string a range check reads as one on every supported Python version. get_limit_expr reads a
+# string without ':' as a date and a digit-only string as SQL, so a timestamp needs hours and minutes.
+_ISO_DATE_OR_TIMESTAMP = re.compile(
+    r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:\d{2})?)?"
+)
+_FRACTIONAL_SECONDS = re.compile(r"\.\d{1,6}")
+# Range checks pass integer bounds to Spark as 64-bit literals.
+_INT64_MIN = -(2**63)
+_INT64_MAX = 2**63 - 1
+# ODCS reads a timestamp without an offset in logicalTypeOptions.defaultTimezone, which defaults to UTC.
+_DEFAULT_TIMEZONE = "Etc/UTC"
+_NUMBER_BOUND = "number"
+_TEMPORAL_BOUND = "date or timestamp"
+# Kind of range bound DQX takes, by logical type (datetime is accepted as timestamp, as for format). A field without
+# a logical type takes the kind its physical type implies, or either kind. ODCS gives string, boolean, object and
+# array no range; time bounds are allowed from ODCS v3.1.0 but not supported yet.
+_BOUND_KIND_BY_LOGICAL_TYPE = {
+    "integer": _NUMBER_BOUND,
+    "number": _NUMBER_BOUND,
+    "date": _TEMPORAL_BOUND,
+    "timestamp": _TEMPORAL_BOUND,
+    "datetime": _TEMPORAL_BOUND,
+}
+# Type a range check casts a column stored as text to, by ODCS logical type. TIMESTAMP_LTZ rather than TIMESTAMP,
+# which spark.sql.timestampType can turn into TIMESTAMP_NTZ, and that drops the offsets. Text whose timestamps have no
+# time zone (logicalTypeOptions.timezone: false) is cast to TIMESTAMP_NTZ instead, see _text_cast_type.
+_TEXT_CAST_TYPE_BY_LOGICAL_TYPE = {
+    "date": "DATE",
+    "timestamp": "TIMESTAMP_LTZ",
+    "datetime": "TIMESTAMP_LTZ",
+    "integer": "DECIMAL(38, 0)",  # exact for integers up to 38 digits, unlike DOUBLE beyond 2^53
+    "number": "DOUBLE",
+}
+
+_BoundValue = int | float | datetime.date | str
+
+
+class _RangeBound(NamedTuple):
+    """A validated range bound from logicalTypeOptions."""
+
+    value: _BoundValue  # value passed to the range check
+    kind: str  # _NUMBER_BOUND or _TEMPORAL_BOUND
+    lower: bool  # a lower bound rather than an upper one
+
+
+def _parse_range_bound(value: object) -> tuple[str, _BoundValue] | None:
+    """Return the kind of a range bound and the value to pass to the check, or None when it can't be a bound.
+
+    A range check reads any string limit other than an ISO date or timestamp as a column name or SQL expression,
+    which a contract value must not become. So a bound is a finite number (a 64-bit one if an integer), a date YAML
+    loaded from an unquoted value (passed as ISO text, so the checks stay plain JSON), or an ISO date or timestamp
+    string with at most 6 fractional second digits. A 'Z'
+    offset is passed as '+00:00' and fractional seconds are padded to 6 digits, which every supported Python version
+    parses.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):  # checked before math.isfinite, which can't convert a very large int to a float
+        return (_NUMBER_BOUND, value) if _INT64_MIN <= value <= _INT64_MAX else None
+    if isinstance(value, float):
+        return (_NUMBER_BOUND, value) if math.isfinite(value) else None
+    if isinstance(value, datetime.date):  # also covers datetime.datetime
+        return _TEMPORAL_BOUND, value.isoformat()
+    if not isinstance(value, str) or not _ISO_DATE_OR_TIMESTAMP.fullmatch(value):
+        return None
+    text = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+    text = _FRACTIONAL_SECONDS.sub(lambda fraction: fraction.group().ljust(7, "0"), text)
+    try:
+        datetime.datetime.fromisoformat(text)  # rejects impossible dates such as 2024-02-30
+    except ValueError:
+        return None
+    return _TEMPORAL_BOUND, text
+
+
+def _range_bound(
+    column_path: str, option: str, value: object, expected_kind: str | None, *, lower: bool
+) -> _RangeBound | None:
+    """Return the validated bound, or None (with a warning when it is not of the kind the field takes)."""
+    if value is None:
+        return None
+    parsed = _parse_range_bound(value)
+    if parsed is not None and expected_kind in (None, parsed[0]):
+        kind, check_value = parsed
+        return _RangeBound(check_value, kind, lower)
+    shown = str(value)
+    if isinstance(value, int) and not isinstance(value, bool) and parsed is None:
+        shown = shown if len(shown) <= 24 else f"{shown[:20]}... ({len(shown)} digits)"
+        reason = "is outside the 64-bit integer range"
+    else:
+        reason = f"is not a {expected_kind or 'number, date or timestamp'}"
+    logger.warning(
+        f"Skipping {option} on '{sanitize_for_logging(column_path)}': '{sanitize_for_logging(shown)}' {reason}."
+    )
+    return None
+
+
+def _expected_bound_kind(logical_type: str | None, physical_type: str | None) -> str | None:
+    """Return the kind of bound a field takes: by logical type, else by physical type, else None (either kind)."""
+    if logical_type:
+        return _BOUND_KIND_BY_LOGICAL_TYPE.get(logical_type)
+    if physical_type and _NUMERIC_PHYSICAL_TYPE.match(physical_type):
+        return _NUMBER_BOUND
+    if physical_type and _TEMPORAL_PHYSICAL_TYPE.match(physical_type):
+        return _TEMPORAL_BOUND
+    return None
+
+
+def _has_time(value: _BoundValue) -> bool:
+    """Return whether a date or timestamp bound has a time of day."""
+    return isinstance(value, datetime.datetime) or (isinstance(value, str) and ":" in value)
+
+
+def _as_datetime(value: _BoundValue) -> datetime.datetime:
+    """Return a date or timestamp bound as a datetime, so two bounds can be ordered."""
+    if isinstance(value, datetime.datetime):
+        return value
+    if isinstance(value, datetime.date):
+        return datetime.datetime.combine(value, datetime.time.min)
+    return datetime.datetime.fromisoformat(str(value))
+
+
+def _with_offset(value: _BoundValue, zone: zoneinfo.ZoneInfo) -> _BoundValue:
+    """Return a timestamp bound with an explicit UTC offset, reading one without an offset in *zone*.
+
+    A date becomes midnight in *zone*. The offset is the one *zone* has at that instant, so it follows daylight
+    saving time.
+    """
+    timestamp = _as_datetime(value)
+    if timestamp.tzinfo is not None:
+        return value
+    local = timestamp.replace(tzinfo=zone)
+    with_offset = local.astimezone(datetime.timezone(local.utcoffset() or datetime.timedelta(0)))
+    return with_offset.isoformat()
+
+
+def _is_timestamp_field(logical_type: str | None, physical_type: str | None, bounds: list[_RangeBound]) -> bool:
+    """Return whether a field's date or timestamp bounds compare as timestamps rather than dates."""
+    if logical_type in {"timestamp", "datetime"}:
+        return True
+    if not logical_type and physical_type and _TIMESTAMP_PHYSICAL_TYPE.match(physical_type):
+        return True
+    return any(_has_time(bound.value) for bound in bounds)
+
+
+def _default_zone(column_path: str, opts: dict) -> zoneinfo.ZoneInfo | None:
+    """Return the time zone ODCS reads a field's timestamps without an offset in, or None (with a warning) if unknown."""
+    zone_name = str(opts.get("defaultTimezone") or _DEFAULT_TIMEZONE)
+    try:
+        return zoneinfo.ZoneInfo(zone_name)
+    except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+        logger.warning(
+            f"Skipping range bounds on '{sanitize_for_logging(column_path)}': "
+            f"unknown defaultTimezone '{sanitize_for_logging(zone_name)}'."
+        )
+        return None
+
+
+def _timestamp_bounds_with_offsets(
+    column_path: str, logical_type: str | None, physical_type: str | None, bounds: list[_RangeBound], opts: dict
+) -> list[_RangeBound] | None:
+    """Return the bounds with explicit offsets when they are timestamps, or None (with a warning) for an unknown zone.
+
+    ODCS reads a timestamp without an offset in the field's defaultTimezone, which defaults to UTC. Making the offset
+    explicit compares every bound as the same instant whatever the Spark session or client time zone is, and lets a
+    date and a timestamp bound be ordered. Bounds of a date field that are all dates stay dates.
+    """
+    if not any(bound.kind == _TEMPORAL_BOUND for bound in bounds):
+        return bounds
+    if not _is_timestamp_field(logical_type, physical_type, bounds):
+        return bounds
+    zone = _default_zone(column_path, opts)
+    if zone is None:
+        return None
+    return [bound._replace(value=_with_offset(bound.value, zone)) for bound in bounds]
+
+
+def _compares_wall_clock(
+    logical_type: str | None, physical_type: str | None, cast_type: str | None, bounds: list[_RangeBound]
+) -> bool:
+    """Return whether a field's column holds wall-clock time: TIMESTAMP_NTZ, or text cast to it.
+
+    Spark compares such a column with a timestamp limit after reading the column in the session time zone, which can
+    differ from defaultTimezone, but compares it with a TIMESTAMP_NTZ limit as wall-clock time.
+    """
+    wall_clock_column = cast_type == "TIMESTAMP_NTZ" or bool(physical_type and _NTZ_PHYSICAL_TYPE.match(physical_type))
+    return wall_clock_column and _is_timestamp_field(logical_type, physical_type, bounds)
+
+
+def _as_wall_clock(value: _BoundValue, zone: zoneinfo.ZoneInfo) -> datetime.datetime:
+    """Return a timestamp bound as its wall-clock time in *zone*.
+
+    A bound without an offset is already a wall-clock time in defaultTimezone, so it is kept as written, even one that
+    falls in a daylight saving gap; a bound with an offset is the wall-clock time of that instant in *zone*.
+    """
+    timestamp = _as_datetime(value)
+    if timestamp.tzinfo is None:
+        return timestamp
+    return timestamp.astimezone(zone).replace(tzinfo=None)
+
+
+def _as_ntz_literal(wall_clock: datetime.datetime) -> str:
+    """Return a wall-clock time as a TIMESTAMP_NTZ SQL literal.
+
+    The literal is rendered from the parsed bound, never from contract text, so no contract value becomes SQL.
+    """
+    return f"TIMESTAMP_NTZ '{wall_clock.isoformat(sep=' ')}'"
+
+
+def _comparable_bounds(
+    column_path: str,
+    logical_type: str | None,
+    physical_type: str | None,
+    bounds: list[_RangeBound],
+    opts: dict,
+    *,
+    wall_clock: bool,
+) -> list[_RangeBound] | None:
+    """Return the bounds as the column compares them, or None (with a warning) when they can't be compared.
+
+    A wall-clock column compares wall-clock times, which a daylight saving change can reorder, so its bounds are
+    ordered as wall-clock times before they become TIMESTAMP_NTZ literals. Other timestamp bounds get explicit offsets.
+    A bound at the edge of the date range, such as 0001-01-01 in a zone east of UTC, falls outside it in UTC, which
+    Spark can't represent either, so the range is skipped.
+    """
+    try:
+        if not wall_clock:
+            return _timestamp_bounds_with_offsets(column_path, logical_type, physical_type, bounds, opts)
+        zone = _default_zone(column_path, opts)
+        if zone is None:
+            return None
+        return [bound._replace(value=_as_wall_clock(bound.value, zone)) for bound in bounds]
+    except OverflowError:
+        logger.warning(
+            f"Skipping range bounds on '{sanitize_for_logging(column_path)}': a bound is outside the range of "
+            "timestamps in UTC."
+        )
+        return None
+
+
+def _unsupported_range_reason(
+    logical_type: str | None, physical_type: str | None, expected_kind: str | None
+) -> str | None:
+    """Return why a field takes no range bounds, or None if it does."""
+    if logical_type and expected_kind is None:
+        if logical_type == "time":
+            return "range bounds on time fields aren't supported yet"
+        return f"ODCS defines no range bounds for logical type '{logical_type}'"
+    if physical_type and _NON_ORDERABLE_PHYSICAL_TYPE.match(physical_type):
+        return f"physical type '{physical_type}' can't be compared with a range"
+    return None
+
+
+def _range_check(bounds: list[_RangeBound]) -> tuple[str, str, dict[str, _BoundValue]]:
+    """Return the row-level check function, rule name suffix and limits for validated bounds."""
+    lower_bound = next((bound for bound in bounds if bound.lower), None)
+    upper_bound = next((bound for bound in bounds if not bound.lower), None)
+    if lower_bound and upper_bound:
+        return "is_in_range", "out_of_range", {"min_limit": lower_bound.value, "max_limit": upper_bound.value}
+    if lower_bound:
+        return "is_not_less_than", "below_minimum", {"limit": lower_bound.value}
+    return "is_not_greater_than", "above_maximum", {"limit": bounds[0].value}  # every bound is an upper bound
+
+
+def _describe_bound(bound: _RangeBound) -> str:
+    """Describe what a bound requires of a value, e.g. 'at least 0'."""
+    return f"{'at least' if bound.lower else 'at most'} {bound.value}"
+
+
+def _empty_range_reason(bounds: list[_RangeBound]) -> str | None:
+    """Return why no value can satisfy every bound, or None if some value can."""
+    for low in (bound for bound in bounds if bound.lower):
+        for high in (bound for bound in bounds if not bound.lower):
+            if low.kind == _NUMBER_BOUND:
+                empty = cast(int | float, low.value) > cast(int | float, high.value)
+            else:
+                empty = _as_datetime(low.value) > _as_datetime(high.value)
+            if empty:
+                return f"no value is {_describe_bound(low)} and {_describe_bound(high)}"
+    return None
+
+
+def _text_cast_type(
+    logical_type: str | None, physical_type: str | None, bounds: list[_RangeBound], opts: dict
+) -> str | None:
+    """Return the type to *try_cast* a column stored as text to before a range check, or None.
+
+    Under ANSI mode, comparing a text column with a number or date casts every value, so one malformed value would
+    fail the whole run. *try_cast* turns it into NULL instead, which passes the range check (a format or pattern
+    rule is the one that flags it). Without a logical type, the type follows the bounds. Timestamps are cast to
+    TIMESTAMP_LTZ, which reads an offset in the value, unless the contract says they have no time zone
+    (timezone: false): then they are wall-clock times in defaultTimezone, cast to TIMESTAMP_NTZ.
+    """
+    if not physical_type or not _TEXT_PHYSICAL_TYPE.match(physical_type):
+        return None
+    if logical_type:
+        cast_type = _TEXT_CAST_TYPE_BY_LOGICAL_TYPE.get(logical_type)
+    elif bounds[0].kind == _NUMBER_BOUND:
+        cast_type = "DOUBLE"
+    else:
+        cast_type = "TIMESTAMP_LTZ" if any(_has_time(bound.value) for bound in bounds) else "DATE"
+    if cast_type == "TIMESTAMP_LTZ" and opts.get("timezone") is False:
+        return "TIMESTAMP_NTZ"
+    return cast_type
 
 
 class _FormatCheck(NamedTuple):
@@ -754,12 +1071,11 @@ class DataContractRulesGenerator(DQEngineBase):
 
         # Handle range constraints from minimum and maximum
         if opts.get('minimum') is not None or opts.get('maximum') is not None:
-            if prop.logicalType == 'time':
-                logger.warning(
-                    f"Time bounds aren't supported yet for field '{sanitize_for_logging(column)}'; skipping them."
+            rules.extend(
+                self._generate_range_rules_from_options(
+                    column, prop.logicalType, prop.physicalType, field_metadata, default_criticality, opts
                 )
-            else:
-                rules.extend(self._generate_range_rules_from_options(column, field_metadata, default_criticality, opts))
+            )
 
         # Handle string length constraints
         if opts.get('minLength') is not None or opts.get('maxLength') is not None:
@@ -829,142 +1145,79 @@ class DataContractRulesGenerator(DQEngineBase):
         ]
 
     def _generate_range_rules_from_options(
-        self, column: str, field_metadata: dict, criticality: str, opts: dict
+        self,
+        column: str,
+        logical_type: str | None,
+        physical_type: str | None,
+        field_metadata: dict,
+        criticality: str,
+        opts: dict,
     ) -> list[dict]:
-        """Generate range rules from logicalTypeOptions minimum/maximum."""
-        minimum = opts.get('minimum')
-        maximum = opts.get('maximum')
+        """
+        Generate a range rule from logicalTypeOptions minimum/maximum.
 
-        if minimum is None and maximum is None:
+        ODCS defines both bounds per value, so the rule is a row-level check that flags only the rows out of range.
+        Bounds are taken for integer, number, date and timestamp fields (or fields without a logical type, by their
+        physical type), and must be of the kind ODCS gives them: numbers, or dates and timestamps. Timestamp bounds
+        without an offset are read in the field's defaultTimezone (UTC by default). Anything else is skipped with a
+        warning, as is a minimum and maximum that no value could satisfy. A column stored as text is compared through
+        *try_cast*.
+        """
+        column_path = field_metadata["field"]  # the plain path, for rule names and warnings
+        expected_kind = _expected_bound_kind(logical_type, physical_type)
+        unsupported_reason = _unsupported_range_reason(logical_type, physical_type, expected_kind)
+        if unsupported_reason:
+            logger.warning(
+                f"Skipping range bounds on '{sanitize_for_logging(column_path)}': "
+                f"{sanitize_for_logging(unsupported_reason)}."
+            )
             return []
 
-        # Check if limits are floats - use sql_expression for float constraints
-        has_float_limits = (minimum is not None and isinstance(minimum, float)) or (
-            maximum is not None and isinstance(maximum, float)
+        bounds = []
+        for option, lower in (("minimum", True), ("maximum", False)):
+            bound = _range_bound(column_path, option, opts.get(option), expected_kind, lower=lower)
+            if bound is not None:
+                bounds.append(bound)
+        if not bounds:
+            return []
+        if len({bound.kind for bound in bounds}) > 1:
+            logger.warning(
+                f"Skipping range bounds on '{sanitize_for_logging(column_path)}': "
+                "the bounds mix numbers with dates or timestamps."
+            )
+            return []
+        cast_type = _text_cast_type(logical_type, physical_type, bounds, opts)
+        wall_clock = _compares_wall_clock(logical_type, physical_type, cast_type, bounds)
+        comparable_bounds = _comparable_bounds(
+            column_path, logical_type, physical_type, bounds, opts, wall_clock=wall_clock
         )
-
-        if minimum is not None and maximum is not None:
-            if has_float_limits:
-                return [
-                    {
-                        "check": {
-                            "function": "sql_expression",
-                            "arguments": {
-                                "expression": f"{column} >= {minimum} AND {column} <= {maximum}",
-                                "columns": [column],
-                            },
-                        },
-                        "name": f"{field_metadata['field']}_out_of_range",
-                        "criticality": criticality,
-                        "user_metadata": {
-                            **field_metadata,
-                            "dimension": "validity",
-                            "rule_type": "predefined",
-                        },
-                    }
-                ]
-            # Use is_in_range for non-float constraints
-            return [
-                {
-                    "check": {
-                        "function": "is_in_range",
-                        "arguments": {
-                            "column": column,
-                            "min_limit": minimum,
-                            "max_limit": maximum,
-                        },
-                    },
-                    "name": f"{field_metadata['field']}_out_of_range",
-                    "criticality": criticality,
-                    "user_metadata": {
-                        **field_metadata,
-                        "dimension": "validity",
-                        "rule_type": "predefined",
-                    },
-                }
+        if comparable_bounds is None:
+            return []
+        empty_reason = _empty_range_reason(comparable_bounds)
+        if empty_reason:
+            logger.warning(
+                f"Skipping range bounds on '{sanitize_for_logging(column_path)}': {sanitize_for_logging(empty_reason)}."
+            )
+            return []
+        if wall_clock:
+            comparable_bounds = [
+                bound._replace(value=_as_ntz_literal(_as_datetime(bound.value))) for bound in comparable_bounds
             ]
 
-        if minimum is not None:
-            if has_float_limits:
-                return [
-                    {
-                        "check": {
-                            "function": "sql_expression",
-                            "arguments": {
-                                "expression": f"{column} >= {minimum}",
-                                "columns": [column],
-                            },
-                        },
-                        "name": f"{field_metadata['field']}_below_minimum",
-                        "criticality": criticality,
-                        "user_metadata": {
-                            **field_metadata,
-                            "dimension": "validity",
-                            "rule_type": "predefined",
-                        },
-                    }
-                ]
-            return [
-                {
-                    "check": {
-                        "function": "is_aggr_not_less_than",
-                        "arguments": {
-                            "column": column,
-                            "limit": minimum,
-                            "aggr_type": "min",
-                        },
-                    },
-                    "name": f"{field_metadata['field']}_below_minimum",
-                    "criticality": criticality,
-                    "user_metadata": {
-                        **field_metadata,
-                        "dimension": "validity",
-                        "rule_type": "predefined",
-                    },
-                }
-            ]
-
-        if maximum is not None:
-            if has_float_limits:
-                return [
-                    {
-                        "check": {
-                            "function": "sql_expression",
-                            "arguments": {
-                                "expression": f"{column} <= {maximum}",
-                                "columns": [column],
-                            },
-                        },
-                        "name": f"{field_metadata['field']}_above_maximum",
-                        "criticality": criticality,
-                        "user_metadata": {
-                            **field_metadata,
-                            "dimension": "validity",
-                            "rule_type": "predefined",
-                        },
-                    }
-                ]
-            return [
-                {
-                    "check": {
-                        "function": "is_aggr_not_greater_than",
-                        "arguments": {
-                            "column": column,
-                            "limit": maximum,
-                            "aggr_type": "max",
-                        },
-                    },
-                    "name": f"{field_metadata['field']}_above_maximum",
-                    "criticality": criticality,
-                    "user_metadata": {
-                        **field_metadata,
-                        "dimension": "validity",
-                        "rule_type": "predefined",
-                    },
-                }
-            ]
-
-        return []
+        function, name_suffix, limits = _range_check(comparable_bounds)
+        check_column = f"try_cast({column} AS {cast_type})" if cast_type else column
+        return [
+            {
+                "check": {"function": function, "arguments": {"column": check_column, **limits}},
+                "name": f"{column_path}_{name_suffix}",
+                "criticality": criticality,
+                "user_metadata": {
+                    **field_metadata,
+                    "dimension": "validity",
+                    "rule_type": "predefined",
+                },
+            }
+        ]
 
     def _generate_string_length_rules_from_options(
         self, column: str, field_metadata: dict, criticality: str, opts: dict

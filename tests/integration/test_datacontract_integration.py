@@ -9,6 +9,7 @@ multiple schemas, recursive type validation, DECIMAL validation, and error paths
 """
 
 import contextlib
+import datetime
 import logging
 import os
 import tempfile
@@ -52,6 +53,18 @@ def _flagged_names(row: Row) -> set[str]:
     """Return the set of check names present in a row's _errors array (empty set if none)."""
     errors = row["_errors"]
     return {e["name"] for e in errors} if errors else set()
+
+
+def _flagged_names_by_row_under_ansi(ws, spark, test_df, rules) -> dict[int, set[str]]:
+    """Apply the rules with ANSI on, where a malformed text value would fail the run without try_cast."""
+    original_ansi_enabled = spark.conf.get("spark.sql.ansi.enabled")
+    try:
+        spark.conf.set("spark.sql.ansi.enabled", "true")
+        checked = DQEngine(ws, spark).apply_checks_by_metadata(test_df, rules)
+        rows = checked.select("row_id", "_errors").collect()
+    finally:
+        spark.conf.set("spark.sql.ansi.enabled", original_ansi_enabled)
+    return {row["row_id"]: _flagged_names(row) for row in rows}
 
 
 def _assert_flagged_only(flagged_by_row: dict[int, set[str]], check_name: str, expected_row_ids: set[int]) -> None:
@@ -689,6 +702,302 @@ class TestDataContractIntegration:
                 process_text_rules=False,
             )
         assert "scale" in str(exc_info.value).lower() or "precision" in str(exc_info.value).lower()
+
+
+class TestDataContractRangeRulesIntegration:
+    """Range rules generated from logicalTypeOptions bounds, applied on Spark."""
+
+    def test_generated_range_rules_flag_only_out_of_range_rows(self, ws, spark, set_utc_timezone):
+        """Range rules generated from logicalTypeOptions flag only the rows outside the bounds, on Spark."""
+        properties = [
+            ("qty", "INT", "integer", {"minimum": 0}),
+            ("price", "DOUBLE", "number", {"maximum": 100.5}),
+            ("pct", "DOUBLE", "number", {"minimum": 0.0, "maximum": 1.0}),
+            ("shipped", "DATE", "date", {"minimum": "2020-01-01"}),
+            ("created", "TIMESTAMP", "timestamp", {"maximum": "2030-01-01T00:00:00"}),
+            ("Päivämäärä", "DOUBLE", "number", {"minimum": 0}),
+            # Stored as text: compared through try_cast, so a malformed value can't fail the run under ANSI
+            ("shipped_text", "STRING", "date", {"minimum": "2020-01-01"}),
+        ]
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.1.0",
+            "id": "test:ranges",
+            "name": "Ranges",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "orders",
+                    "physicalType": "table",
+                    "properties": [
+                        {"name": name, "physicalType": physical, "logicalType": logical, "logicalTypeOptions": options}
+                        for name, physical, logical, options in properties
+                    ],
+                },
+            ],
+        }
+        rules = _generate_rules_from_temp_contract(
+            ws, spark, contract, process_text_rules=False, generate_schema_validation=False
+        )
+        test_df = spark.createDataFrame(
+            [
+                # On the bounds
+                [1, 0, 100.5, 0.0, datetime.date(2020, 1, 1), datetime.datetime(2030, 1, 1), 0.0, "2020-01-01"],
+                # Inside the bounds (a malformed date string is left to a format rule)
+                [2, 5, 1.0, 1.0, datetime.date(2024, 6, 1), datetime.datetime(2024, 1, 1, 10), 50.0, "not a date"],
+                # Just outside the bounds
+                [
+                    3,
+                    -1,
+                    100.6,
+                    1.01,
+                    datetime.date(2019, 12, 31),
+                    datetime.datetime(2030, 1, 1, 0, 0, 1),
+                    -0.1,
+                    "2019-12-31",
+                ],
+                [4, None, None, None, None, None, None, None],
+            ],
+            "row_id int, qty int, price double, pct double, shipped date, created timestamp, `Päivämäärä` double, "
+            "shipped_text string",
+        )
+
+        flagged_by_row = _flagged_names_by_row_under_ansi(ws, spark, test_df, rules)
+        assert flagged_by_row == {
+            1: set(),
+            2: set(),
+            3: {
+                "qty_below_minimum",
+                "price_above_maximum",
+                "pct_out_of_range",
+                "shipped_below_minimum",
+                "created_above_maximum",
+                "Päivämäärä_below_minimum",
+                "shipped_text_below_minimum",
+            },
+            4: set(),
+        }
+
+    def test_timestamp_bounds_are_read_in_the_default_timezone(self, ws, spark, set_utc_timezone):
+        """Timestamp bounds without an offset are read in defaultTimezone (UTC by default), as ODCS says, on Spark."""
+        properties = [
+            # 09:00 in Sydney (UTC+11 in January) is 22:00 UTC the day before
+            ("starts", "TIMESTAMP", {"minimum": "2024-01-01T09:00:00", "defaultTimezone": "Australia/Sydney"}),
+            # Text values with their own offset are compared as instants
+            ("ends_text", "STRING", {"maximum": "2024-06-30T00:00:00"}),
+            # A date bound on a timestamp is midnight at the start of that day
+            ("closed", "TIMESTAMP", {"maximum": "2024-12-31"}),
+        ]
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.1.0",
+            "id": "test:timestamp-bounds",
+            "name": "Timestamp bounds",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "events",
+                    "physicalType": "table",
+                    "properties": [
+                        {
+                            "name": name,
+                            "physicalType": physical,
+                            "logicalType": "timestamp",
+                            "logicalTypeOptions": options,
+                        }
+                        for name, physical, options in properties
+                    ],
+                },
+            ],
+        }
+        rules = _generate_rules_from_temp_contract(
+            ws, spark, contract, process_text_rules=False, generate_schema_validation=False
+        )
+        test_df = spark.createDataFrame(
+            [
+                # On the bounds
+                [
+                    1,
+                    datetime.datetime(2023, 12, 31, 22, 0),
+                    "2024-06-30T02:00:00+02:00",
+                    datetime.datetime(2024, 12, 31),
+                ],
+                # Just outside the bounds
+                [
+                    2,
+                    datetime.datetime(2023, 12, 31, 21, 59, 59),
+                    "2024-06-30T00:00:01Z",
+                    datetime.datetime(2024, 12, 31, 10, 0),
+                ],
+                [3, None, None, None],
+            ],
+            "row_id int, starts timestamp, ends_text string, closed timestamp",
+        )
+
+        flagged_by_row = _flagged_names_by_row_under_ansi(ws, spark, test_df, rules)
+        assert flagged_by_row == {
+            1: set(),
+            2: {"starts_below_minimum", "ends_text_above_maximum", "closed_above_maximum"},
+            3: set(),
+        }
+
+    def test_timestamp_ntz_bounds_flag_the_same_rows_in_any_session_time_zone(self, ws, spark, set_utc_timezone):
+        """Bounds on wall-clock timestamps flag the same rows in any session time zone.
+
+        Covers a TIMESTAMP_NTZ column and a text column whose timestamps have no time zone (timezone: false).
+        """
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.1.0",
+            "id": "test:timestamp-ntz-bounds",
+            "name": "Timestamp NTZ bounds",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "events",
+                    "physicalType": "table",
+                    "properties": [
+                        {
+                            "name": "seen",
+                            "physicalType": "TIMESTAMP_NTZ",
+                            "logicalType": "timestamp",
+                            # 18:00 at +02:00 is 16:00 in UTC, the default time zone
+                            "logicalTypeOptions": {
+                                "minimum": "2024-01-01T12:00:00",
+                                "maximum": "2024-01-01T18:00:00+02:00",
+                            },
+                        },
+                        {
+                            "name": "seen_text",
+                            "physicalType": "STRING",
+                            "logicalType": "timestamp",
+                            "logicalTypeOptions": {
+                                "minimum": "2024-01-01T12:00:00",
+                                "maximum": "2024-01-01T18:00:00+02:00",
+                                "timezone": False,
+                            },
+                        },
+                    ],
+                },
+            ],
+        }
+        rules = _generate_rules_from_temp_contract(
+            ws, spark, contract, process_text_rules=False, generate_schema_validation=False
+        )
+        test_df = spark.sql(
+            "SELECT * FROM VALUES "
+            "(1, TIMESTAMP_NTZ'2024-01-01 12:00:00', '2024-01-01T12:00:00'), "
+            "(2, TIMESTAMP_NTZ'2024-01-01 16:00:00', '2024-01-01T16:00:00'), "
+            "(3, TIMESTAMP_NTZ'2024-01-01 11:59:59', '2024-01-01T11:59:59'), "
+            "(4, TIMESTAMP_NTZ'2024-01-01 16:00:01', '2024-01-01T16:00:01'), "
+            "(5, CAST(NULL AS TIMESTAMP_NTZ), CAST(NULL AS STRING)) AS t(row_id, seen, seen_text)"
+        )
+
+        original_time_zone = spark.conf.get("spark.sql.session.timeZone")
+        try:
+            for time_zone in ("UTC", "America/New_York", "Asia/Tokyo"):
+                spark.conf.set("spark.sql.session.timeZone", time_zone)
+                flagged_by_row = _flagged_names_by_row_under_ansi(ws, spark, test_df, rules)
+                assert flagged_by_row == {
+                    1: set(),
+                    2: set(),
+                    3: {"seen_out_of_range", "seen_text_out_of_range"},
+                    4: {"seen_out_of_range", "seen_text_out_of_range"},
+                    5: set(),
+                }, time_zone
+        finally:
+            spark.conf.set("spark.sql.session.timeZone", original_time_zone)
+
+    def test_integer_text_bounds_compare_exactly(self, ws, spark, set_utc_timezone):
+        """Bounds on integers stored as text flag a value just past them.
+
+        As doubles, 9007199254740993 equals 2^53, so a DOUBLE cast would let it through; DECIMAL(38, 0) doesn't.
+        """
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.2.0",
+            "id": "test:range-precision",
+            "name": "Range precision",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "sample",
+                    "physicalType": "table",
+                    "properties": [
+                        {
+                            "name": "text_count",
+                            "physicalType": "STRING",
+                            "logicalType": "integer",
+                            "logicalTypeOptions": {"minimum": 0, "maximum": 9007199254740992},
+                        },
+                    ],
+                },
+            ],
+        }
+        rules = _generate_rules_from_temp_contract(
+            ws, spark, contract, process_text_rules=False, generate_schema_validation=False
+        )
+        test_df = spark.sql(
+            "SELECT * FROM VALUES "
+            "(1, '9007199254740992'), (2, '9007199254740993'), (3, 'not a number') AS sample(row_id, text_count)"
+        )
+
+        assert _flagged_names_by_row_under_ansi(ws, spark, test_df, rules) == {
+            1: set(),
+            2: {"text_count_out_of_range"},
+            3: set(),
+        }
+
+    def test_range_rules_on_names_needing_escaping_compare_the_named_column(self, ws, spark, set_utc_timezone):
+        """Property names that look like SQL are back-quoted, so the range check compares the column they name."""
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.1.0",
+            "id": "test:escaped-range-names",
+            "name": "Escaped range names",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "orders",
+                    "physicalType": "table",
+                    "properties": [
+                        # Stored as text: compared through try_cast on the quoted name
+                        {
+                            "name": "amount (usd)",
+                            "physicalType": "STRING",
+                            "logicalType": "integer",
+                            "logicalTypeOptions": {"minimum": 0},
+                        },
+                        # A name that reads as an expression, which must not be evaluated
+                        {
+                            "name": "v - (SELECT 1000)",
+                            "physicalType": "INT",
+                            "logicalType": "integer",
+                            "logicalTypeOptions": {"maximum": 10},
+                        },
+                    ],
+                },
+            ],
+        }
+        rules = _generate_rules_from_temp_contract(
+            ws, spark, contract, process_text_rules=False, generate_schema_validation=False
+        )
+        test_df = spark.createDataFrame(
+            [[1, "5", 5], [2, "-1", 500], [3, None, None]],
+            "row_id int, `amount (usd)` string, `v - (SELECT 1000)` int",
+        )
+
+        flagged_by_row = _flagged_names_by_row_under_ansi(ws, spark, test_df, rules)
+        assert flagged_by_row == {
+            1: set(),
+            2: {"amount (usd)_below_minimum", "v - (SELECT 1000)_above_maximum"},
+            3: set(),
+        }
 
 
 class TestDataContractIntegrationErrors:
