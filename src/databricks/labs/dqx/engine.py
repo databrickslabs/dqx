@@ -44,7 +44,7 @@ from databricks.labs.dqx.config import (
     LakebaseActionsStorageConfig,
 )
 from databricks.labs.dqx.check_funcs import add_dataset_aggregates
-from databricks.labs.dqx.manager import DQRuleManager, KnownInputSchema, build_known_input_schema
+from databricks.labs.dqx.manager import DQRuleManager, InputSchemaReuse, KnownInputSchema, build_known_input_schema
 from databricks.labs.dqx.reporting_columns import ColumnArguments, DefaultColumnNames, merge_info_columns
 from databricks.labs.dqx.rule import (
     Criticality,
@@ -216,7 +216,7 @@ class DQEngineCore(DQEngineCoreBase):
         ]
         result_df = add_dataset_aggregates(df, df, shared_aggregates)
 
-        result_df, skipped_error_checks = self._create_results_array(
+        result_df, skipped_error_checks, schema_reuse_after_errors = self._create_results_array(
             result_df,
             error_checks,
             self._result_column_names[ColumnArguments.ERRORS],
@@ -226,9 +226,10 @@ class DQEngineCore(DQEngineCoreBase):
             input_df=df,
             reference_cache=reference_cache,
             input_managers=input_managers,
-            known_input=known_input,
+            # The shared aggregates only add columns, so the input's schema facts still hold for result_df
+            schema_reuse=InputSchemaReuse(known_input),
         )
-        result_df, skipped_warning_checks = self._create_results_array(
+        result_df, skipped_warning_checks, _ = self._create_results_array(
             result_df,
             warning_checks,
             self._result_column_names[ColumnArguments.WARNINGS],
@@ -238,8 +239,7 @@ class DQEngineCore(DQEngineCoreBase):
             input_df=df,
             reference_cache=reference_cache,
             input_managers=input_managers,
-            # the error checks keep every input column unless one of them may have changed the rows
-            known_input=known_input if all(_keeps_input_rows(check) for check in error_checks) else None,
+            schema_reuse=schema_reuse_after_errors,
         )
         if shared_aggregates:
             result_df = result_df.drop(*[aggregate.metric_col for aggregate in shared_aggregates])
@@ -615,8 +615,8 @@ class DQEngineCore(DQEngineCoreBase):
         input_df: DataFrame | None = None,
         reference_cache: dict[tuple[str, str], DataFrame] | None = None,
         input_managers: dict[int, DQRuleManager] | None = None,
-        known_input: KnownInputSchema | None = None,
-    ) -> tuple[DataFrame, set[str]]:
+        schema_reuse: InputSchemaReuse | None = None,
+    ) -> tuple[DataFrame, set[str], InputSchemaReuse]:
         """
         Apply a list of data quality checks to a DataFrame and assemble their results into an array column.
 
@@ -637,17 +637,19 @@ class DQEngineCore(DQEngineCoreBase):
             input_managers: Managers of the checks that read *input_df*, keyed by check id. The metric columns of
                 their built-in aggregates must already be present in *df*. Other checks read *df*, or the result of
                 the last check that may have changed the rows.
-            known_input: Schema facts of *input_df*, passed only when they still hold for *df* (no earlier check may have
-                changed the rows). They are used to validate checks without a schema analysis until a check that may
-                change the rows is applied.
+            schema_reuse: Reuse of the schema facts of *input_df* to validate checks without a schema analysis (an RPC
+                on Spark Connect). It ends once a check may have changed the rows, and the facts are only used for a
+                DataFrame whose column names and types still match the input's.
 
         Returns:
-            DataFrame with an added array column (*dest_col*) containing the results of the applied checks, and the
-            fingerprints of checks whose evaluation was skipped.
+            DataFrame with an added array column (*dest_col*) containing the results of the applied checks, the
+            fingerprints of checks whose evaluation was skipped, and the reuse of the schema facts for checks
+            validated against the returned DataFrame.
         """
+        schema_reuse = schema_reuse or InputSchemaReuse(None)
         if not checks:
             # No checks then just append a null array result
-            return df.select("*", F.lit(None).cast(dq_result_schema).alias(dest_col)), set()
+            return df.select("*", F.lit(None).cast(dq_result_schema).alias(dest_col)), set(), schema_reuse
 
         check_conditions = []
         skipped_checks: set[str] = set()
@@ -676,14 +678,13 @@ class DQEngineCore(DQEngineCoreBase):
 
         current_df = df
         rows_df = df
-        rows_known_input = known_input
         input_managers = input_managers or {}
         for check in checks:
             reads_input = id(check) in input_managers
             manager = (
                 input_managers[id(check)]
                 if reads_input
-                else build_manager(check, current_df, rows_df, rows_known_input)
+                else build_manager(check, current_df, rows_df, schema_reuse.for_check(current_df, rows_df))
             )
             log_telemetry(self.ws, "check", manager.check.check_func.__name__)
             result = manager.process(current_df, aggregate_added=reads_input)
@@ -698,7 +699,7 @@ class DQEngineCore(DQEngineCoreBase):
             current_df = result.check_df
             if not _keeps_input_rows(check):
                 rows_df = current_df  # later checks must see the rows this check may have changed
-                rows_known_input = None  # and its schema is no longer known without a schema analysis
+                schema_reuse.stop()
 
         # Build array of non-null results
         combined_result_array = F.array_compact(F.array(*check_conditions))
@@ -718,7 +719,9 @@ class DQEngineCore(DQEngineCoreBase):
         if current_df is not df:
             result_df = self._drop_temporary_columns(result_df, df, dest_col, dest_info_col)
 
-        return result_df, skipped_checks
+        # The result and info columns are added and only temporary columns dropped, so the facts hold for result_df if
+        # they were found to hold for current_df.
+        return result_df, skipped_checks, schema_reuse
 
     def _drop_temporary_columns(
         self, result_df: DataFrame, df: DataFrame, dest_col: str, dest_info_col: str

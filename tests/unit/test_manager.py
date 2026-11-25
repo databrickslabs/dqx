@@ -6,6 +6,7 @@ from pyspark.sql import DataFrame, SparkSession
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.executor import DQCheckResult
 from databricks.labs.dqx.manager import (
+    InputSchemaReuse,
     DQRuleManager,
     KnownInputSchema,
     build_known_input_schema,
@@ -367,7 +368,7 @@ def test_rule_manager_does_not_analyze_filter_when_check_has_no_filter():
 
 def test_rule_manager_still_analyzes_present_filter():
     df_mock = create_autospec(DataFrame)
-    type(df_mock).columns = PropertyMock(return_value=["id"])
+    type(df_mock).dtypes = PropertyMock(return_value=[("id", "int")])
     type(df_mock.select.return_value).schema = PropertyMock(side_effect=AnalysisException("Column 'x' not found"))
 
     manager = _make_manager_for_column(df_mock, "id", check_filter="x > 0")
@@ -413,7 +414,7 @@ def test_rule_manager_uses_known_input_columns_without_reading_schema():
         engine_user_metadata={},
         run_time_overwrite=None,
         run_id="test-run",
-        known_input=KnownInputSchema(columns=("id", "name")),
+        known_input=KnownInputSchema(dtypes=(("id", "int"), ("name", "string"))),
     )
 
     assert manager.is_skipped is False
@@ -431,7 +432,9 @@ def test_rule_manager_accepts_known_resolved_filter_without_reading_schema():
         engine_user_metadata={},
         run_time_overwrite=None,
         run_id="test-run",
-        known_input=KnownInputSchema(columns=("id", "amount"), resolved_expressions=frozenset({"amount > 0"})),
+        known_input=KnownInputSchema(
+            dtypes=(("id", "int"), ("amount", "double")), resolved_expressions=frozenset({"amount > 0"})
+        ),
     )
 
     assert manager.is_skipped is False
@@ -457,7 +460,7 @@ def test_get_check_sql_expressions_excludes_unsafe_filter():
 
 def test_build_known_input_schema_validates_all_expressions_in_one_analysis():
     df_mock = create_autospec(DataFrame)
-    type(df_mock).columns = PropertyMock(return_value=["id", "amount"])
+    type(df_mock).dtypes = PropertyMock(return_value=[("id", "int"), ("amount", "double")])
     checks = [
         DQRowRule(check_func=check_funcs.is_not_null, column="id", filter="amount > 0"),
         DQRowRule(check_func=check_funcs.is_not_null, column="amount", filter="id > 10"),
@@ -467,14 +470,14 @@ def test_build_known_input_schema_validates_all_expressions_in_one_analysis():
     known_input = build_known_input_schema(df_mock, checks)
 
     assert known_input == KnownInputSchema(
-        columns=("id", "amount"), resolved_expressions=frozenset({"amount > 0", "id > 10"})
+        dtypes=(("id", "int"), ("amount", "double")), resolved_expressions=frozenset({"amount > 0", "id > 10"})
     )
     df_mock.select.assert_called_once()
 
 
 def test_build_known_input_schema_records_nothing_when_expressions_do_not_resolve_together():
     df_mock = create_autospec(DataFrame)
-    type(df_mock).columns = PropertyMock(return_value=["id"])
+    type(df_mock).dtypes = PropertyMock(return_value=[("id", "int")])
     type(df_mock.select.return_value).schema = PropertyMock(side_effect=AnalysisException("Column 'x' not found"))
     checks = [
         DQRowRule(check_func=check_funcs.is_not_null, column="id", filter="id > 0"),
@@ -483,14 +486,102 @@ def test_build_known_input_schema_records_nothing_when_expressions_do_not_resolv
 
     known_input = build_known_input_schema(df_mock, checks)
 
-    assert known_input == KnownInputSchema(columns=("id",))
+    assert known_input == KnownInputSchema(dtypes=(("id", "int"),))
 
 
 def test_build_known_input_schema_without_expressions_does_not_analyze():
     df_mock = create_autospec(DataFrame)
-    type(df_mock).columns = PropertyMock(return_value=["id"])
+    type(df_mock).dtypes = PropertyMock(return_value=[("id", "int")])
 
     known_input = build_known_input_schema(df_mock, [DQRowRule(check_func=check_funcs.is_not_null, column="id")])
 
-    assert known_input == KnownInputSchema(columns=("id",))
+    assert known_input == KnownInputSchema(dtypes=(("id", "int"),))
     df_mock.select.assert_not_called()
+
+
+def test_known_input_schema_holds_for_derived_columns_that_only_add_columns():
+    known_input = KnownInputSchema(dtypes=(("id", "int"), ("b", "string")))
+
+    assert known_input.holds_for([("id", "int"), ("b", "string")])
+    assert known_input.holds_for([("b", "string"), ("id", "int"), ("condition_1", "boolean")])
+
+
+def test_known_input_schema_does_not_hold_when_an_input_column_is_dropped_renamed_retyped_or_shadowed():
+    known_input = KnownInputSchema(dtypes=(("id", "int"), ("b", "string")))
+
+    assert not known_input.holds_for([("id", "int")])  # dropped
+    assert not known_input.holds_for([("id", "int"), ("c", "string")])  # renamed
+    assert not known_input.holds_for([("id", "int"), ("B", "string")])  # renamed (case only)
+    assert not known_input.holds_for([("id", "int"), ("b", "struct<v:string>")])  # retyped
+    assert not known_input.holds_for(
+        [("id", "int"), ("b", "string"), ("B", "int")]
+    )  # shadowed (same name ignoring case)
+    assert not known_input.holds_for([("id", "int"), ("b", "string"), ("b", "string")])  # duplicated
+
+
+def test_known_input_schema_lists_input_column_names():
+    assert KnownInputSchema(dtypes=(("id", "int"), ("b", "string"))).columns == ["id", "b"]
+
+
+INPUT_DTYPES = (("id", "int"), ("b", "string"))
+KNOWN_INPUT = KnownInputSchema(dtypes=INPUT_DTYPES, resolved_expressions=frozenset({"b IS NOT NULL"}))
+WITHOUT_RESOLVED_EXPRESSIONS = KnownInputSchema(dtypes=INPUT_DTYPES)
+
+
+def _df_with_dtypes(dtypes: list[tuple[str, str]]) -> DataFrame:
+    """Returns a mock DataFrame reporting the given dtypes."""
+    df = create_autospec(DataFrame)
+    type(df).dtypes = PropertyMock(return_value=dtypes)
+    return df
+
+
+def test_input_schema_reuse_keeps_the_facts_for_a_dataframe_that_only_adds_columns():
+    input_df = _df_with_dtypes(list(INPUT_DTYPES))
+    check_df = _df_with_dtypes([*INPUT_DTYPES, ("condition_1", "boolean")])
+    reuse = InputSchemaReuse(KNOWN_INPUT)
+
+    assert reuse.for_check(check_df, input_df) == KNOWN_INPUT
+
+
+def test_input_schema_reuse_drops_the_resolved_expressions_when_a_column_was_retyped():
+    """The expressions resolved against the input's types, so they can no longer be taken from the facts. The column
+    names still hold, so they are still used to validate the check's own columns."""
+    input_df = _df_with_dtypes(list(INPUT_DTYPES))
+    retyped_df = _df_with_dtypes([("id", "int"), ("b", "struct<v:string>")])
+    reuse = InputSchemaReuse(KNOWN_INPUT)
+
+    assert reuse.for_check(retyped_df, input_df) == WITHOUT_RESOLVED_EXPRESSIONS
+
+
+def test_input_schema_reuse_drops_the_resolved_expressions_when_a_column_was_shadowed():
+    input_df = _df_with_dtypes(list(INPUT_DTYPES))
+    shadowed_df = _df_with_dtypes([*INPUT_DTYPES, ("B", "int")])
+    reuse = InputSchemaReuse(KNOWN_INPUT)
+
+    assert reuse.for_check(shadowed_df, input_df) == WITHOUT_RESOLVED_EXPRESSIONS
+
+
+def test_input_schema_reuse_ends_for_good_when_an_input_column_is_missing_from_the_check_input():
+    """The check's own columns are validated against the DataFrame with its input rows, so once an input column is
+    gone from there the facts cannot be used at all, for this check or any later one."""
+    dropped_df = _df_with_dtypes([("id", "int")])
+    input_df = _df_with_dtypes(list(INPUT_DTYPES))
+    reuse = InputSchemaReuse(KNOWN_INPUT)
+
+    assert reuse.for_check(dropped_df, dropped_df) is None
+    assert reuse.for_check(input_df, input_df) is None
+
+
+def test_input_schema_reuse_ends_when_stopped():
+    input_df = _df_with_dtypes(list(INPUT_DTYPES))
+    reuse = InputSchemaReuse(KNOWN_INPUT)
+
+    reuse.stop()
+
+    assert reuse.for_check(input_df, input_df) is None
+
+
+def test_input_schema_reuse_without_facts_never_returns_any():
+    input_df = _df_with_dtypes(list(INPUT_DTYPES))
+
+    assert InputSchemaReuse(None).for_check(input_df, input_df) is None
