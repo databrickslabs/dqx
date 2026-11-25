@@ -9,6 +9,7 @@ See: https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-
 
 import datetime
 import json
+from decimal import Decimal
 import logging
 import math
 import re
@@ -70,8 +71,9 @@ _NON_ORDERABLE_PHYSICAL_TYPE = re.compile(
 # A date or timestamp string a range check reads as one on every supported Python version. get_limit_expr reads a
 # string without ':' as a date and a digit-only string as SQL, so a timestamp needs hours and minutes.
 _ISO_DATE_OR_TIMESTAMP = re.compile(
-    r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.(?:\d{3}|\d{6}))?)?(?:Z|[+-]\d{2}:\d{2})?)?"
+    r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:\d{2})?)?"
 )
+_FRACTIONAL_SECONDS = re.compile(r"\.\d{1,6}")
 # Range checks pass integer bounds to Spark as 64-bit literals.
 _INT64_MIN = -(2**63)
 _INT64_MAX = 2**63 - 1
@@ -96,11 +98,11 @@ _TEXT_CAST_TYPE_BY_LOGICAL_TYPE = {
     "date": "DATE",
     "timestamp": "TIMESTAMP_LTZ",
     "datetime": "TIMESTAMP_LTZ",
-    "integer": "DOUBLE",
+    "integer": "DECIMAL(38, 0)",  # exact for any integer a 64-bit bound can be compared with, unlike DOUBLE
     "number": "DOUBLE",
 }
 
-_BoundValue = int | float | datetime.date | str
+_BoundValue = int | float | Decimal | datetime.date | str
 
 
 class _RangeBound(NamedTuple):
@@ -117,25 +119,44 @@ def _parse_range_bound(value: object) -> tuple[str, _BoundValue] | None:
 
     A range check reads any string limit other than an ISO date or timestamp as a column name or SQL expression,
     which a contract value must not become. So a bound is a finite number (a 64-bit one if an integer), a date YAML
-    loaded from an unquoted value, or an ISO date or timestamp string. A 'Z' offset is passed as '+00:00', which
-    every supported Python version parses.
+    loaded from an unquoted value, or an ISO date or timestamp string with at most 6 fractional second digits. A 'Z'
+    offset is passed as '+00:00' and fractional seconds are padded to 6 digits, which every supported Python version
+    parses.
     """
     if isinstance(value, bool):
         return None
     if isinstance(value, int):  # checked before math.isfinite, which can't convert a very large int to a float
         return (_NUMBER_BOUND, value) if _INT64_MIN <= value <= _INT64_MAX else None
     if isinstance(value, float):
-        return (_NUMBER_BOUND, value) if math.isfinite(value) else None
+        return (_NUMBER_BOUND, _as_exact_number(value)) if math.isfinite(value) else None
     if isinstance(value, datetime.date):  # also covers datetime.datetime
         return _TEMPORAL_BOUND, value
     if not isinstance(value, str) or not _ISO_DATE_OR_TIMESTAMP.fullmatch(value):
         return None
     text = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+    text = _FRACTIONAL_SECONDS.sub(lambda fraction: fraction.group().ljust(7, "0"), text)
     try:
         datetime.datetime.fromisoformat(text)  # rejects impossible dates such as 2024-02-30
     except ValueError:
         return None
     return _TEMPORAL_BOUND, text
+
+
+def _as_exact_number(value: float) -> Decimal | float:
+    """Return a float bound as the decimal it was written as (e.g. 0.1 as Decimal('0.1')), or as is if no DECIMAL fits.
+
+    Spark compares a DECIMAL column with a DOUBLE limit as two doubles, which can't tell 0.100000000000000001 from
+    0.1, but compares it with a decimal limit exactly. A DOUBLE or FLOAT column compares the same either way. The
+    decimal is the float's shortest repr, so the number the contract wrote, and must fit Spark's DECIMAL(38).
+    """
+    exact = Decimal(repr(value))
+    if exact.adjusted() >= 38:
+        return value
+    exponent = int(exact.as_tuple().exponent)  # an int, as the value is finite
+    if exponent > 0:  # e.g. 1E+16, which Spark would read with a negative scale
+        exact, exponent = Decimal(int(exact)), 0
+    integer_digits = exact.adjusted() + 1 if exact.adjusted() >= 0 else 0
+    return exact if integer_digits - exponent <= 38 else value
 
 
 def _range_bound(
@@ -307,9 +328,9 @@ def _unsupported_range_reason(
     return None
 
 
-def _as_number(value: _BoundValue) -> int | float:
+def _as_number(value: _BoundValue) -> int | float | Decimal:
     """Return a number bound as a number, so two bounds can be ordered."""
-    if isinstance(value, (int, float)):
+    if isinstance(value, (int, float, Decimal)):
         return value
     raise TypeError(f"not a number bound: {value!r}")
 
@@ -325,8 +346,6 @@ def _describe_bound(bound: _RangeBound) -> str:
 
 def _empty_range_reason(bounds: list[_RangeBound]) -> str | None:
     """Return why no value can satisfy every bound, or None if some value can."""
-    if len({bound.kind for bound in bounds}) > 1:
-        return "the bounds mix numbers with dates or timestamps"
     for low in (bound for bound in bounds if bound.lower):
         for high in (bound for bound in bounds if not bound.lower):
             strict = low.strict or high.strict
@@ -1208,6 +1227,12 @@ class DataContractRulesGenerator(DQEngineBase):
                 self._side_bounds(column_path, inclusive_option, exclusive_option, opts, expected_kind, lower=lower)
             )
         if not bounds:
+            return []
+        if len({bound.kind for bound in bounds}) > 1:
+            logger.warning(
+                f"Skipping range bounds on '{sanitize_for_logging(column_path)}': "
+                "the bounds mix numbers with dates or timestamps."
+            )
             return []
         cast_type = _text_cast_type(logical_type, physical_type, bounds, opts)
         wall_clock = _compares_wall_clock(logical_type, physical_type, cast_type, bounds)

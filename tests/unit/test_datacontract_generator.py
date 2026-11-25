@@ -1,4 +1,6 @@
 import datetime
+from decimal import Decimal
+import io
 import json
 import logging
 import os
@@ -17,6 +19,7 @@ from databricks.sdk.errors import NotFound
 import databricks.labs.dqx.profiler.generator as generator_module
 from databricks.labs.dqx.check_funcs import make_condition, register_rule
 from databricks.labs.dqx.checks_semantic_validator import ChecksSemanticValidationMode
+from databricks.labs.dqx.checks_serializer import ChecksNormalizer, SerializerFactory
 import databricks.labs.dqx.datacontract.contract_rules_generator as contract_rules_generator_module
 from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
 from databricks.labs.dqx.engine import DQEngine
@@ -250,7 +253,11 @@ class DataContractGeneratorTestBase:
             {
                 'check': {
                     'function': 'is_in_range',
-                    'arguments': {'column': 'temperature_celsius', 'min_limit': -273.15, 'max_limit': 200.0},
+                    'arguments': {
+                        'column': 'temperature_celsius',
+                        'min_limit': Decimal('-273.15'),
+                        'max_limit': Decimal('200.0'),
+                    },
                 },
                 'name': 'temperature_celsius_out_of_range',
                 'criticality': 'error',
@@ -298,7 +305,7 @@ class DataContractGeneratorTestBase:
             {
                 'check': {
                     'function': 'is_in_range',
-                    'arguments': {'column': 'pressure_bar', 'min_limit': 0.1, 'max_limit': 10.0},
+                    'arguments': {'column': 'pressure_bar', 'min_limit': Decimal('0.1'), 'max_limit': Decimal('10.0')},
                 },
                 'name': 'pressure_bar_out_of_range',
                 'criticality': 'error',
@@ -2447,7 +2454,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
         assert rules[0]["name"] == "temperature_below_minimum"
         assert rules[0]["check"] == {
             "function": "is_not_less_than",
-            "arguments": {"column": "temperature", "limit": -273.15},
+            "arguments": {"column": "temperature", "limit": Decimal("-273.15")},
         }
 
     def test_field_with_only_maximum_constraint(self, generator):
@@ -2629,6 +2636,38 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 {"min_limit": "2024-01-01T00:00:00+00:00", "max_limit": "2024-12-31T00:00:00+00:00"},
                 "out_of_range",
             ),
+            (
+                "timestamp",
+                "TIMESTAMP",
+                {"minimum": "2024-01-01T12:00:00.1Z"},
+                "is_not_less_than",
+                {"limit": "2024-01-01T12:00:00.100000+00:00"},
+                "below_minimum",
+            ),
+            (
+                "timestamp",
+                "TIMESTAMP",
+                {"minimum": "2024-01-01T12:00:00.12+01:00"},
+                "is_not_less_than",
+                {"limit": "2024-01-01T12:00:00.120000+01:00"},
+                "below_minimum",
+            ),
+            (
+                "timestamp",
+                "TIMESTAMP",
+                {"maximum": "2024-01-01T12:00:00.1234"},
+                "is_not_greater_than",
+                {"limit": "2024-01-01T12:00:00.123400+00:00"},
+                "above_maximum",
+            ),
+            (
+                "timestamp",
+                "TIMESTAMP",
+                {"maximum": "2024-01-01 12:00:00.12345Z"},
+                "is_not_greater_than",
+                {"limit": "2024-01-01 12:00:00.123450+00:00"},
+                "above_maximum",
+            ),
         ],
     )
     def test_range_bounds_generate_row_level_checks(
@@ -2731,6 +2770,12 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 "Skipping maximum on 'value': '2024-02-30' is not a date or timestamp.",
             ),
             (
+                "timestamp",
+                "TIMESTAMP",
+                {"minimum": "2024-01-01T12:00:00.1234567Z"},
+                "Skipping minimum on 'value': '2024-01-01T12:00:00.1234567Z' is not a date or timestamp.",
+            ),
+            (
                 "string",
                 "STRING",
                 {"minimum": 5},
@@ -2810,6 +2855,16 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 {"exclusiveMinimum": "2024-01-01T10:00:00+05:00", "exclusiveMaximum": "2024-01-01T05:00:00Z"},
                 "no value is greater than 2024-01-01T10:00:00+05:00 and less than 2024-01-01T05:00:00+00:00",
             ),
+            (
+                None,
+                {"minimum": 1, "maximum": "2024-01-01T12:00:00"},
+                "the bounds mix numbers with dates or timestamps",
+            ),
+            (
+                None,
+                {"minimum": "2024-01-01T12:00:00Z", "maximum": 10},
+                "the bounds mix numbers with dates or timestamps",
+            ),
         ],
     )
     def test_unusable_range_is_skipped_with_warning(self, generator, caplog, logical_type, options, reason):
@@ -2872,7 +2927,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 "integer",
                 "STRING",
                 {"minimum": 0},
-                "try_cast(value AS DOUBLE)",
+                "try_cast(value AS DECIMAL(38, 0))",
                 "is_not_less_than",
                 {"limit": 0},
             ),
@@ -2928,7 +2983,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 "integer",
                 "STRING",
                 {"minimum": 0},
-                "try_cast(`amount (usd)` AS DOUBLE)",
+                "try_cast(`amount (usd)` AS DECIMAL(38, 0))",
                 "is_not_less_than",
                 {"limit": 0},
             ),
@@ -2937,7 +2992,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 "integer",
                 "STRING",
                 {"minimum": 0},
-                "try_cast(`v - (SELECT 1000)` AS DOUBLE)",
+                "try_cast(`v - (SELECT 1000)` AS DECIMAL(38, 0))",
                 "is_not_less_than",
                 {"limit": 0},
             ),
@@ -3120,7 +3175,7 @@ class TestDataContractGeneratorRangeBoundValues(DataContractGeneratorTestBase):
             (
                 "DECIMAL(10,2)",
                 {"maximum": 9.99},
-                {"function": "is_not_greater_than", "arguments": {"column": "value", "limit": 9.99}},
+                {"function": "is_not_greater_than", "arguments": {"column": "value", "limit": Decimal("9.99")}},
                 None,
             ),
             (
@@ -3209,6 +3264,62 @@ class TestDataContractGeneratorRangeBoundValues(DataContractGeneratorTestBase):
         assert [rule["check"] for rule in rules] == [check]
 
     @pytest.mark.parametrize(
+        "physical_type, logical_type, options, column, limits",
+        [
+            # A float limit would make Spark compare the DECIMAL column as a DOUBLE
+            ("DECIMAL(20,18)", "number", {"maximum": 0.1}, "value", {"limit": Decimal("0.1")}),
+            (
+                "DECIMAL(38,10)",
+                "number",
+                {"minimum": -0.5, "maximum": 1e16},
+                "value",
+                {"min_limit": Decimal("-0.5"), "max_limit": Decimal("10000000000000000")},
+            ),
+            ("DECIMAL(20,18)", "number", {"minimum": 1.5e-10}, "value", {"limit": Decimal("1.5E-10")}),
+            # No DECIMAL(38) holds these, so they stay floats
+            ("DOUBLE", "number", {"maximum": 1e300}, "value", {"limit": 1e300}),
+            ("DOUBLE", "number", {"minimum": 1e-40}, "value", {"limit": 1e-40}),
+            # Integers stay integers; integer text is compared exactly as DECIMAL(38, 0)
+            ("BIGINT", "integer", {"maximum": 9007199254740993}, "value", {"limit": 9007199254740993}),
+            ("STRING", "integer", {"maximum": 10.5}, "try_cast(value AS DECIMAL(38, 0))", {"limit": Decimal("10.5")}),
+        ],
+    )
+    def test_number_bounds_compare_exactly(self, generator, physical_type, logical_type, options, column, limits):
+        """Test that number bounds keep the precision the contract wrote, so a fixed-point comparison stays exact."""
+        prop = {
+            "name": "value",
+            "physicalType": physical_type,
+            "logicalType": logical_type,
+            "logicalTypeOptions": options,
+        }
+
+        rules = self._generate_range_rules(generator, prop)
+
+        assert len(rules) == 1
+        assert rules[0]["check"]["arguments"] == {"column": column, **limits}
+        assert [type(value) for value in rules[0]["check"]["arguments"].values()] == [
+            type(value) for value in {"column": column, **limits}.values()
+        ]
+
+    def test_decimal_bounds_survive_saving_checks(self, generator):
+        """Test that a generated Decimal limit round-trips through DQX's JSON and YAML check storage."""
+        rules = self._generate_range_rules(
+            generator,
+            {
+                "name": "value",
+                "physicalType": "DECIMAL(20,18)",
+                "logicalType": "number",
+                "logicalTypeOptions": {"maximum": 0.1},
+            },
+        )
+
+        for extension in ("json", "yaml"):
+            serializer = SerializerFactory.create_serializer(extension)
+            stored = serializer.serialize(ChecksNormalizer.normalize(rules))
+            loaded = ChecksNormalizer.denormalize(serializer.deserialize(io.StringIO(stored)))
+            assert loaded[0]["check"]["arguments"]["limit"] == Decimal("0.1"), extension
+
+    @pytest.mark.parametrize(
         "options, function, limits",
         [
             ({"minimum": "2024-01-01T12:00:00"}, "is_not_less_than", {"limit": "TIMESTAMP_NTZ '2024-01-01 12:00:00'"}),
@@ -3238,6 +3349,16 @@ class TestDataContractGeneratorRangeBoundValues(DataContractGeneratorTestBase):
                 {"maximum": datetime.datetime(2024, 1, 1, 12, 0, 0, 123456)},
                 "is_not_greater_than",
                 {"limit": "TIMESTAMP_NTZ '2024-01-01 12:00:00.123456'"},
+            ),
+            (
+                {"maximum": "2024-01-01T12:00:00.1"},
+                "is_not_greater_than",
+                {"limit": "TIMESTAMP_NTZ '2024-01-01 12:00:00.100000'"},
+            ),
+            (
+                {"minimum": "2024-01-01T09:00:00.12Z", "defaultTimezone": "Australia/Sydney"},
+                "is_not_less_than",
+                {"limit": "TIMESTAMP_NTZ '2024-01-01 20:00:00.120000'"},
             ),
             # A wall-clock bound in a daylight saving gap is kept as written, not moved to 03:30
             (
