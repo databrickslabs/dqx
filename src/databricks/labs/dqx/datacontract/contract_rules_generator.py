@@ -9,6 +9,7 @@ See: https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-
 
 import datetime
 import json
+from decimal import Decimal
 import logging
 import math
 import re
@@ -97,11 +98,11 @@ _TEXT_CAST_TYPE_BY_LOGICAL_TYPE = {
     "date": "DATE",
     "timestamp": "TIMESTAMP_LTZ",
     "datetime": "TIMESTAMP_LTZ",
-    "integer": "DOUBLE",
+    "integer": "DECIMAL(38, 0)",  # exact for any integer a 64-bit bound can be compared with, unlike DOUBLE
     "number": "DOUBLE",
 }
 
-_BoundValue = int | float | datetime.date | str
+_BoundValue = int | float | Decimal | datetime.date | str
 
 
 class _RangeBound(NamedTuple):
@@ -126,7 +127,7 @@ def _parse_range_bound(value: object) -> tuple[str, _BoundValue] | None:
     if isinstance(value, int):  # checked before math.isfinite, which can't convert a very large int to a float
         return (_NUMBER_BOUND, value) if _INT64_MIN <= value <= _INT64_MAX else None
     if isinstance(value, float):
-        return (_NUMBER_BOUND, value) if math.isfinite(value) else None
+        return (_NUMBER_BOUND, _as_exact_number(value)) if math.isfinite(value) else None
     if isinstance(value, datetime.date):  # also covers datetime.datetime
         return _TEMPORAL_BOUND, value
     if not isinstance(value, str) or not _ISO_DATE_OR_TIMESTAMP.fullmatch(value):
@@ -138,6 +139,23 @@ def _parse_range_bound(value: object) -> tuple[str, _BoundValue] | None:
     except ValueError:
         return None
     return _TEMPORAL_BOUND, text
+
+
+def _as_exact_number(value: float) -> Decimal | float:
+    """Return a float bound as the decimal it was written as (e.g. 0.1 as Decimal('0.1')), or as is if no DECIMAL fits.
+
+    Spark compares a DECIMAL column with a DOUBLE limit as two doubles, which can't tell 0.100000000000000001 from
+    0.1, but compares it with a decimal limit exactly. A DOUBLE or FLOAT column compares the same either way. The
+    decimal is the float's shortest repr, so the number the contract wrote, and must fit Spark's DECIMAL(38).
+    """
+    exact = Decimal(repr(value))
+    if exact.adjusted() >= 38:
+        return value
+    exponent = int(exact.as_tuple().exponent)  # an int, as the value is finite
+    if exponent > 0:  # e.g. 1E+16, which Spark would read with a negative scale
+        exact, exponent = Decimal(int(exact)), 0
+    integer_digits = exact.adjusted() + 1 if exact.adjusted() >= 0 else 0
+    return exact if integer_digits - exponent <= 38 else value
 
 
 def _range_bound(
@@ -320,9 +338,9 @@ def _range_check(bounds: list[_RangeBound]) -> tuple[str, str, dict[str, _BoundV
     return "is_not_greater_than", "above_maximum", {"limit": bounds[0].value}  # every bound is an upper bound
 
 
-def _as_number(value: _BoundValue) -> int | float:
+def _as_number(value: _BoundValue) -> int | float | Decimal:
     """Return a number bound as a number, so two bounds can be ordered."""
-    if isinstance(value, (int, float)):
+    if isinstance(value, (int, float, Decimal)):
         return value
     raise TypeError(f"not a number bound: {value!r}")
 

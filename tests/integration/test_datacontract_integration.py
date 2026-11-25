@@ -911,6 +911,56 @@ class TestDataContractRangeRulesIntegration:
         finally:
             spark.conf.set("spark.sql.session.timeZone", original_time_zone)
 
+    def test_fixed_point_and_integer_text_bounds_compare_exactly(self, ws, spark, set_utc_timezone):
+        """Bounds on a DECIMAL column and on integers stored as text flag a value just past them.
+
+        As doubles, 0.100000000000000001 equals 0.1 and 9007199254740993 equals 2^53, so a DOUBLE comparison would
+        let both through.
+        """
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.2.0",
+            "id": "test:range-precision",
+            "name": "Range precision",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "sample",
+                    "physicalType": "table",
+                    "properties": [
+                        {
+                            "name": "ratio",
+                            "physicalType": "DECIMAL(20,18)",
+                            "logicalType": "number",
+                            "logicalTypeOptions": {"maximum": 0.1},
+                        },
+                        {
+                            "name": "text_count",
+                            "physicalType": "STRING",
+                            "logicalType": "integer",
+                            "logicalTypeOptions": {"minimum": 0, "maximum": 9007199254740992},
+                        },
+                    ],
+                },
+            ],
+        }
+        rules = _generate_rules_from_temp_contract(
+            ws, spark, contract, process_text_rules=False, generate_schema_validation=False
+        )
+        test_df = spark.sql(
+            "SELECT * FROM VALUES "
+            "(1, CAST('0.100000000000000000' AS DECIMAL(20,18)), '9007199254740992'), "
+            "(2, CAST('0.100000000000000001' AS DECIMAL(20,18)), '9007199254740993'), "
+            "(3, CAST(NULL AS DECIMAL(20,18)), 'not a number') AS sample(row_id, ratio, text_count)"
+        )
+
+        assert _flagged_names_by_row_under_ansi(ws, spark, test_df, rules) == {
+            1: set(),
+            2: {"ratio_above_maximum", "text_count_out_of_range"},
+            3: set(),
+        }
+
     def test_range_rules_on_names_needing_escaping_compare_the_named_column(self, ws, spark, set_utc_timezone):
         """Property names that look like SQL are back-quoted, so the range check compares the column they name."""
         contract = {
