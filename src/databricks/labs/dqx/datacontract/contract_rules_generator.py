@@ -181,6 +181,38 @@ def _range_bound(
     return None
 
 
+def _side_bounds(
+    column_path: str,
+    inclusive_option: str,
+    exclusive_option: str,
+    opts: dict,
+    expected_kind: str | None,
+    *,
+    lower: bool,
+) -> list[_RangeBound]:
+    """Return the validated bounds on one side of the range: minimum/exclusiveMinimum or maximum/exclusiveMaximum.
+
+    ODCS v3.0.x makes the exclusive option a flag that turns the inclusive bound exclusive; from v3.1.0 it is a
+    bound of its own. The form is taken from the value's type, not from apiVersion, because contracts often keep
+    an older one.
+    """
+    inclusive = _range_bound(column_path, inclusive_option, opts.get(inclusive_option), expected_kind, lower=lower)
+    exclusive = opts.get(exclusive_option)
+    if exclusive is None:
+        return [inclusive] if inclusive is not None else []
+    if not isinstance(exclusive, bool):  # checked first: bool is a subclass of int
+        strict = _range_bound(column_path, exclusive_option, exclusive, expected_kind, lower=lower, strict=True)
+        return [bound for bound in (inclusive, strict) if bound is not None]
+    if exclusive and opts.get(inclusive_option) is None:
+        logger.warning(
+            f"Skipping {exclusive_option} on '{sanitize_for_logging(column_path)}': it is true, but there is no "
+            f"{inclusive_option} to make exclusive."
+        )
+    if inclusive is None:
+        return []
+    return [inclusive._replace(strict=exclusive)]
+
+
 def _expected_bound_kind(logical_type: str | None, physical_type: str | None) -> str | None:
     """Return the kind of bound a field takes: by logical type, else by physical type, else None (either kind)."""
     if logical_type:
@@ -384,34 +416,38 @@ def _text_cast_type(
     return cast_type
 
 
-def _range_checks(column: str, bounds: list[_RangeBound]) -> list[tuple[dict, str]]:
-    """Return the row-level checks and rule name suffixes for validated range bounds.
+_RANGE_OPTIONS = ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum")
 
-    Inclusive bounds use *is_in_range*, *is_not_less_than* or *is_not_greater_than*; each exclusive bound uses
-    *is_greater_than* or *is_less_than*.
+
+class _RangeCheck(NamedTuple):
+    """Row-level check generated for one range bound."""
+
+    function: str
+    rule_name_suffix: str
+
+
+_RANGE_CHECK_BY_BOUND_SIDE = {  # by (lower, strict)
+    (True, False): _RangeCheck("is_not_less_than", "below_minimum"),
+    (False, False): _RangeCheck("is_not_greater_than", "above_maximum"),
+    (True, True): _RangeCheck("is_greater_than", "at_or_below_exclusive_minimum"),
+    (False, True): _RangeCheck("is_less_than", "at_or_above_exclusive_maximum"),
+}
+
+
+def _range_checks(column: str, bounds: list[_RangeBound]) -> list[tuple[dict, str]]:
+    """Return the row-level checks and rule name suffixes for validated range bounds, inclusive ones first.
+
+    An inclusive minimum and maximum make one *is_in_range* check; every other bound has a check of its own.
     """
-    minimum = next((bound.value for bound in bounds if bound.lower and not bound.strict), None)
-    maximum = next((bound.value for bound in bounds if not bound.lower and not bound.strict), None)
+    inclusive = [bound for bound in bounds if not bound.strict]
     checks = []
-    if minimum is not None and maximum is not None:
-        arguments = {"column": column, "min_limit": minimum, "max_limit": maximum}
+    if len(inclusive) == 2:
+        arguments = {"column": column, "min_limit": inclusive[0].value, "max_limit": inclusive[1].value}
         checks.append(({"function": "is_in_range", "arguments": arguments}, "out_of_range"))
-    elif minimum is not None:
-        checks.append(
-            ({"function": "is_not_less_than", "arguments": {"column": column, "limit": minimum}}, "below_minimum")
-        )
-    elif maximum is not None:
-        checks.append(
-            ({"function": "is_not_greater_than", "arguments": {"column": column, "limit": maximum}}, "above_maximum")
-        )
-    for bound in bounds:
-        if bound.strict:
-            function, name_suffix = (
-                ("is_greater_than", "at_or_below_exclusive_minimum")
-                if bound.lower
-                else ("is_less_than", "at_or_above_exclusive_maximum")
-            )
-            checks.append(({"function": function, "arguments": {"column": column, "limit": bound.value}}, name_suffix))
+        bounds = [bound for bound in bounds if bound.strict]
+    for bound in sorted(bounds, key=lambda bound: bound.strict):  # stable: inclusive first, lower first
+        function, name_suffix = _RANGE_CHECK_BY_BOUND_SIDE[(bound.lower, bound.strict)]
+        checks.append(({"function": function, "arguments": {"column": column, "limit": bound.value}}, name_suffix))
     return checks
 
 
@@ -1206,7 +1242,7 @@ class DataContractRulesGenerator(DQEngineBase):
         Anything else is skipped with a warning, as are bounds that no value could satisfy. A column stored as text is
         compared through *try_cast*.
         """
-        if all(opts.get(option) is None for option in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum")):
+        if all(opts.get(option) is None for option in _RANGE_OPTIONS):
             return []
         column_path = field_metadata["field"]  # the plain path, for rule names and warnings
         expected_kind = _expected_bound_kind(logical_type, physical_type)
@@ -1224,7 +1260,7 @@ class DataContractRulesGenerator(DQEngineBase):
             ("maximum", "exclusiveMaximum", False),
         ):
             bounds.extend(
-                self._side_bounds(column_path, inclusive_option, exclusive_option, opts, expected_kind, lower=lower)
+                _side_bounds(column_path, inclusive_option, exclusive_option, opts, expected_kind, lower=lower)
             )
         if not bounds:
             return []
@@ -1266,36 +1302,6 @@ class DataContractRulesGenerator(DQEngineBase):
             }
             for check, name_suffix in _range_checks(check_column, comparable_bounds)
         ]
-
-    @staticmethod
-    def _side_bounds(
-        column_path: str,
-        inclusive_option: str,
-        exclusive_option: str,
-        opts: dict,
-        expected_kind: str | None,
-        *,
-        lower: bool,
-    ) -> list[_RangeBound]:
-        """Return the validated bounds on one side of the range: minimum/exclusiveMinimum or maximum/exclusiveMaximum.
-
-        ODCS v3.0.x makes the exclusive option a flag that turns the inclusive bound exclusive; from v3.1.0 it is a
-        bound of its own. The form is taken from the value's type, not from apiVersion, because contracts often keep
-        an older one.
-        """
-        inclusive = _range_bound(column_path, inclusive_option, opts.get(inclusive_option), expected_kind, lower=lower)
-        exclusive = opts.get(exclusive_option)
-        if not isinstance(exclusive, bool):  # checked first: bool is a subclass of int
-            strict = _range_bound(column_path, exclusive_option, exclusive, expected_kind, lower=lower, strict=True)
-            return [bound for bound in (inclusive, strict) if bound is not None]
-        if exclusive and opts.get(inclusive_option) is None:
-            logger.warning(
-                f"Skipping {exclusive_option} on '{sanitize_for_logging(column_path)}': it is true, but there is no "
-                f"{inclusive_option} to make exclusive."
-            )
-        if inclusive is None:
-            return []
-        return [inclusive._replace(strict=exclusive)]
 
     def _generate_string_length_rules_from_options(
         self, column: str, field_metadata: dict, criticality: str, opts: dict

@@ -231,10 +231,10 @@ In DQX v0.17.2 and earlier, a `minimum` or `maximum` on its own generated a data
 | v3.0.x | A flag that makes `minimum` / `maximum` exclusive | `minimum: 0` with `exclusiveMinimum: true` | `<column>_at_or_below_exclusive_minimum` (value &gt; 0), instead of `<column>_below_minimum` |
 | v3.1.0 and later | A bound of its own | `exclusiveMaximum: 100` | `<column>_at_or_above_exclusive_maximum` (value &lt; 100) |
 
-Each exclusive bound gets its own rule, with `is_greater_than` or `is_less_than`. In the v3.0.x form, the flag replaces the inclusive check on that side, so `minimum: 18`, `maximum: 100` and `exclusiveMaximum: true` give `<column>_below_minimum` (value &gt;= 18) and `<column>_at_or_above_exclusive_maximum` (value &lt; 100). `exclusiveMinimum: true` without a `minimum` is skipped with a warning.
+Each exclusive bound gets its own rule, with `is_greater_than` or `is_less_than`. In the v3.0.x form, the flag replaces the inclusive check on that side, so `minimum: 18`, `maximum: 100` and `exclusiveMaximum: true` give `<column>_below_minimum` (value &gt;= 18) and `<column>_at_or_above_exclusive_maximum` (value &lt; 100). `exclusiveMinimum: true` without a `minimum` is skipped with a warning. From v3.1.0, `minimum` and `exclusiveMinimum` (or the maximums) can both be set; each gets its own rule.
 
 <Admonition type="note" title="Previous behavior">
-In DQX v0.17.2 and earlier, `exclusiveMinimum` and `exclusiveMaximum` were ignored. So a v3.0.x flag such as `minimum: 18` with `exclusiveMinimum: true` generated `<column>_below_minimum` (value &gt;= 18), and it now generates `<column>_at_or_below_exclusive_minimum` (value &gt; 18) instead. Regenerate checks saved from a contract to pick up the exclusive rules.
+In DQX v0.17.2 and earlier, `exclusiveMinimum` and `exclusiveMaximum` were ignored. So a v3.0.x flag such as `minimum: 18` with `exclusiveMinimum: true` generated `<column>_below_minimum` (value &gt;= 18), and it now generates `<column>_at_or_below_exclusive_minimum` (value &gt; 18) instead. With both `minimum` and `maximum`, the flag splits `<column>_out_of_range` in two: `minimum: 18`, `maximum: 100` and `exclusiveMaximum: true` give `<column>_below_minimum` and `<column>_at_or_above_exclusive_maximum`. Regenerate checks saved from a contract to pick up the exclusive rules.
 </Admonition>
 
 ### Example Contract with Predefined Rules

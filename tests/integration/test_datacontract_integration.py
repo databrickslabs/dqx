@@ -819,6 +819,8 @@ class TestDataContractRangeRulesIntegration:
                 # Past the bounds
                 [3, -1, 1.5, 6, datetime.date(2019, 12, 31), datetime.datetime(2030, 1, 2), "2019-12-31"],
                 [4, None, None, None, None, None, None],
+                # On the exclusive minimum of ratio, which the rows above only test on its maximum
+                [5, None, 0.0, None, None, None, None],
             ],
             "row_id int, qty int, ratio double, price int, shipped date, created timestamp, shipped_text string",
         )
@@ -836,6 +838,7 @@ class TestDataContractRangeRulesIntegration:
             2: set(),
             3: strict_rules | {"price_at_or_above_exclusive_maximum"},
             4: set(),
+            5: {"ratio_at_or_below_exclusive_minimum"},
         }
 
     def test_timestamp_bounds_are_read_in_the_default_timezone(self, ws, spark, set_utc_timezone):

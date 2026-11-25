@@ -4017,6 +4017,16 @@ class TestDataContractGeneratorExclusiveBounds(DataContractGeneratorTestBase):
                 {"minimum": 1, "exclusiveMaximum": 100},
                 [("below_minimum", "is_not_less_than", 1), ("at_or_above_exclusive_maximum", "is_less_than", 100)],
             ),
+            # Inclusive checks come first, whichever side they are on
+            (
+                "integer",
+                "INT",
+                {"exclusiveMinimum": 0, "maximum": 100},
+                [
+                    ("above_maximum", "is_not_greater_than", 100),
+                    ("at_or_below_exclusive_minimum", "is_greater_than", 0),
+                ],
+            ),
             (
                 "integer",
                 "INT",
