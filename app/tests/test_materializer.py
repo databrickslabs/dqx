@@ -1657,6 +1657,39 @@ class TestAllGroupsFailRenderIsNonDestructive:
         assert any("'ar1-0'" in c for c in delete_calls)
 
 
+class TestPartialGroupFailureKeepsExistingRows:
+    """A group that fails to render keeps its last good row; only vanished groups are cleaned up."""
+
+    def test_failed_group_row_survives_while_vanished_group_is_deleted(
+        self, materializer, sql, registry, monitored_tables
+    ):
+        applied = AppliedRule(
+            id="ar1",
+            binding_id="b1",
+            rule_id="r1",
+            # Group 1 does not bind the rule's "column" slot, so it fails to render.
+            column_mapping=[{"column": "customer_id"}, {"other": "x"}],
+            mapping_hash="h",
+        )
+        monitored_tables.get.return_value = _detail(applied)
+        registry.get_rule.return_value = _published_rule()
+        registry.get_version.return_value = _version_snapshot()
+
+        def fake_query(sql_text: str):
+            if "SELECT rule_id FROM" in sql_text and "applied_rule_id = " in sql_text:
+                return [["ar1-0"], ["ar1-1"], ["ar1-2"]]  # ar1-2 is from a previously-wider mapping
+            return []
+
+        sql.query.side_effect = fake_query
+
+        written = materializer.materialize_binding("b1")
+
+        assert written == ["ar1-0", "ar1-1"]
+        delete_calls = [c.args[0] for c in sql.execute.call_args_list if c.args[0].startswith("DELETE")]
+        assert not any("'ar1-1'" in c for c in delete_calls)
+        assert any("'ar1-2'" in c for c in delete_calls)
+
+
 class TestRematerializeForRule:
     """``rematerialize_for_rule`` — the "publish -> propagate to followers" entry
     point (design spec §5). Wired into ``approve_registry_rule`` so publishing a

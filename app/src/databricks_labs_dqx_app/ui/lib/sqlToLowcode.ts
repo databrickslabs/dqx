@@ -22,7 +22,7 @@
  * (`sqlToLowcode.test.ts`): parse(compile(row)) must recompile to the same SQL,
  * which is what keeps this file honest as `rowSql` grows.
  */
-import type { AggregatedRowAst, AnyRow, ColumnRefValue, Combinator, RowAst } from "./lowcodeAst";
+import { isColumnRef, type AggregatedRowAst, type AnyRow, type ColumnRefValue, type Combinator, type RowAst } from "./lowcodeAst";
 import { splitTopLevelCommas, type LowcodeColumnRef } from "./lowcodeCompile";
 import { operatorValidForFamily, VALIDITY_TYPES, type Family } from "./lowcodeOperators";
 import { stripSqlLineComments } from "./sqlComments";
@@ -511,7 +511,26 @@ function foldLuhnPairs(fragments: Fragment[]): Fragment[] {
  * columns): a condition on anything else is left unmapped, since the builder
  * has no column to point the row at.
  */
-export function parseSqlToLowcode(sql: string, columns: LowcodeColumnRef[]): SqlImportResult {
+export function parseSqlToLowcode(
+  sql: string,
+  columns: LowcodeColumnRef[],
+  parameterNames: readonly string[] = [],
+): SqlImportResult {
+  const result = parseSqlToLowcodeRows(sql, columns);
+  if (parameterNames.length === 0) return result;
+  // A `{{name}}` operand parses as a column reference; when *name* is a
+  // declared Variable Parameter (names can't collide with columns), it is a
+  // parameter reference instead.
+  const params = new Set(parameterNames);
+  const toParam = (value: unknown): unknown => {
+    if (isColumnRef(value) && params.has(value.$col)) return { $param: value.$col };
+    if (Array.isArray(value)) return value.map(toParam);
+    return value;
+  };
+  return { ...result, rows: result.rows.map((row) => ({ ...row, value: toParam(row.value) }) as AnyRow) };
+}
+
+function parseSqlToLowcodeRows(sql: string, columns: LowcodeColumnRef[]): SqlImportResult {
   const text = unwrapOuterParens(stripSqlLineComments(sql).trim());
   if (!text) return { rows: [], unmapped: [] };
   // A whole query or a JOIN belongs to the builder's other controls, not to its

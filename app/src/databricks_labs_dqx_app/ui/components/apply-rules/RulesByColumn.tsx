@@ -219,7 +219,12 @@ function ColumnCard({ column, family, entries, isOpen, onToggle, canEdit, onAddR
               <button
                 key={`${entry.ruleId}-${entry.slot}-${entry.mappingIndex}-${i}`}
                 type="button"
-                onClick={() => onJumpToRule?.(entry.ruleId)}
+                onClick={(e) => {
+                  // The threshold pill lives inside this row; opening it must
+                  // not jump to the rule.
+                  if ((e.target as Element).closest?.("[data-row-click-ignore]")) return;
+                  onJumpToRule?.(entry.ruleId);
+                }}
                 className="flex items-center gap-2.5 w-full text-left rounded px-1 -mx-1 py-0.5 hover:bg-muted/50 transition-colors"
               >
                 <span
@@ -249,13 +254,15 @@ function ColumnCard({ column, family, entries, isOpen, onToggle, canEdit, onAddR
                   {/* Per-column threshold pill — fixed-width container so the
                       pill column aligns vertically down the list regardless of
                       whether a rule has an override ("< 70%*") or not ("< 70%").
-                      stopPropagation prevents the row's onJumpToRule from firing
-                      when the user interacts with the pill popover. Hidden when
+                      The row ignores clicks from inside it (data-row-click-ignore)
+                      rather than this span stopping propagation, which would keep
+                      other pills' popovers from closing. Clicks inside the
+                      popover itself are stopped by PopoverContent. Hidden when
                       the threshold feature is disabled. */}
                   {thresholdEnabled && (
                     <span
                       className="min-w-[5.5rem] flex justify-start shrink-0"
-                      onClick={(e) => e.stopPropagation()}
+                      data-row-click-ignore
                       onKeyDown={(e) => e.stopPropagation()}
                     >
                       <ThresholdPill
