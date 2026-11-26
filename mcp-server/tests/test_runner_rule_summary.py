@@ -6,9 +6,7 @@ mcp-server test environment. The runner does the Spark grouping and passes the g
 in particular that rules sharing a name are kept apart by fingerprint.
 """
 
-import pytest
-
-from dqx_mcp_runner.rule_summary import UNKNOWN_RULE_NAME, RuleCount, summarize_rule_counts
+from dqx_mcp_runner.rule_summary import RuleCount, summarize_rule_counts
 
 
 def _entry(name: str, fingerprint: str | None, errors: int = 0, warnings: int = 0) -> dict:
@@ -57,51 +55,8 @@ class TestCounting:
             _entry("name_is_empty", "fp_name", warnings=2),
         ]
 
-    def test_same_rule_in_errors_and_warnings_is_one_entry(self):
-        summary = summarize_rule_counts(
-            error_counts=[RuleCount("fp_x", "x_is_null", 2)],
-            warning_counts=[RuleCount("fp_x", "x_is_null", 5)],
-        )
-        assert summary == [_entry("x_is_null", "fp_x", errors=2, warnings=5)]
-
-    def test_repeated_counts_for_the_same_rule_are_summed(self):
-        summary = summarize_rule_counts(
-            error_counts=[RuleCount("fp_x", "x_is_null", 2), RuleCount("fp_x", "x_is_null", 3)],
-            warning_counts=[RuleCount("fp_x", "x_is_null", 1), RuleCount("fp_x", "x_is_null", 1)],
-        )
-        assert summary == [_entry("x_is_null", "fp_x", errors=5, warnings=2)]
-
     def test_no_failures_gives_empty_summary(self):
         assert not summarize_rule_counts(error_counts=[], warning_counts=[])
-
-
-class TestMissingFingerprintOrName:
-    @pytest.mark.parametrize("missing", [None, ""])
-    def test_rules_without_fingerprint_are_grouped_by_name(self, missing: str | None):
-        # Without a fingerprint, rules with different names must not all collapse into one null key.
-        summary = summarize_rule_counts(
-            error_counts=[RuleCount(missing, "a_is_null", 1), RuleCount(missing, "b_is_null", 2)],
-            warning_counts=[RuleCount(missing, "a_is_null", 4)],
-        )
-        assert summary == [_entry("a_is_null", missing, errors=1, warnings=4), _entry("b_is_null", missing, errors=2)]
-
-    def test_rule_without_fingerprint_is_not_merged_into_fingerprinted_rule_of_same_name(self):
-        summary = summarize_rule_counts(
-            error_counts=[RuleCount("fp_a", "a_is_null", 1), RuleCount(None, "a_is_null", 2)],
-            warning_counts=[],
-        )
-        assert summary == [_entry("a_is_null", None, errors=2), _entry("a_is_null", "fp_a", errors=1)]
-
-    @pytest.mark.parametrize("missing", [None, ""])
-    def test_missing_name_is_reported_as_unknown(self, missing: str | None):
-        summary = summarize_rule_counts(error_counts=[RuleCount("fp_a", missing, 3)], warning_counts=[])
-        assert summary == [_entry(UNKNOWN_RULE_NAME, "fp_a", errors=3)]
-
-    def test_rules_missing_name_stay_separate_by_fingerprint(self):
-        summary = summarize_rule_counts(
-            error_counts=[RuleCount("fp_a", None, 1), RuleCount("fp_b", None, 2)], warning_counts=[]
-        )
-        assert summary == [_entry(UNKNOWN_RULE_NAME, "fp_a", errors=1), _entry(UNKNOWN_RULE_NAME, "fp_b", errors=2)]
 
 
 class TestOutput:

@@ -394,6 +394,9 @@ def load_tools(mcp_server):
         Call get_run_result with the run_id to check status and retrieve results. That call waits
         for the job internally, so if it reports 'running', call it again immediately — repeating it
         is how you make progress, and no wait of your own is needed.
+        When the run completes, get_run_result returns a rule_summary: one entry per rule, keyed by
+        rule_fingerprint, with rule_name, rule_fingerprint, error_count and warning_count. rule_name
+        can repeat, because different rules may share a name.
 
         Args:
             table_name: Fully qualified table name (e.g. 'catalog.schema.table').
