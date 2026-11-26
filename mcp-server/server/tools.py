@@ -104,6 +104,11 @@ def load_tools(mcp_server):
                 break
             columns.append({"name": col_name, "type": row["data_type"], "comment": row.get("comment", "")})
 
+        # Some SQL warehouses answer DESCRIBE TABLE successfully but with no rows. Returning
+        # an empty column list would let the caller carry on with a wrong schema, so fail loudly.
+        if not columns:
+            raise ValueError(f"Could not read the schema of table {table_name}: DESCRIBE TABLE returned no columns.")
+
         return {"table_name": table_name, "columns": columns}
 
     @mcp_server.tool

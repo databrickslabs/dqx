@@ -68,6 +68,40 @@ class TestGetTableSchema:
         assert len(result["columns"]) == 1
         assert result["columns"][0]["name"] == "id"
 
+    def test_raises_when_describe_returns_no_rows(self):
+        import pytest
+
+        tools = _register_tools()
+
+        # Some SQL warehouses answer DESCRIBE TABLE successfully but with no rows.
+        with (
+            patch("server.tools.utils.get_obo_client"),
+            patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
+            patch("server.tools.utils.execute_sql", return_value=[]),
+            patch.dict("os.environ", _ENV),
+            pytest.raises(ValueError, match=r"catalog\.schema\.table.*no columns"),
+        ):
+            tools["get_table_schema"]("catalog.schema.table")
+
+    def test_raises_when_describe_returns_only_metadata_rows(self):
+        import pytest
+
+        tools = _register_tools()
+
+        describe_rows = [
+            {"col_name": "", "data_type": "", "comment": ""},
+            {"col_name": "# Partition Information", "data_type": "", "comment": ""},
+        ]
+
+        with (
+            patch("server.tools.utils.get_obo_client"),
+            patch("server.tools.utils.get_warehouse_id", return_value="wh123"),
+            patch("server.tools.utils.execute_sql", return_value=describe_rows),
+            patch.dict("os.environ", _ENV),
+            pytest.raises(ValueError, match="no columns"),
+        ):
+            tools["get_table_schema"]("catalog.schema.table")
+
     def test_partition_columns_not_duplicated(self):
         tools = _register_tools()
 
