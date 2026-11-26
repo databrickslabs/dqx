@@ -26,14 +26,12 @@ RESERVED_PARAMETER_VALUES_KEY = "parameter_values"
 PLACEHOLDER_RE = re.compile(r"^\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}$")
 ANY_PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 
-_POSITIVE_INT_NAMES = frozenset(
-    {
-        "limit",
-        "max_length",
-        "min_length",
-        "column_max_length",
-    }
-)
+# Length parameters are matched by whole name tokens (``max_length``, ``column_max_length``),
+# not substrings. ``limit`` is deliberately NOT a length: DQX accepts zero, negative and
+# decimal limits (e.g. ``is_aggr_not_greater_than(limit=0)``) and validates them itself.
+_MAX_LENGTH_RE = re.compile(r"(?:^|_)max_length(?:_|$)")
+_MIN_LENGTH_RE = re.compile(r"(?:^|_)min_length(?:_|$)")
+_PERCENT_RE = re.compile(r"(?:^|_)(?:pct|percent|percentage)(?:_|$)")
 _NONNEG_INT_NAMES = frozenset({"scale", "decimal_scale"})
 _RANGE_MIN_NAMES = ("min_limit", "min_value", "min")
 _RANGE_MAX_NAMES = ("max_limit", "max_value", "max")
@@ -97,13 +95,7 @@ def must_bind_parameter(param: RuleParameter, *, bind_all: bool = False) -> bool
     lowered = param.name.lower()
     if lowered in _MUST_BIND_NAMES:
         return True
-    if (
-        _looks_like_length_param(param.name)
-        or _looks_like_scale_param(param.name)
-        or _looks_like_rate_param(param.name)
-    ):
-        return True
-    return False
+    return _looks_like_length_param(param.name) or _looks_like_scale_param(param.name)
 
 
 def mapping_group_key(group: ColumnMappingGroup) -> str:
@@ -193,17 +185,20 @@ def overlay_parameters(
     return overlaid
 
 
+def _looks_like_max_length_param(name: str) -> bool:
+    return _MAX_LENGTH_RE.search(name.lower()) is not None
+
+
 def _looks_like_length_param(name: str) -> bool:
-    lowered = name.lower()
-    return lowered in _POSITIVE_INT_NAMES or "max_length" in lowered or "min_length" in lowered
+    return _looks_like_max_length_param(name) or _MIN_LENGTH_RE.search(name.lower()) is not None
 
 
 def _looks_like_scale_param(name: str) -> bool:
     return name.lower() in _NONNEG_INT_NAMES or name.lower().endswith("_scale")
 
 
-def _looks_like_rate_param(name: str) -> bool:
-    return "rate" in name.lower()
+def _looks_like_percent_param(name: str) -> bool:
+    return _PERCENT_RE.search(name.lower()) is not None
 
 
 def _as_number(name: str, value: object) -> float:
@@ -267,13 +262,14 @@ def coerce_parameter_value(param: RuleParameter, raw: object) -> RuleParamValue:
 
     if param.type in ("number", "integer", "decimal"):
         if _looks_like_length_param(param.name):
-            return _as_int(param.name, raw, minimum=1)
+            # A maximum length of 0 matches nothing, but a minimum length of 0 is valid.
+            return _as_int(param.name, raw, minimum=1 if _looks_like_max_length_param(param.name) else 0)
         if _looks_like_scale_param(param.name):
             return _as_int(param.name, raw, minimum=0)
         if param.type == "integer":
             return _as_int(param.name, raw, minimum=None)
         number = _as_number(param.name, raw)
-        if _looks_like_rate_param(param.name) and not 0 <= number <= 100:
+        if _looks_like_percent_param(param.name) and not 0 <= number <= 100:
             raise InvalidParameterValueError(f"{param.name} must be between 0 and 100.")
         return int(number) if number == int(number) else number
 
@@ -351,14 +347,21 @@ def validate_applied_parameter_values(
     *,
     bind_all: bool = False,
     overridable: set[str] | None = None,
+    slots: list[RuleSlot] | None = None,
 ) -> dict[str, dict[str, object]]:
-    """Validate every mapped group's apply-time parameters. Empty mapping is allowed."""
+    """Validate every mapped group's apply-time parameters. Empty mapping is allowed.
+
+    An empty group is a rule *staged* for mapping later and is skipped, unless
+    the rule has no column slots at all (*slots* given and empty): its single
+    ``{}`` group is the real application and its values must be validated and kept.
+    """
     stored = stored or {}
     if not parameters:
         return {}
+    slotless = slots is not None and not slots
     validated: dict[str, dict[str, object]] = {}
     for group in column_mapping:
-        if not group:
+        if not group and not slotless:
             continue
         key = mapping_group_key(group)
         group_values = validate_group_parameter_values(

@@ -671,6 +671,7 @@ class ApplyRulesService:
                     stored_params,
                     bind_all=binds_every_parameter(rule.mode),
                     overridable=set(get_overridable_parameters(rule.user_metadata, rule.definition.parameters)),
+                    slots=rule.definition.slots,
                 )
             except InvalidParameterValueError as exc:
                 raise InvalidAppliedParameterError(str(exc)) from exc

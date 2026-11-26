@@ -56,6 +56,31 @@ describe("apply-time parameter validation", () => {
     expect(isSqlParamPlaceholderName("column")).toBe(false);
   });
 
+  test("look-alike names stay column slots", () => {
+    for (const name of ["pattern_id", "is_allowed", "exchange_rate", "generate_count", "rate_per_sec", "launch_date"]) {
+      expect(isSqlParamPlaceholderName(name)).toBe(false);
+    }
+    for (const name of ["allowed", "allowed_values", "date_pattern", "allowed_scale", "min_value", "Threshold"]) {
+      expect(isSqlParamPlaceholderName(name)).toBe(true);
+    }
+    expect(inferSqlParamType("limit")).toBe("decimal");
+    expect(inferSqlParamType("threshold")).toBe("decimal");
+  });
+
+  test("limit and min_length accept the values DQX accepts", () => {
+    const limit = { name: "limit", type: "number" as const };
+    expect(coerceParameterValue(limit, 0)).toBe(0);
+    expect(coerceParameterValue(limit, "-10.5")).toBe(-10.5);
+    expect(coerceParameterValue({ name: "min_length", type: "number" }, 0)).toBe(0);
+    expect(() => coerceParameterValue({ name: "max_length", type: "number" }, 0)).toThrow("positive whole number");
+  });
+
+  test("only percent parameters are capped to 0..100", () => {
+    expect(coerceParameterValue({ name: "rate_per_sec", type: "number" }, 500)).toBe(500);
+    expect(coerceParameterValue({ name: "generate_count", type: "number" }, 500)).toBe(500);
+    expect(() => coerceParameterValue({ name: "max_null_pct", type: "number" }, 150)).toThrow("between 0 and 100");
+  });
+
   test("partitionPlaceholderSlots splits columns from apply-time values", () => {
     const { columns, parameters } = partitionPlaceholderSlots([
       { name: "email", family: "text" },

@@ -2,14 +2,21 @@ import type { RuleParameter, RuleParameterValue } from "@/lib/api";
 
 const PLACEHOLDER_RE = /^\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}$/;
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+// Whole-name match (see backend `_SQL_PARAM_NAME_RE`): `{{pattern_id}}`, `{{is_allowed}}` and
+// `{{exchange_rate}}` stay column slots.
 const SQL_PARAM_NAME_RE =
-  /(max_length|min_length|min_limit|max_limit|min_value|max_value|regex|pattern|decimal_scale|\bscale\b|\blimit\b|\bthreshold\b|allowed|launch_date|_rate)/i;
+  /^(?:[a-z0-9]+_)*(?:max_length|min_length|min_limit|max_limit|min_value|max_value|decimal_scale|scale|limit|threshold|regex|pattern)$|^allowed(?:_values?)?$/i;
+const RANGE_BOUND_RE = /(?:^|_)(?:min|max)_(?:limit|value)$/;
 
 /** Color for `{{column}}` tokens in the rule editor and apply mapping. */
 export const COLUMN_PLACEHOLDER_CLASS = "font-mono text-blue-600 dark:text-blue-400";
 /** Color for `{{parameter}}` tokens — distinct from column placeholders. */
 export const PARAM_PLACEHOLDER_CLASS = "font-mono text-amber-700 dark:text-amber-400";
-const POSITIVE_INT_NAMES = new Set(["limit", "max_length", "min_length", "column_max_length"]);
+// Length parameters match whole name tokens, mirroring the backend. `limit` is deliberately not a
+// length: DQX accepts zero, negative and decimal limits and validates them itself.
+const MAX_LENGTH_RE = /(?:^|_)max_length(?:_|$)/;
+const MIN_LENGTH_RE = /(?:^|_)min_length(?:_|$)/;
+const PERCENT_RE = /(?:^|_)(?:pct|percent|percentage)(?:_|$)/;
 const NONNEG_INT_NAMES = new Set(["scale", "decimal_scale"]);
 const RANGE_PAIRS: Array<[string, string]> = [
   ["min_limit", "max_limit"],
@@ -26,7 +33,7 @@ export function isUnboundParameterValue(value: unknown): boolean {
 }
 
 export function isSqlParamPlaceholderName(name: string): boolean {
-  return SQL_PARAM_NAME_RE.test(name) && !/^columns?_?\d*$/i.test(name);
+  return SQL_PARAM_NAME_RE.test(name);
 }
 
 export function mappingGroupKey(group: Record<string, string>): string {
@@ -41,9 +48,12 @@ export function displayParameterValue(value: RuleParameterValue | undefined): st
   return String(value);
 }
 
+function looksLikeMaxLengthParam(name: string): boolean {
+  return MAX_LENGTH_RE.test(name.toLowerCase());
+}
+
 function looksLikeLengthParam(name: string): boolean {
-  const lowered = name.toLowerCase();
-  return POSITIVE_INT_NAMES.has(lowered) || lowered.includes("max_length") || lowered.includes("min_length");
+  return looksLikeMaxLengthParam(name) || MIN_LENGTH_RE.test(name.toLowerCase());
 }
 
 function looksLikeScaleParam(name: string): boolean {
@@ -51,8 +61,8 @@ function looksLikeScaleParam(name: string): boolean {
   return NONNEG_INT_NAMES.has(lowered) || lowered.endsWith("_scale");
 }
 
-function looksLikeRateParam(name: string): boolean {
-  return name.toLowerCase().includes("rate");
+function looksLikePercentParam(name: string): boolean {
+  return PERCENT_RE.test(name.toLowerCase());
 }
 
 function asNumber(name: string, value: unknown): number {
@@ -124,11 +134,12 @@ export function coerceParameterValue(
   }
 
   if (param.type === "number" || param.type === "integer" || param.type === "decimal") {
-    if (looksLikeLengthParam(param.name)) return asInt(param.name, raw, 1);
+    // A maximum length of 0 matches nothing, but a minimum length of 0 is valid.
+    if (looksLikeLengthParam(param.name)) return asInt(param.name, raw, looksLikeMaxLengthParam(param.name) ? 1 : 0);
     if (looksLikeScaleParam(param.name)) return asInt(param.name, raw, 0);
     if (param.type === "integer") return asInt(param.name, raw, null);
     const number = asNumber(param.name, raw);
-    if (looksLikeRateParam(param.name) && (number < 0 || number > 100)) {
+    if (looksLikePercentParam(param.name) && (number < 0 || number > 100)) {
       throw new Error(`${param.name} must be between 0 and 100.`);
     }
     return number;
@@ -182,7 +193,7 @@ export function mustBindParameter(param: RuleParameter, bindAll = false): boolea
   ) {
     return true;
   }
-  return looksLikeLengthParam(param.name) || looksLikeScaleParam(param.name) || looksLikeRateParam(param.name);
+  return looksLikeLengthParam(param.name) || looksLikeScaleParam(param.name);
 }
 
 export function validateGroupParameterValues(
@@ -242,15 +253,13 @@ export function partitionPlaceholderSlots<T extends { name: string }>(
 
 export function inferSqlParamType(name: string): RuleParameter["type"] {
   const lowered = name.toLowerCase();
+  const tokens = lowered.split("_");
   if (looksLikeLengthParam(name) || looksLikeScaleParam(name)) return "integer";
-  if (
-    looksLikeRateParam(name) ||
-    ["min_limit", "max_limit", "min_value", "max_value"].some((part) => lowered.includes(part))
-  ) {
+  if (lowered === "limit" || lowered === "threshold" || lowered.endsWith("_threshold") || RANGE_BOUND_RE.test(lowered)) {
     return "decimal";
   }
-  if (lowered.includes("date")) return "date";
-  if (lowered.includes("allowed")) return "list";
+  if (tokens.includes("date")) return "date";
+  if (tokens[0] === "allowed") return "list";
   // regex / pattern are plain strings — no separate parameter type.
   return "string";
 }

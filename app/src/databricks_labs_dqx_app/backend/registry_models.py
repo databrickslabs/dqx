@@ -50,34 +50,39 @@ ParamType = Literal[
 # primitive/JSON shapes once it round-trips through ``dq_rules.definition``.
 RuleParamValue = str | float | int | bool | list[str] | None
 
-# SQL ``{{token}}`` names that are apply-time scalars, not column slots.
+# SQL ``{{token}}`` names that are apply-time scalars, not column slots. The WHOLE name
+# must be (or end in a ``_``-separated token that is) one of these value words, so
+# ``{{pattern_id}}``, ``{{is_allowed}}`` and ``{{exchange_rate}}`` stay column slots.
+# This only drives the import / AI-proposal split (see ``promote_sql_parameter_slots``);
+# a rule that declares ``parameters`` explicitly is never re-inferred.
 _SQL_PARAM_NAME_RE = re.compile(
-    r"(max_length|min_length|min_limit|max_limit|min_value|max_value|"
-    r"regex|pattern|decimal_scale|\bscale\b|\blimit\b|\bthreshold\b|allowed|launch_date|_rate)",
+    r"^(?:[a-z0-9]+_)*(?:max_length|min_length|min_limit|max_limit|min_value|max_value|"
+    r"decimal_scale|scale|limit|threshold|regex|pattern)$|^allowed(?:_values?)?$",
     re.IGNORECASE,
 )
+_RANGE_BOUND_RE = re.compile(r"(?:^|_)(?:min|max)_(?:limit|value)$")
 
 
 def is_sql_param_placeholder_name(name: str) -> bool:
     """True when a SQL ``{{token}}`` should be collected as a parameter, not a column slot."""
-    return _SQL_PARAM_NAME_RE.search(name) is not None and not re.fullmatch(r"columns?_?\d*", name, flags=re.IGNORECASE)
+    return _SQL_PARAM_NAME_RE.fullmatch(name) is not None
 
 
 def infer_sql_param_type(name: str) -> "ParamType":
     """Value type for a SQL ``{{token}}`` parameter, mirroring the UI's ``inferSqlParamType``."""
     lowered = name.lower()
+    tokens = lowered.split("_")
     if (
-        lowered in {"limit", "scale"}
-        or "max_length" in lowered
-        or "min_length" in lowered
+        lowered == "scale"
+        or re.search(r"(?:^|_)(?:max|min)_length(?:_|$)", lowered)
         or lowered.endswith("_scale")
     ):
         return "integer"
-    if "rate" in lowered or any(part in lowered for part in ("min_limit", "max_limit", "min_value", "max_value")):
+    if lowered in {"limit", "threshold"} or lowered.endswith("_threshold") or _RANGE_BOUND_RE.search(lowered):
         return "decimal"
-    if "date" in lowered:
+    if "date" in tokens:
         return "date"
-    if "allowed" in lowered:
+    if tokens[0] == "allowed":
         return "list"
     # regex / pattern are plain strings — no separate parameter type.
     return "string"

@@ -36,11 +36,55 @@ class TestCoerceParameterValue:
         with pytest.raises(InvalidParameterValueError, match="required"):
             coerce_parameter_value(param, "{{column_max_length}}")
 
+    def test_limit_accepts_zero_negative_and_decimal_values(self):
+        param = _param("limit", "number")
+        assert coerce_parameter_value(param, 0) == 0
+        assert coerce_parameter_value(param, "-10.5") == -10.5
+        assert coerce_parameter_value(_param("limit", "number", 12), 12) == 12
+
+    def test_min_length_may_be_zero_but_max_length_may_not(self):
+        assert coerce_parameter_value(_param("min_length", "number"), 0) == 0
+        with pytest.raises(InvalidParameterValueError, match="zero or a positive"):
+            coerce_parameter_value(_param("min_length", "number"), -1)
+        with pytest.raises(InvalidParameterValueError, match="positive whole number"):
+            coerce_parameter_value(_param("max_length", "number"), 0)
+
+    def test_length_names_match_whole_tokens_only(self):
+        assert coerce_parameter_value(_param("max_length_hint", "number"), "7") == 7
+        # Not a length parameter, so no integer / positivity requirement.
+        assert coerce_parameter_value(_param("maximum_lengthy", "number"), "1.5") == 1.5
+
+    def test_only_percent_parameters_are_capped_to_0_100(self):
+        assert coerce_parameter_value(_param("rate_per_sec", "number"), 500) == 500
+        assert coerce_parameter_value(_param("generate_count", "number"), 500) == 500
+        assert coerce_parameter_value(_param("max_null_pct", "number"), 99.5) == 99.5
+        with pytest.raises(InvalidParameterValueError, match="between 0 and 100"):
+            coerce_parameter_value(_param("max_null_pct", "number"), 150)
+
     def test_range_min_not_greater_than_max(self):
         params = [_param("min_limit", "number"), _param("max_limit", "number")]
         validate_group_parameter_values(params, {"min_limit": 1, "max_limit": 10}, require_all=True)
         with pytest.raises(InvalidParameterValueError, match="must not be greater"):
             validate_group_parameter_values(params, {"min_limit": 10, "max_limit": 1}, require_all=True)
+
+
+class TestSlotlessRuleParameterValues:
+    def test_slotless_rule_keeps_values_stored_under_the_empty_group(self):
+        params = [_param("threshold", "integer")]
+        stored = {mapping_group_key({}): {"threshold": "5"}}
+        out = validate_applied_parameter_values(params, [{}], stored, bind_all=True, slots=[])
+        assert out == {mapping_group_key({}): {"threshold": 5}}
+
+    def test_slotless_rule_without_a_value_is_rejected(self):
+        with pytest.raises(InvalidParameterValueError, match="threshold is required"):
+            validate_applied_parameter_values([_param("threshold", "integer")], [{}], {}, bind_all=True, slots=[])
+
+    def test_staged_empty_group_of_a_slotted_rule_is_still_skipped(self):
+        from databricks_labs_dqx_app.backend.registry_models import RuleSlot
+
+        params = [_param("threshold", "integer")]
+        slots = [RuleSlot(name="column", family="numeric")]
+        assert validate_applied_parameter_values(params, [{}], {}, bind_all=True, slots=slots) == {}
 
 
 class TestSqlPlaceholderClassification:
@@ -50,6 +94,24 @@ class TestSqlPlaceholderClassification:
         assert is_sql_param_placeholder_name("threshold") is True
         assert is_sql_param_placeholder_name("column") is False
         assert is_sql_param_placeholder_name("order_amount") is False
+
+    def test_lookalike_names_stay_column_slots(self):
+        for name in ("pattern_id", "is_allowed", "exchange_rate", "generate_count", "rate_per_sec", "launch_date"):
+            assert is_sql_param_placeholder_name(name) is False, name
+        for name in ("allowed", "allowed_values", "date_pattern", "allowed_scale", "min_value", "Threshold"):
+            assert is_sql_param_placeholder_name(name) is True, name
+
+    def test_inferred_types(self):
+        from databricks_labs_dqx_app.backend.registry_models import infer_sql_param_type
+
+        assert infer_sql_param_type("column_max_length") == "integer"
+        assert infer_sql_param_type("allowed_scale") == "integer"
+        assert infer_sql_param_type("limit") == "decimal"
+        assert infer_sql_param_type("threshold") == "decimal"
+        assert infer_sql_param_type("max_value") == "decimal"
+        assert infer_sql_param_type("reference_date") == "date"
+        assert infer_sql_param_type("allowed") == "list"
+        assert infer_sql_param_type("pattern") == "string"
 
 
 class TestOverlayAndSubstitute:
