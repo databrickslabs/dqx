@@ -132,7 +132,7 @@ echo "::group::grant the app SP USE CATALOG (only resolvable after the app exist
 # The app's SP is created with the app, so this grant cannot be native and cannot precede the
 # deploy. Without it the app cannot publish the runner wheel and every data tool fails to install
 # it — so this must happen BEFORE the app is started below.
-APP_SP_ID="$(databricks apps get "${NAME_PREFIX}" "${PROFILE_ARG[@]}" -o json \
+APP_SP_ID="$(databricks apps get "${NAME_PREFIX}" ${PROFILE_ARG[@]+"${PROFILE_ARG[@]}"} -o json \
   | python3 -c 'import sys,json; print(json.load(sys.stdin).get("service_principal_client_id",""))')"
 if [ -n "${APP_SP_ID}" ]; then
   DQX_MCP_CATALOG="${DQX_MCP_TEST_CATALOG}" DQX_MCP_RUNNER_SP="${RUNNER_SP}" DQX_MCP_APP_SP="${APP_SP_ID}" \
@@ -160,7 +160,7 @@ WHEEL_DIR="dbfs:/Volumes/${DQX_MCP_TEST_CATALOG}/${TMP_SCHEMA}/dqx_artifacts"
 # otherwise healthy deploy.
 WHEEL_PUBLISHED=0
 for _ in $(seq 1 36); do
-  if databricks fs ls "${WHEEL_DIR}" "${PROFILE_ARG[@]}" 2>/dev/null | grep -q 'dqx_mcp_runner-.*\.whl'; then
+  if databricks fs ls "${WHEEL_DIR}" ${PROFILE_ARG[@]+"${PROFILE_ARG[@]}"} 2>/dev/null | grep -q 'dqx_mcp_runner-.*\.whl'; then
     echo "runner wheel published under ${WHEEL_DIR}"
     WHEEL_PUBLISHED=1
     break
