@@ -59,6 +59,8 @@ export interface RuleStatus {
   kind: "complete" | "incomplete" | "no-mapping-needed";
   incompleteGroupCount: number;
   totalGroupCount: number;
+  /** True when the rule has column slots but no column is mapped yet (staged to map later). */
+  unmapped?: boolean;
   /** Live UC vs mapping drift for this rule (empty when columns not loaded). */
   drift: RuleSchemaDrift;
 }
@@ -80,7 +82,7 @@ export function computeStatus(
   // A rule with column slots but no column mapped yet produces no check, so it
   // needs attention ("1 of 1 mapping incomplete") rather than reading as done.
   if (slotNames.length > 0 && !groups.some((g) => slotNames.some((s) => Boolean(g[s])))) {
-    return { kind: "incomplete", incompleteGroupCount: 1, totalGroupCount: 1, drift };
+    return { kind: "incomplete", incompleteGroupCount: 1, totalGroupCount: 1, unmapped: true, drift };
   }
   if (groups.length === 0) {
     // No column slots: the parameters live on the blank mapping group.
@@ -126,6 +128,15 @@ export function statusNeedsAttention(status: RuleStatus): boolean {
     status.drift.missingCount > 0 ||
     status.drift.typeMismatchCount > 0
   );
+}
+
+/**
+ * Whether the backend would reject this rule on save/submit: a half-filled mapping or a
+ * missing parameter value. Schema drift and a rule staged to map later (nothing mapped
+ * yet) are allowed through, so they must not block "Submit for review".
+ */
+export function statusBlocksSubmit(status: RuleStatus): boolean {
+  return status.kind === "incomplete" && !status.unmapped;
 }
 
 // ---------------------------------------------------------------------------

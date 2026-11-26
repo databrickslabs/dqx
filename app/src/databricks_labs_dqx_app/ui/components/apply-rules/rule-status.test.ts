@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { computeStatus, statusNeedsAttention } from "./RuleConfigCard";
+import { computeStatus, statusBlocksSubmit, statusNeedsAttention } from "./RuleConfigCard";
 import type { AppliedRuleOut, RuleParameter, RuleSlot } from "@/lib/api";
 
 const slots: RuleSlot[] = [{ name: "col", family: "any", position: 0, cardinality: "one" }];
@@ -58,5 +58,37 @@ describe("computeStatus", () => {
       ["allowed"],
     );
     expect(filled.kind).toBe("complete");
+  });
+});
+
+describe("statusBlocksSubmit", () => {
+  test("a rule staged to map later still needs attention but does not block submit", () => {
+    const status = computeStatus(rule({ column_mapping: [] }), slots, [], listParam, false, ["allowed"]);
+    expect(statusNeedsAttention(status)).toBe(true);
+    expect(statusBlocksSubmit(status)).toBe(false);
+  });
+
+  test("a mapped rule missing its parameter value blocks submit", () => {
+    const status = computeStatus(rule({ column_mapping: [{ col: "tier" }] }), slots, [], listParam, false, ["allowed"]);
+    expect(statusBlocksSubmit(status)).toBe(true);
+  });
+
+  test("a slot-less rule missing its parameter value blocks submit", () => {
+    const status = computeStatus(rule({ column_mapping: [] }), [], [], listParam, false, ["allowed"]);
+    expect(statusBlocksSubmit(status)).toBe(true);
+  });
+
+  test("schema drift alone needs attention but does not block submit", () => {
+    const status = computeStatus(
+      rule({ column_mapping: [{ col: "gone" }], parameter_values: { [JSON.stringify({ col: "gone" })]: { allowed: ["A"] } } }),
+      slots,
+      [{ name: "other", type_name: "STRING", position: 0 } as never],
+      listParam,
+      false,
+      ["allowed"],
+    );
+    expect(status.kind).toBe("complete");
+    expect(statusNeedsAttention(status)).toBe(true);
+    expect(statusBlocksSubmit(status)).toBe(false);
   });
 });

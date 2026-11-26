@@ -159,12 +159,13 @@ import { suggestionKey } from "@/components/apply-rules/ai-suggestion-utils";
 import {
   RuleConfigCard,
   computeStatus,
+  statusBlocksSubmit,
   statusNeedsAttention,
   type RuleStatus,
 } from "@/components/apply-rules/RuleConfigCard";
 import { RulesByColumn, type ColumnRef } from "@/components/apply-rules/RulesByColumn";
 import { overridableParametersFromUserMetadata, slotTagsFromUserMetadata } from "@/lib/registry-rule-conversion";
-import { mappingGroupKey } from "@/lib/apply-time-params";
+import { bindsEveryParameter, mappingGroupKey } from "@/lib/apply-time-params";
 import {
   RESERVED_SEVERITY_KEY,
   buildDesiredApplications,
@@ -619,9 +620,9 @@ function MonitoredTableDetailPage() {
   // enforces the authoritative check and returns 409 either way.
   const staleDraftRun = isRunStale(table.last_run_at, table.updated_at);
   const needsDraftRun = requireDraftRun && (!table.last_run_at || staleDraftRun);
-  // Rules flagged "needs attention" (incomplete mapping, missing parameter
-  // values, schema drift) would publish broken or empty checks.
-  const attentionCount = useApplyRulesAttentionCount(stagedRows, table.table_fqn);
+  // Rules with a half-filled mapping or missing parameter values would be rejected on
+  // save. Schema drift and rules staged to map later are allowed, so they don't block.
+  const attentionCount = useSubmitBlockingRuleCount(stagedRows, table.table_fqn);
   const needsAttention = attentionCount > 0;
   const submitBlocked = submitDisabledNoChanges || needsDraftRun || needsAttention;
 
@@ -2101,7 +2102,7 @@ function computeRuleStatuses(
       registry?.definition.slots ?? [],
       columns,
       registry?.definition.parameters ?? [],
-      registry?.mode === "sql" || registry?.mode === "lowcode",
+      bindsEveryParameter(registry?.mode),
       overridableParametersFromUserMetadata(
         registry?.user_metadata as Record<string, unknown> | undefined,
         registry?.definition.parameters ?? [],
@@ -2110,11 +2111,11 @@ function computeRuleStatuses(
   });
 }
 
-/** How many staged rules need attention — the same count as the Apply Rules
- *  tab's "Needs attention" filter, for the page header (Submit for review is
- *  blocked while it's above zero). Uses the tab's queries, so it adds no
- *  requests of its own. */
-function useApplyRulesAttentionCount(stagedRows: AppliedRuleOut[], tableFqn: string): number {
+/** How many staged rules the backend would reject (half-filled mapping or missing
+ *  parameter values) — Submit for review is blocked while it's above zero. Drift and
+ *  rules staged to map later are excluded; the Apply Rules tab's "Needs attention"
+ *  filter still lists them. Uses the tab's queries, so it adds no requests of its own. */
+function useSubmitBlockingRuleCount(stagedRows: AppliedRuleOut[], tableFqn: string): number {
   const parts = tableFqn.split(".");
   const columnsQuery = useGetTableColumns(parts[0] ?? "", parts[1] ?? "", parts[2] ?? "", {
     query: { enabled: parts.length === 3 },
@@ -2124,8 +2125,7 @@ function useApplyRulesAttentionCount(stagedRows: AppliedRuleOut[], tableFqn: str
     const ruleById = new Map<string, RegistryRuleOut>();
     for (const r of registryData?.data ?? []) ruleById.set(r.rule_id, r);
     const mergedRules = groupAppliedRulesByRuleId(stagedRows).map(mergeRuleRowGroup);
-    return computeRuleStatuses(mergedRules, ruleById, columnsQuery.data?.data ?? []).filter(statusNeedsAttention)
-      .length;
+    return computeRuleStatuses(mergedRules, ruleById, columnsQuery.data?.data ?? []).filter(statusBlocksSubmit).length;
   }, [stagedRows, registryData, columnsQuery.data]);
 }
 
