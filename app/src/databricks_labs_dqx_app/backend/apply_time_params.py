@@ -10,6 +10,7 @@ placeholders never reach ``dq_resolved_rules`` / results.
 import json
 import math
 import re
+from collections.abc import Mapping
 from datetime import date
 
 from databricks_labs_dqx_app.backend.registry_models import (
@@ -562,7 +563,7 @@ def assert_no_placeholders(value: object) -> None:
         )
 
 
-def substitute_param_placeholders(value: object, values: dict[str, object]) -> object:
+def substitute_param_placeholders(value: object, values: Mapping[str, object]) -> object:
     """Replace ``{{param}}`` tokens inside strings using *values* (JSON-scalar)."""
     if isinstance(value, list):
         return [substitute_param_placeholders(item, values) for item in value]
