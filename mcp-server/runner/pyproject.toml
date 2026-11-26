@@ -2,7 +2,7 @@
 name = "dqx-mcp-runner"
 version = "0.1.0"
 description = "Serverless wheel-task runner for the DQX MCP server — executes DQX operations on Databricks compute"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 # databricks-labs-dqx is provided by the sibling wheel listed in the runner job's environment spec
 # (databricks.yml); it is declared here (unpinned) so the entry point resolves at build/lint time.
 dependencies = [
