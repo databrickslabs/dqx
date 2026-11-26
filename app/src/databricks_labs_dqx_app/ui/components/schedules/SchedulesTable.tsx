@@ -14,6 +14,11 @@ import {
   ACTIONS_COL_WIDTH,
   STICKY_ACTIONS_CELL_CLASS,
   STICKY_ACTIONS_HEAD_CLASS,
+  ACTIONS_COLUMN_KEY,
+  ACTIONS_COLUMN_LAYOUT,
+  splitActionsColumn,
+  type ActionsColumnKey,
+  ACTIONS_ROW_CELL_HEIGHT_CLASS,
 } from "@/components/data-table/sticky-actions";
 import type { SortColumnConfig, SortDirection } from "@/components/data-table/sort";
 import {
@@ -254,11 +259,17 @@ const DEFAULT_ORDER: ScheduleSortKey[] = [
   "updatedAt",
 ];
 
+/** Saved-view column layout keys: the data columns plus the Actions column. */
+export type SchedulesLayoutKey = ScheduleSortKey | ActionsColumnKey;
+
 /** Column defaults of the Schedules overview, for its saved-view definitions. */
 export const SCHEDULES_COLUMN_LAYOUT: {
-  defaultOrder: readonly ScheduleSortKey[];
-  columns: Record<ScheduleSortKey, ColumnLayoutDef>;
-} = { defaultOrder: DEFAULT_ORDER, columns: COLUMNS };
+  defaultOrder: readonly SchedulesLayoutKey[];
+  columns: Record<SchedulesLayoutKey, ColumnLayoutDef>;
+} = {
+  defaultOrder: [...DEFAULT_ORDER, ACTIONS_COLUMN_KEY],
+  columns: { ...COLUMNS, [ACTIONS_COLUMN_KEY]: ACTIONS_COLUMN_LAYOUT },
+};
 
 export function getScheduleSortConfig(key: ScheduleSortKey): SortColumnConfig {
   const def = COLUMNS[key];
@@ -288,7 +299,7 @@ export interface SchedulesTableProps {
   /** Rendered to the left of the "Edit Columns" trigger — the filter row. */
   toolbarExtra?: ReactNode;
   /** Column order/visibility/widths — the saved view's column layout (see `useSavedViews`). */
-  columnLayout: SavedViewsColumnLayout<ScheduleSortKey>;
+  columnLayout: SavedViewsColumnLayout<SchedulesLayoutKey>;
   /** Filters view of the Edit View menu. */
   filterMenu?: SortableToggleListConfig<ScheduleFilterKey>;
   /** Saved Views page of the Edit View menu. */
@@ -321,7 +332,14 @@ export function SchedulesTable({
   selection,
 }: SchedulesTableProps) {
   const { t } = useTranslation();
-  const { colOrder, colWidths, visibleKeys, toggleColumn, handleDragEnd, sensors, onResizeStart } = columnLayout;
+  const { colWidths, toggleColumn, handleDragEnd, sensors, onResizeStart } = columnLayout;
+  // Actions is rendered separately from the data columns (always last), so it
+  // is split out of the layout here and listed as a pinned trailing menu entry.
+  const {
+    order: colOrder,
+    visibleKeys,
+    actionsVisible,
+  } = splitActionsColumn(columnLayout.colOrder, columnLayout.visibleKeys);
 
   const selectableCount = selection?.selectableKeys.size ?? 0;
   const selectedCount = selection?.selectedKeys.size ?? 0;
@@ -331,7 +349,7 @@ export function SchedulesTable({
   const totalWidth =
     (selection ? 40 : 0) +
     visibleKeys.reduce((acc, k) => acc + (colWidths[k] ?? COLUMNS[k].defaultWidth), 0) +
-    ACTIONS_COL_WIDTH;
+    (actionsVisible ? ACTIONS_COL_WIDTH : 0);
 
   return (
     <div className="space-y-4">
@@ -340,7 +358,11 @@ export function SchedulesTable({
         <EditColumnsDropdown
           order={colOrder}
           labelOf={(key) => t(COLUMNS[key].labelKey)}
-          lockedLastLabel={t("schedules.actions")}
+          pinnedLast={{
+            label: t("schedules.actions"),
+            checked: actionsVisible,
+            onToggle: () => toggleColumn(ACTIONS_COLUMN_KEY),
+          }}
           toggleableOf={(key) => COLUMNS[key].toggleable}
           isChecked={(key) => visibleKeys.includes(key)}
           onToggle={toggleColumn}
@@ -358,7 +380,7 @@ export function SchedulesTable({
             {visibleKeys.map((k) => (
               <col key={k} style={{ width: colWidths[k] ?? COLUMNS[k].defaultWidth }} />
             ))}
-            <col style={{ width: ACTIONS_COL_WIDTH }} />
+            {actionsVisible && <col style={{ width: ACTIONS_COL_WIDTH }} />}
           </colgroup>
           <TableHeader>
             <TableRow className="bg-muted/50 hover:bg-muted/50">
@@ -403,12 +425,14 @@ export function SchedulesTable({
                   </TableHead>
                 );
               })}
-              <TableHead
-                className={cn("px-2 text-right text-xs font-medium", STICKY_ACTIONS_HEAD_CLASS)}
-                style={{ width: ACTIONS_COL_WIDTH }}
-              >
-                {t("schedules.actions")}
-              </TableHead>
+              {actionsVisible && (
+                <TableHead
+                  className={cn("px-2 text-right text-xs font-medium", STICKY_ACTIONS_HEAD_CLASS)}
+                  style={{ width: ACTIONS_COL_WIDTH }}
+                >
+                  {t("schedules.actions")}
+                </TableHead>
+              )}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -449,23 +473,25 @@ export function SchedulesTable({
                       <TableCell
                         key={k}
                         style={{ width, minWidth: width, maxWidth: width }}
-                        className="overflow-hidden p-2 align-middle"
+                        className={cn("overflow-hidden p-2 align-middle", ACTIONS_ROW_CELL_HEIGHT_CLASS)}
                       >
                         {COLUMNS[k].renderCell(row, ctx)}
                       </TableCell>
                     );
                   })}
-                  <TableCell
-                    style={{ width: ACTIONS_COL_WIDTH }}
-                    className={cn("p-2 text-right", STICKY_ACTIONS_CELL_CLASS)}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {pendingKey === key ? (
-                      <Loader2 className="inline-block h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                    ) : (
-                      renderActions(row)
-                    )}
-                  </TableCell>
+                  {actionsVisible && (
+                    <TableCell
+                      style={{ width: ACTIONS_COL_WIDTH }}
+                      className={cn("p-2 text-right", STICKY_ACTIONS_CELL_CLASS)}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {pendingKey === key ? (
+                        <Loader2 className="inline-block h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                      ) : (
+                        renderActions(row)
+                      )}
+                    </TableCell>
+                  )}
                 </TableRow>
               );
             })}
