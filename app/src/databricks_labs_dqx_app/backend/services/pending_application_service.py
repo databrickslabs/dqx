@@ -44,6 +44,7 @@ class PendingApplication:
     created_at: datetime | None = None
     row_filter: str | None = None
     pass_threshold: int | None = None
+    tags: dict[str, str] = field(default_factory=dict)
 
 
 class PendingApplicationService:
@@ -53,11 +54,12 @@ class PendingApplicationService:
         self._sql = sql
         self._table = sql.fqn("dq_pending_applications")
         column_mapping = sql.select_json_text("column_mapping")
+        tags = sql.select_json_text("tags")
         created_at = sql.ts_text("created_at")
         self._select_cols = (
             "id, binding_id, rule_id, "
             f"{column_mapping} AS column_mapping_json, created_by, {created_at} AS created_at, "
-            "row_filter, pass_threshold"
+            f"row_filter, pass_threshold, {tags} AS tags_json"
         )
 
     # ------------------------------------------------------------------
@@ -73,30 +75,35 @@ class PendingApplicationService:
         *,
         row_filter: str | None = None,
         pass_threshold: int | None = None,
+        tags: dict[str, str] | None = None,
     ) -> PendingApplication:
         """Stage (or replace) a pending application for ``(binding_id, rule_id)``.
 
         Upsert semantics: an existing pending row for the same
-        ``(binding_id, rule_id)`` has its ``column_mapping``, ``row_filter``
-        and ``pass_threshold`` overwritten rather than duplicated, so
+        ``(binding_id, rule_id)`` has its ``column_mapping``, ``row_filter``,
+        ``pass_threshold`` and ``tags`` overwritten rather than duplicated, so
         re-running the bulk import for the same contract bundle is idempotent.
         The per-application overrides are carried through to
         :meth:`ApplyRulesService.apply_rule` when the rule is approved, which
         validates them the same way as a direct apply.
         """
         row_filter = (row_filter or "").strip() or None
+        tags = {k: v for k, v in (tags or {}).items() if k and v is not None}
         existing = self._get_by_natural_key(binding_id, rule_id)
         if existing is not None:
             existing.column_mapping = column_mapping
             existing.row_filter = row_filter
             existing.pass_threshold = pass_threshold
+            existing.tags = tags
             mapping_expr = self._sql.json_literal_expr(json.dumps(column_mapping))
+            tags_expr = self._sql.json_literal_expr(json.dumps(tags))
             self._sql.update(
                 self._table,
                 updates={
                     "column_mapping": RawSql(mapping_expr),
                     "row_filter": row_filter,
                     "pass_threshold": pass_threshold,
+                    "tags": RawSql(tags_expr),
                 },
                 where={"id": existing.id or ""},
             )
@@ -112,8 +119,10 @@ class PendingApplicationService:
             created_at=datetime.now(timezone.utc),
             row_filter=row_filter,
             pass_threshold=pass_threshold,
+            tags=tags,
         )
         mapping_expr = self._sql.json_literal_expr(json.dumps(pending.column_mapping))
+        tags_expr = self._sql.json_literal_expr(json.dumps(pending.tags))
         self._sql.insert(
             self._table,
             values={
@@ -125,6 +134,7 @@ class PendingApplicationService:
                 "created_at": RawSql("now()"),
                 "row_filter": row_filter,
                 "pass_threshold": pass_threshold,
+                "tags": RawSql(tags_expr),
             },
         )
         logger.info("Recorded pending application for binding %s rule %s", binding_id, rule_id)
@@ -210,6 +220,18 @@ class PendingApplicationService:
             logger.warning("Unparsable timestamp %r; treating as None", value)
             return None
 
+    @staticmethod
+    def _parse_tags(raw: str | None) -> dict[str, str]:
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw, strict=False)
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(parsed, dict):
+            return {}
+        return {str(k): str(v) for k, v in parsed.items() if v is not None}
+
     def _row_to_pending(self, row: list[Any]) -> PendingApplication:
         return PendingApplication(
             id=row[0],
@@ -220,4 +242,5 @@ class PendingApplicationService:
             created_at=self._parse_timestamp(row[5]),
             row_filter=(row[6] or None) if len(row) > 6 else None,
             pass_threshold=self._parse_int(row[7]) if len(row) > 7 else None,
+            tags=self._parse_tags(row[8]) if len(row) > 8 else {},
         )
