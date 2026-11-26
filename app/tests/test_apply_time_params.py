@@ -307,6 +307,38 @@ class TestRenderCheckApplyTimeParams:
         )
         assert check["check"]["arguments"] == {"column": "email", "limit": 40}
 
+    def test_native_param_placeholder_is_replaced_in_the_argument_that_holds_it(self):
+        from databricks_labs_dqx_app.backend.registry_models import RuleDefinition, RuleVersion
+        from databricks_labs_dqx_app.backend.services.materializer import render_check
+
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {
+                    "function": "regex_match",
+                    "arguments": {"column": "{{column}}", "regex": "{{pattern}}"},
+                },
+                "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one"}],
+                "parameters": [{"name": "pattern", "type": "string"}],
+            }
+        )
+        version = RuleVersion(
+            rule_id="r1", version=1, definition=definition, user_metadata={"overridable_parameters": ["pattern"]}
+        )
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "email"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+            apply_parameter_values={"pattern": "^a.*"},
+        )
+        # Substituted where the author wrote the token; no stray ``pattern`` argument is added.
+        assert check["check"]["arguments"] == {"column": "email", "regex": "^a.*"}
+
     def test_unbound_placeholder_never_reaches_the_check(self):
         from databricks_labs_dqx_app.backend.registry_models import RuleDefinition, RuleVersion
         from databricks_labs_dqx_app.backend.services.materializer import render_check
