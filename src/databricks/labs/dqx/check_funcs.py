@@ -5899,10 +5899,14 @@ def get_limit_expr(
             return F.expr(limit)
 
         try:
-            parsed_dt = datetime.datetime.fromisoformat(limit)
+            clean_limit = limit
+            if clean_limit.endswith(("Z", "z")):
+                clean_limit = clean_limit[:-1] + "+00:00"
+
+            parsed_dt = datetime.datetime.fromisoformat(clean_limit)
 
             # Check if the string contains time component
-            has_time = ":" in limit
+            has_time = any(sep in clean_limit for sep in (":", "T", "t", " "))
 
             if has_time:
                 return F.to_timestamp(F.lit(parsed_dt))
