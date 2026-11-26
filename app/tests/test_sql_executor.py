@@ -308,7 +308,7 @@ def test_complete_query_polls_and_uses_final_manifest(query_executor: SqlExecuto
 
 @pytest.mark.parametrize("explicit_default", [False, True])
 @pytest.mark.parametrize("missing_schema", [False, True])
-def test_default_query_keeps_permissive_first_chunk_behavior(
+def test_default_query_follows_next_chunk_index(
     query_executor: SqlExecutor, statement_api: MagicMock, explicit_default: bool, missing_schema: bool
 ) -> None:
     response = query_response(rows=[["scheduler-sp"]], next_chunk_index=1)
@@ -316,12 +316,22 @@ def test_default_query_keeps_permissive_first_chunk_behavior(
     if missing_schema:
         response.manifest.schema = None
     statement_api.execute_statement.return_value = response
+    chunk1 = MagicMock()
+    chunk1.data_array = [["users", "USE CATALOG"]]
+    chunk1.next_chunk_index = None
+    statement_api.get_statement_result_chunk_n.return_value = chunk1
     if explicit_default:
         rows = query_executor.query_dicts("SHOW GRANTS ON CATALOG dqx", require_complete=False)
     else:
         rows = query_executor.query_dicts("SHOW GRANTS ON CATALOG dqx")
-    assert rows == ([{}] if missing_schema else [{"principal": "scheduler-sp"}])
-    statement_api.get_statement_result_chunk_n.assert_not_called()
+    if missing_schema:
+        assert rows == [{}, {}]
+    else:
+        assert rows == [
+            {"principal": "scheduler-sp"},
+            {"principal": "users", "actionType": "USE CATALOG"},
+        ]
+    statement_api.get_statement_result_chunk_n.assert_called_once_with("statement-1", 1)
 
 
 # ---------------------------------------------------------------------------

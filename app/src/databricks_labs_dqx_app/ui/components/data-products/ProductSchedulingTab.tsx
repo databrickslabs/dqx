@@ -16,6 +16,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ScheduleApprovalNotice } from "@/components/common/ScheduleApprovalNotice";
 import { ScheduleEditor } from "@/components/common/ScheduleEditor";
 import { ScheduleGrantWarning } from "@/components/common/ScheduleGrantWarning";
 import { useScheduleGrantPreflight } from "@/components/schedules/useScheduleGrantPreflight";
@@ -24,9 +25,10 @@ import type { EditProductState } from "@/components/data-products/useEditProduct
 interface Props {
   editState: EditProductState;
   canEdit: boolean;
+  awaitingApproval?: boolean;
 }
 
-export function ProductSchedulingTab({ editState, canEdit }: Props) {
+export function ProductSchedulingTab({ editState, canEdit, awaitingApproval = false }: Props) {
   const { t } = useTranslation();
   const {
     scheduleCron,
@@ -76,7 +78,14 @@ export function ProductSchedulingTab({ editState, canEdit }: Props) {
       onRemove={() => setSchedule(null)}
       onValidityChange={setCronValid}
       // Gated on blockForSchedule, not cannotManage: see MonitoredTableSchedulingTab.
-      banner={blockForSchedule ? <ScheduleGrantWarning entity="collection" preflight={preflight} /> : undefined}
+      banner={
+        awaitingApproval || blockForSchedule ? (
+          <div className="space-y-3">
+            {awaitingApproval ? <ScheduleApprovalNotice entity="collection" /> : null}
+            {blockForSchedule ? <ScheduleGrantWarning entity="collection" preflight={preflight} /> : null}
+          </div>
+        ) : undefined
+      }
       footerNote={t("dataProducts.scheduleFooterNote")}
       emptyText={t("dataProducts.scheduleEmptyText")}
     />

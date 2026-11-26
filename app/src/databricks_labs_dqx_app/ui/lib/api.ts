@@ -1793,19 +1793,25 @@ export interface FailedRowOut {
   run_ts?: FailedRowOutRunTs;
 }
 
+export type FailedRowsOutTotal = number | null;
+
+export type FailedRowsOutRunId = string | null;
+
 /**
  * Filtered failing-rows sample (dqlake shape plus *suppressed*).
 
-*total* is the number of matching rows found within the scanned
-window — it can exceed ``len(rows)`` when capped by *limit*.
+*total* is the number of matching rows for the resolved run when known
+(it can exceed ``len(rows)`` when capped by *limit*). ``None`` when the
+run has no stored metrics. *run_id* is the run the page was read from.
 *suppressed* is True when the source table carries fine-grained
 access controls (Task 7 semantics); an empty non-suppressed response
 is also what a caller without SELECT on the source table receives.
  */
 export interface FailedRowsOut {
   rows?: FailedRowOut[];
-  total?: number;
+  total?: FailedRowsOutTotal;
   suppressed?: boolean;
+  run_id?: FailedRowsOutRunId;
 }
 
 export interface FilterTablesByColumnsIn {
@@ -4889,6 +4895,7 @@ export interface ScheduleOverviewOut {
   next_run_at?: ScheduleOverviewOutNextRunAt;
   last_run_id?: ScheduleOverviewOutLastRunId;
   run_status?: ScheduleOverviewOutRunStatus;
+  awaiting_approval?: boolean;
 }
 
 export interface SchedulePauseIn {
@@ -16901,10 +16908,12 @@ export function useGetRegistryRuleSuspense<TData = Awaited<ReturnType<typeof get
 /**
  * Update a registry rule's live definition/tags in place.
 
-Editable for ``draft`` rules and for ``approved`` rules (the edit-in-place
-revision path — the edits stay inert behind the frozen vN snapshot until
-the rule is re-submitted and re-approved as vN+1). Rejected with 400 for
-any other status.
+Editable for ``draft`` and ``approved`` rules (the edit-in-place revision
+path — the edits stay inert behind the frozen vN snapshot until the rule
+is re-submitted and re-approved as vN+1) and for ``pending_approval``
+rules so an approver or admin can correct the submitted definition before
+publishing. Authors with MODIFY cannot edit a pending rule. Rejected with
+400 for any other status.
 
 Object-permission enforcement: requires ``MODIFY`` on the rule (direct,
 inherited, or via ownership) unless the caller is an admin/approver.

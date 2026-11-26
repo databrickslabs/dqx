@@ -6,7 +6,9 @@ import {
   buildFailedRecordsXlsx,
   columnsFromRows,
   distinctRules,
+  collectFailedRowPages,
   EXPORT_ROW_LIMIT,
+  FAILED_ROWS_DOWNLOAD_PAGE_SIZE,
   failedRecordsFilename,
   toFailingRecords,
 } from "./failedRecordsExport";
@@ -147,5 +149,80 @@ describe("failedRecordsFilename", () => {
 describe("EXPORT_ROW_LIMIT", () => {
   it("matches the backend's failed-rows cap", () => {
     expect(EXPORT_ROW_LIMIT).toBe(100000);
+  });
+});
+
+describe("collectFailedRowPages", () => {
+  const row = (key: string) => ({
+    record_key: key,
+    row_values: { id: key },
+    failed_columns: [],
+    failures: [{ rule_name: "Value must be unique" }],
+  });
+
+  it("pages until the reported total even when a page is shorter than limit", async () => {
+    const calls: Array<{ offset: number; limit: number }> = [];
+    const pages: Record<number, ReturnType<typeof row>[]> = {
+      0: [row("a"), row("b")],
+      2: [row("c"), row("d")],
+      4: [row("e")],
+    };
+    const out = await collectFailedRowPages(
+      async ({ offset, limit }) => {
+        calls.push({ offset, limit });
+        return { rows: pages[offset] ?? [], total: 5 };
+      },
+      { pageSize: 1000 },
+    );
+    expect(out.map((r) => r.record_key)).toEqual(["a", "b", "c", "d", "e"]);
+    expect(calls).toEqual([
+      { offset: 0, limit: 1000 },
+      { offset: 2, limit: 1000 },
+      { offset: 4, limit: 1000 },
+    ]);
+  });
+
+  it("stops on a short page when total is not larger", async () => {
+    const calls: number[] = [];
+    const out = await collectFailedRowPages(
+      async ({ offset }) => {
+        calls.push(offset);
+        return { rows: [row("only")], total: 1 };
+      },
+      { pageSize: 1000 },
+    );
+    expect(out).toHaveLength(1);
+    expect(calls).toEqual([0]);
+  });
+
+  it("keeps paging while a page is full when total is unknown", async () => {
+    const calls: number[] = [];
+    const out = await collectFailedRowPages(
+      async ({ offset, limit }) => {
+        calls.push(offset);
+        if (offset === 0) return { rows: [row("a"), row("b")], total: null, run_id: "run-1" };
+        return { rows: [row("c")], total: null, run_id: "run-1" };
+      },
+      { pageSize: 2 },
+    );
+    expect(out.map((r) => r.record_key)).toEqual(["a", "b", "c"]);
+    expect(calls).toEqual([0, 2]);
+  });
+
+  it("pins run_id from the first page onto later requests", async () => {
+    const runIds: Array<string | undefined> = [];
+    await collectFailedRowPages(
+      async ({ offset, limit, run_id }) => {
+        runIds.push(run_id);
+        if (offset === 0) return { rows: [row("a"), row("b")], total: 3, run_id: "run-9" };
+        return { rows: [row("c")], total: 3, run_id: "run-9" };
+      },
+      { pageSize: 2 },
+    );
+    expect(runIds).toEqual([undefined, "run-9"]);
+  });
+
+  it("requests 5000-row pages by default", () => {
+    expect(FAILED_ROWS_DOWNLOAD_PAGE_SIZE).toBe(5000);
   });
 });

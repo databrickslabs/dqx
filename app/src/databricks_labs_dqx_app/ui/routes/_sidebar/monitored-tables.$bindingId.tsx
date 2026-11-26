@@ -958,6 +958,7 @@ function MonitoredTableDetailPage() {
               showOwner
               canEditOwner={false}
               owner={table.owner ?? ""}
+              ownerDisplayName={table.owner_display_name ?? undefined}
             />
           </TabsContent>
 
