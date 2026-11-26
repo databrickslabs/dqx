@@ -58,6 +58,20 @@ export const SELF_GATED_TAG_KEYS: ReadonlySet<string> = new Set(["dimension", "s
 /** Apply a save response without remounting cards or overwriting newer edits.
  * Matching responses keep each card's draftId stable. A response for an older
  * edit revision returns the current drafts unchanged. */
+/**
+ * True when every draft has a valid, unique key, so the set can be saved.
+ * A blank key (e.g. a just-added card) makes the set not yet saveable.
+ */
+export function labelDraftsSaveable(drafts: DraftDefinition[]): boolean {
+  const seen = new Set<string>();
+  for (const draft of drafts) {
+    const key = draft.key.trim();
+    if (!key || !LABEL_KEY_RE.test(key) || seen.has(key)) return false;
+    seen.add(key);
+  }
+  return true;
+}
+
 export function reconcileSavedLabelDrafts(
   current: DraftDefinition[],
   saved: LabelDefinition[],

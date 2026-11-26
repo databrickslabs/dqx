@@ -3,6 +3,7 @@ import {
   LABEL_KEY_RE,
   defToDraft,
   draftToDef,
+  labelDraftsSaveable,
   reconcileSavedLabelDrafts,
   shouldCloseExpandedValue,
 } from "./label-definition-drafts";
@@ -162,5 +163,19 @@ describe("shouldCloseExpandedValue", () => {
     } as unknown as HTMLElement;
     const card = { contains: () => false } as unknown as HTMLDivElement;
     expect(shouldCloseExpandedValue(target, card)).toBe(false);
+  });
+});
+
+describe("labelDraftsSaveable", () => {
+  const draft = (key: string) => defToDraft(def({ key, values: [] }));
+
+  test("accepts valid, unique keys", () => {
+    expect(labelDraftsSaveable([draft("team"), draft("data.owner")])).toBe(true);
+  });
+
+  test("rejects a blank, invalid, or duplicate key", () => {
+    expect(labelDraftsSaveable([draft("team"), draft("")])).toBe(false);
+    expect(labelDraftsSaveable([draft("team"), draft("bad=key")])).toBe(false);
+    expect(labelDraftsSaveable([draft("team"), draft(" team ")])).toBe(false);
   });
 });

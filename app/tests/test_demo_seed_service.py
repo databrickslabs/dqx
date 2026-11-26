@@ -56,6 +56,8 @@ def _svc(**over):
         status=create_autospec(DemoStatusStore, instance=True),
         schema=DEMO_SCHEMA,
     )
+    # No mandatory tags configured: tags pass through unchanged.
+    deps["registry"].with_required_tags.side_effect = lambda metadata, label_definitions=None: metadata
     deps.update(over)
     return DemoSeedService(**deps), deps
 
@@ -121,6 +123,43 @@ def test_build_source_data_tags_demo_schema_and_tables():
             tuple(table.name for table in manifest.TABLES),
         )
     )
+
+
+def test_build_rules_skips_rules_missing_a_mandatory_tag_without_aborting():
+    # An admin made a tag mandatory with no default: the demo has no value for
+    # it, so each rule is skipped up front rather than aborting the seed or
+    # leaving a draft that can never be submitted.
+    from databricks_labs_dqx_app.backend.services.registry_service import MissingRequiredTagsError
+
+    svc, deps = _svc()
+    _use_create_path(deps)
+    deps["registry"].with_required_tags.side_effect = MissingRequiredTagsError(["team"])
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
+
+    result = svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    deps["registry"].create_rule.assert_not_called()
+    deps["registry"].submit.assert_not_called()
+    assert result.rules == 0
+    assert deps["status"].set.call_args_list[-1].args[0].state == "succeeded"
+
+
+def test_build_rules_creates_rules_with_tag_defaults_applied():
+    svc, deps = _svc()
+    _use_create_path(deps)
+    deps["registry"].with_required_tags.side_effect = lambda metadata, label_definitions=None: {
+        **metadata,
+        "team": "core",
+    }
+    deps["monitored_tables"].register.return_value = MagicMock(binding_id="b1")
+    deps["binding_run"].run_binding.return_value = MagicMock(run_id="run1")
+
+    svc.run(user_email="admin@example.com", wipe_first=False, weeks=0)
+
+    assert deps["registry"].create_rule.call_count == len(manifest.RULES)
+    for call in deps["registry"].create_rule.call_args_list:
+        assert call.kwargs["user_metadata"]["team"] == "core"
 
 
 def test_build_rules_uses_real_mode_and_polarity_per_spec():

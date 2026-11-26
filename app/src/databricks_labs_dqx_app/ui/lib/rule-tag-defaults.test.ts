@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { LabelDefinition } from "./api-custom";
-import { initialTagValue, missingRequiredTags, seedTagDefaults } from "./rule-tag-defaults";
+import { addMissingRequiredTags, initialTagValue, missingRequiredTags, seedTagDefaults } from "./rule-tag-defaults";
 
 const def = (over: Partial<LabelDefinition>): LabelDefinition => ({
   key: "team",
@@ -45,6 +45,27 @@ describe("seedTagDefaults", () => {
   test("never overwrites a tag the rule already has", () => {
     const tags = { team: "data-eng", owner: "x" };
     expect(seedTagDefaults(tags, defs)).toBe(tags);
+  });
+});
+
+describe("addMissingRequiredTags", () => {
+  test("adds a blank row for each absent mandatory tag without applying defaults", () => {
+    const defs = [
+      def({ key: "team", required: true, default_value: "finance" }),
+      def({ key: "flag", values: [], required: true }),
+      def({ key: "note", default_value: "finance" }),
+    ];
+    expect(addMissingRequiredTags({}, defs)).toEqual({ team: "", flag: "" });
+  });
+
+  test("keeps existing values, including blank ones, and skips self-gated keys", () => {
+    const tags = { team: "data-eng", owner: "" };
+    const defs = [
+      def({ key: "team", required: true }),
+      def({ key: "owner", required: true }),
+      def({ key: "severity", required: true }),
+    ];
+    expect(addMissingRequiredTags(tags, defs)).toBe(tags);
   });
 });
 

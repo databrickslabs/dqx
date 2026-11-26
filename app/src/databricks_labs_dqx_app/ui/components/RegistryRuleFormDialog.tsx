@@ -63,7 +63,7 @@ import {
 } from "lucide-react";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { LabelsEditor } from "@/components/Labels";
-import { missingRequiredTags, seedTagDefaults } from "@/lib/rule-tag-defaults";
+import { addMissingRequiredTags, missingRequiredTags, seedTagDefaults } from "@/lib/rule-tag-defaults";
 import { HelpTooltip } from "@/components/HelpTooltip";
 import { TagPicker } from "@/components/apply-rules/TagPicker";
 import { PermissionsTab, type OwnerGrantIntent } from "@/components/permissions/PermissionsTab";
@@ -1654,6 +1654,11 @@ function publishablePart(snapshot: RuleEditSnapshot): Omit<RuleEditSnapshot, "ow
   return publishable;
 }
 
+function withMissingRequiredTagRows(snapshot: RuleEditSnapshot, definitions: LabelDefinition[]): RuleEditSnapshot {
+  const tags = addMissingRequiredTags(snapshot.tags, definitions);
+  return tags === snapshot.tags ? snapshot : { ...snapshot, tags };
+}
+
 function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
   const md = (rule.user_metadata ?? {}) as Record<string, unknown>;
   const asString = (k: string) => (typeof md[k] === "string" ? (md[k] as string) : "");
@@ -2272,15 +2277,22 @@ export function RegistryRuleFormDialog({
 
   // Seed a new rule once per open, including when definitions arrive after the
   // dialog opens. Existing author values always win over late-arriving defaults.
+  // An edited rule only gains blank rows for mandatory tags it lacks (a tag
+  // made mandatory after it was written), so Submit's gate is visible in the
+  // Tags editor; defaults are never applied to it.
   const seededKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!open || sourceRule || labelDefinitions.length === 0) return;
+    if (!open || readOnly || labelDefinitions.length === 0) return;
     if (seededKeyRef.current === rehydrateKeyRef.current) return;
     seededKeyRef.current = rehydrateKeyRef.current;
+    if (sourceRule) {
+      setTags((prev) => addMissingRequiredTags(prev, tagDefinitions));
+      return;
+    }
     setDimension((prev) => prev || newRuleDefaults.dimension);
     setSeverity((prev) => prev || newRuleDefaults.severity);
     setTags((prev) => seedTagDefaults(prev, tagDefinitions));
-  }, [open, sourceRule, labelDefinitions, newRuleDefaults, tagDefinitions]);
+  }, [open, readOnly, sourceRule, labelDefinitions, newRuleDefaults, tagDefinitions]);
 
   // -- Dirty (unsaved-changes) tracking -------------------------------------
   // Editing an existing rule diffs against the last-persisted rule (mirrors
@@ -2310,8 +2322,10 @@ export function RegistryRuleFormDialog({
     groupBy,
     authorKind,
   };
+  // The blank mandatory-tag rows added to an edited rule are placeholders, not
+  // edits, so the baseline carries them too.
   const persistedSnapshot = editingRule
-    ? snapshotFromRule(editingRule)
+    ? withMissingRequiredTagRows(snapshotFromRule(editingRule), tagDefinitions)
     : { ...PRISTINE_NEW_SNAPSHOT, ...newRuleDefaults };
   const isDirty = stableStringify(currentSnapshot) !== stableStringify(persistedSnapshot);
   // Whether anything the APPROVAL GATE cares about changed, which is a strictly

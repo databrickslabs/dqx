@@ -43,6 +43,24 @@ export function seedTagDefaults(
   return out;
 }
 
+/**
+ * Add a blank row for every mandatory tag *tags* does not carry yet, so an
+ * existing rule shows the tags it still needs. Unlike *seedTagDefaults* it
+ * never applies defaults: an existing rule's values are the author's.
+ * Returns *tags* itself when nothing was added.
+ */
+export function addMissingRequiredTags(
+  tags: Record<string, string>,
+  definitions: LabelDefinition[],
+): Record<string, string> {
+  let out = tags;
+  for (const def of definitions) {
+    if (!def.key || !def.required || SELF_GATED_TAG_KEYS.has(def.key) || hasOwnTag(out, def.key)) continue;
+    out = { ...out, [def.key]: "" };
+  }
+  return out;
+}
+
 /** Keys of mandatory tags that are missing from *tags* or have an empty value. */
 export function missingRequiredTags(
   tags: Record<string, string>,

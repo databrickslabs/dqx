@@ -268,6 +268,13 @@ def _label_vocab() -> MagicMock:
     return app_settings
 
 
+def _no_label_definitions() -> MagicMock:
+    """App-settings mock with no tag definitions configured."""
+    app_settings = MagicMock()
+    app_settings.get_label_definitions.return_value = []
+    return app_settings
+
+
 class TestBatchImport:
     def test_batch_import_creates_all_rules(self):
         svc = MagicMock()
@@ -302,7 +309,7 @@ class TestBatchImport:
             body=body,
             svc=svc,
             embeddings=MagicMock(),
-            app_settings=MagicMock(),
+            app_settings=_no_label_definitions(),
             user_email="alice@x",
             role=UserRole.RULE_AUTHOR,
         )
@@ -323,7 +330,7 @@ class TestBatchImport:
             body=body,
             svc=svc,
             embeddings=embeddings,
-            app_settings=MagicMock(),
+            app_settings=_no_label_definitions(),
             user_email="carol@x",
             role=UserRole.RULE_APPROVER,
         )
@@ -702,6 +709,34 @@ class TestBatchImport:
         )
         assert result.saved == 1
         assert svc.create_rule.call_args.kwargs["user_metadata"] == {"dimension": "completeness"}
+
+    @pytest.mark.parametrize("mode", ["also_submit", "auto_approve"])
+    def test_unreadable_label_definitions_make_submission_fail_closed(self, mode):
+        # Submission must not see an unreadable vocabulary as "no mandatory tags":
+        # no snapshot is passed, so submit re-reads and raises.
+        from databricks_labs_dqx_app.backend.services.registry_service import LabelDefinitionsUnavailableError
+
+        svc = MagicMock()
+        svc.create_rule.return_value = (_rule("r1"), None)
+        svc.submit.side_effect = LabelDefinitionsUnavailableError("Could not load tag definitions")
+        app_settings = MagicMock()
+        app_settings.get_label_definitions.side_effect = ValueError("label_definitions setting is not a list")
+        body = BatchImportRegistryRulesIn(
+            rules=[CreateRegistryRuleIn(mode="dqx_native", definition=_definition())], **{mode: True}
+        )
+        result = batch_import_registry_rules(
+            body=body,
+            svc=svc,
+            embeddings=MagicMock(),
+            app_settings=app_settings,
+            user_email="alice@x",
+            role=UserRole.ADMIN,
+        )
+        assert result.saved == 1
+        assert result.submitted == 0
+        assert result.submit_failed == 1
+        svc.submit.assert_called_once_with("r1", "alice@x", label_definitions=None)
+        svc.approve.assert_not_called()
 
 
 class TestBatchImportTagDefaults:

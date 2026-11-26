@@ -110,7 +110,7 @@ from databricks_labs_dqx_app.backend.services.monitored_table_service import (
 )
 from databricks_labs_dqx_app.backend.services.lifecycle_history import HistoryAction, LifecycleHistoryService
 from databricks_labs_dqx_app.backend.services.monitored_table_versions import MonitoredTableVersionService
-from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
+from databricks_labs_dqx_app.backend.services.registry_service import MissingRequiredTagsError, RegistryService
 from databricks_labs_dqx_app.backend.services.resource_tagging_service import (
     ResourceTaggingService,
     demo_tag_targets,
@@ -700,13 +700,16 @@ class DemoSeedService:
                 self._embed_rule(existing)
                 logger.info("Demo rule '%s' -> %s (reused approved)", spec.key, existing.rule_id)
                 continue
+            metadata = self._submittable_metadata(spec)
+            if metadata is None:
+                continue
             rule, _warning = self._registry.create_rule(
                 mode=cast(RuleMode, spec.mode),
                 definition=definition,
                 user_email=user_email,
                 polarity=cast(Polarity, spec.polarity) if spec.polarity is not None else None,
                 author_kind=cast(AuthorKind, spec.author_kind),
-                user_metadata=self._metadata_for(spec),
+                user_metadata=metadata,
                 source="demo",
                 allow_duplicate=True,
             )
@@ -739,18 +742,36 @@ class DemoSeedService:
         if self._registry.get_active_rule_by_fingerprint(fingerprint) is not None:
             logger.info("Demo pending rule '%s' already present, skipping", spec.key)
             return
+        metadata = self._submittable_metadata(spec)
+        if metadata is None:
+            return
         rule, _warning = self._registry.create_rule(
             mode=cast(RuleMode, spec.mode),
             definition=definition,
             user_email=user_email,
             polarity=cast(Polarity, spec.polarity) if spec.polarity is not None else None,
             author_kind=cast(AuthorKind, spec.author_kind),
-            user_metadata=self._metadata_for(spec),
+            user_metadata=metadata,
             source="demo",
             allow_duplicate=True,
         )
         self._registry.submit(rule.rule_id, user_email)
         logger.info("Demo rule '%s' -> %s (submitted for approval, unmapped)", spec.key, rule.rule_id)
+
+    def _submittable_metadata(self, spec: RuleSpec) -> dict[str, Any] | None:
+        """Return *spec*'s tags with configured defaults, or ``None`` when it can't be submitted.
+
+        An admin may have made a tag mandatory with no default. The demo has no
+        value for it, so that rule is skipped (bindings tolerate missing rule
+        keys) instead of aborting the seed or leaving a stuck draft behind.
+        """
+        try:
+            return self._registry.with_required_tags(self._metadata_for(spec))
+        except MissingRequiredTagsError as e:
+            logger.warning(
+                f"Skipping demo rule '{spec.key}': mandatory tag(s) {', '.join(e.missing)} have no default value"
+            )
+            return None
 
     def _embed_rule(self, rule: RegistryRule) -> None:
         """Embed an approved rule into the OLTP embeddings corpus (best-effort).
@@ -1602,6 +1623,8 @@ class DemoSeedService:
         try:
             metadata = self._metadata_for(spec)
             metadata = set_reserved_tag(metadata, RESERVED_DESCRIPTION_KEY, manifest.CARD_RULE_TIGHTENED_DESCRIPTION)
+            # Replacing the tags wholesale would drop the defaults applied at create time.
+            metadata = self._registry.with_required_tags(metadata)
             self._registry.update_draft(rule_id, user_email, user_metadata=metadata)
             self._registry.submit(rule_id, user_email)
             approved = self._registry.approve(rule_id, user_email)

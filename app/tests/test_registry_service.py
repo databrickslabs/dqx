@@ -713,6 +713,22 @@ class TestLifecycle:
             svc.submit("r1", "alice@x")
         sql.execute.assert_not_called()
 
+    def test_submit_fails_closed_when_label_definitions_are_malformed(self, sql, app_settings):
+        from databricks_labs_dqx_app.backend.services.registry_service import LabelDefinitionsUnavailableError
+
+        def read_definitions(*, strict: bool = False) -> list[dict]:
+            # Mirrors AppSettingsService: a malformed value degrades to [] unless strict.
+            if strict:
+                raise ValueError("label_definitions setting is not a list")
+            return []
+
+        app_settings.get_label_definitions.side_effect = read_definitions
+        sql.query.return_value = [_row_for(self._rule("draft"))]
+        svc = RegistryService(sql=sql, app_settings=app_settings)
+        with pytest.raises(LabelDefinitionsUnavailableError, match="tag definitions"):
+            svc.submit("r1", "alice@x")
+        sql.execute.assert_not_called()
+
     def test_submit_reads_fresh_label_definitions_per_submission(self, sql, app_settings):
         first = self._rule("draft")
         second = self._rule("draft").model_copy(update={"rule_id": "r2"})
@@ -1428,19 +1444,53 @@ class TestMatchOrCreateApprovedRule:
         assert any("INSERT INTO dqx_test.dqx_app_test.dq_rules " in s for s in executed)
         assert any("INSERT INTO dqx_test.dqx_app_test.dq_rule_versions" in s for s in executed)
 
-    def test_match_or_create_rejects_missing_required_tag(self, sql, app_settings):
-        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+    def test_match_or_create_rejects_missing_required_tag_before_creating(self, sql, app_settings):
+        from databricks_labs_dqx_app.backend.services.registry_service import MissingRequiredTagsError
 
         app_settings.get_label_definitions.return_value = [{"key": "owner_group", "values": ["a"], "required": True}]
-        draft = RegistryRule(
-            rule_id="new1", mode="dqx_native", status="draft", version=0, definition=_native_definition()
-        )
-        sql.query.side_effect = [[], [], [], [_row_for(draft)]]
+        sql.query.side_effect = [[], []]
         svc = RegistryService(sql=sql, app_settings=app_settings)
-        with pytest.raises(ValueError, match="owner_group"):
+        with pytest.raises(MissingRequiredTagsError, match="owner_group") as excinfo:
             svc.match_or_create_approved_rule(_native_definition(), {}, "alice@x")
-        executed = [c.args[0] for c in sql.execute.call_args_list]
-        assert not any("dq_rule_versions" in statement for statement in executed)
+        assert excinfo.value.missing == ["owner_group"]
+        # No draft is created, so a later retry (after a default is set) isn't
+        # blocked by a stuck same-fingerprint draft.
+        sql.execute.assert_not_called()
+
+    def test_match_or_create_applies_mandatory_tag_default(self, sql, app_settings):
+        from databricks_labs_dqx_app.backend.registry_models import RegistryRule
+
+        app_settings.get_label_definitions.return_value = [
+            {"key": "owner_group", "values": ["core", "edge"], "required": True, "default_value": "core"}
+        ]
+        draft = RegistryRule(
+            rule_id="new1",
+            mode="dqx_native",
+            status="draft",
+            version=0,
+            definition=_native_definition(),
+            user_metadata={"owner_group": "core"},
+        )
+        pending = draft.model_copy(update={"status": "pending_approval"})
+        sql.query.side_effect = [
+            [],
+            [],
+            [],
+            [_row_for(draft)],
+            [_row_for(draft)],
+            [_row_for(pending)],
+            [_cas_confirm_row(pending, approver="alice@x")],
+        ]
+        svc = RegistryService(sql=sql, app_settings=app_settings)
+        rule, created = svc.match_or_create_approved_rule(_native_definition(), {"name": "Is not null"}, "alice@x")
+        assert created is True
+        assert rule is not None
+        assert rule.status == "approved"
+        inserts = [
+            c.args[0] for c in sql.execute.call_args_list if "INSERT INTO dqx_test.dqx_app_test.dq_rules " in c.args[0]
+        ]
+        assert len(inserts) == 1
+        assert '"owner_group": "core"' in inserts[0]
 
     def test_new_rule_attributed_to_profiling(self, svc, sql):
         from databricks_labs_dqx_app.backend.registry_models import RegistryRule

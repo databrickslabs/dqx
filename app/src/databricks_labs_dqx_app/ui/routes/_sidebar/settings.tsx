@@ -43,6 +43,7 @@ import {
   SELF_GATED_TAG_KEYS,
   defToDraft,
   draftToDef,
+  labelDraftsSaveable,
   reconcileSavedLabelDrafts,
   shouldCloseExpandedValue,
   type CriticalityValue,
@@ -394,17 +395,11 @@ function LabelDefinitionsSettings() {
     (nextDrafts: DraftDefinition[]) => {
       editRevisionRef.current += 1;
       const saveRevision = editRevisionRef.current;
+      // An invalid draft (e.g. a new blank card) must not cancel a pending
+      // save of the last valid state, or an edit made just before it is lost.
+      // The bumped revision still marks that save's response as stale.
+      if (!labelDraftsSaveable(nextDrafts)) return;
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      const errs: string[] = [];
-      const seen = new Set<string>();
-      for (const d of nextDrafts) {
-        const k = d.key.trim();
-        if (!k) { errs.push("missing"); continue; }
-        if (!LABEL_KEY_RE.test(k)) errs.push("invalid");
-        if (seen.has(k)) errs.push("dup");
-        seen.add(k);
-      }
-      if (errs.length > 0) return;
       saveTimerRef.current = setTimeout(() => {
         const definitions = nextDrafts.map(draftToDef);
         saveMutation.mutate(
@@ -440,70 +435,61 @@ function LabelDefinitionsSettings() {
   // Clean up timer on unmount.
   useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); }, []);
 
+  // Compute the next drafts from the rendered state, then set and save them.
+  // Side effects stay out of setDrafts updaters, which React may run twice.
+  const commitDrafts = (next: DraftDefinition[]) => {
+    setDrafts(next);
+    triggerAutoSave(next);
+  };
+
   const updateDraft = (draftId: string, patch: Partial<DraftDefinition>) => {
-    setDrafts((prev) => {
-      const next = prev.map((d) => (d.draftId === draftId ? { ...d, ...patch } : d));
-      triggerAutoSave(next);
-      return next;
-    });
+    commitDrafts(drafts.map((d) => (d.draftId === draftId ? { ...d, ...patch } : d)));
   };
 
   const removeDraft = (draftId: string) => {
-    setDrafts((prev) => {
-      const next = prev.filter((d) => d.draftId !== draftId);
-      triggerAutoSave(next);
-      return next;
-    });
+    commitDrafts(drafts.filter((d) => d.draftId !== draftId));
   };
 
   const addDraft = () => {
-    setDrafts((prev) => {
-      const next = [
-        ...prev,
-        {
-          draftId: crypto.randomUUID(),
-          key: "",
-          description: "",
-          values: [],
-          allow_custom_values: false,
-          value_colors: null,
-          value_descriptions: null,
-          value_criticality: null,
-          is_builtin: false,
-        },
-      ];
-      // Empty keys don't save, but registering the edit prevents an older
-      // in-flight response from discarding this new blank card.
-      triggerAutoSave(next);
-      return next;
-    });
+    // Empty keys don't save, but registering the edit prevents an older
+    // in-flight response from discarding this new blank card.
+    commitDrafts([
+      ...drafts,
+      {
+        draftId: crypto.randomUUID(),
+        key: "",
+        description: "",
+        values: [],
+        allow_custom_values: false,
+        value_colors: null,
+        value_descriptions: null,
+        value_criticality: null,
+        is_builtin: false,
+      },
+    ]);
   };
 
   // Seed a normal, editable custom-tag draft from a Unity Catalog governed tag.
   // Import-time population only — the key/description/allowed values are copied
   // once, then it behaves like any hand-authored draft (no ongoing sync).
   const addGovernedDraft = (seed: GovernedKeySeed) => {
-    setDrafts((prev) => {
-      // Guard against a governed key that already exists as a draft.
-      if (prev.some((d) => d.key.trim() === seed.key.trim())) return prev;
-      const next: DraftDefinition[] = [
-        ...prev,
-        {
-          draftId: crypto.randomUUID(),
-          key: seed.key,
-          description: seed.description,
-          values: [...seed.values],
-          allow_custom_values: false,
-          value_colors: null,
-          value_descriptions: null,
-          value_criticality: null,
-          is_builtin: false,
-        },
-      ];
-      // Governed key is valid and non-empty, so a save can fire immediately.
-      triggerAutoSave(next);
-      return next;
-    });
+    // Guard against a governed key that already exists as a draft.
+    if (drafts.some((d) => d.key.trim() === seed.key.trim())) return;
+    // Governed key is valid and non-empty, so a save can fire immediately.
+    commitDrafts([
+      ...drafts,
+      {
+        draftId: crypto.randomUUID(),
+        key: seed.key,
+        description: seed.description,
+        values: [...seed.values],
+        allow_custom_values: false,
+        value_colors: null,
+        value_descriptions: null,
+        value_criticality: null,
+        is_builtin: false,
+      },
+    ]);
   };
 
   if (isLoading) {
