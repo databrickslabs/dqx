@@ -2,7 +2,7 @@
 name = "dqx-mcp-coverage-bootstrap"
 version = "0.1.0"
 description = "TEST-ONLY: starts coverage.py at interpreter start in the deployed DQX MCP app + runner job"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 # `coverage` is a real dependency here (rather than being injected separately) so the
 # coverage-enabled deploy needs exactly ONE extra entry in each place, and there is no
 # "bootstrap installed but coverage missing" state. This wheel is NEVER installed by a

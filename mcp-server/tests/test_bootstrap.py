@@ -5,6 +5,7 @@ import tomllib
 from pathlib import Path
 from unittest.mock import MagicMock, create_autospec, patch
 
+import pytest
 from databricks.sdk import WorkspaceClient
 
 _MCP_SERVER = Path(__file__).resolve().parents[1]
@@ -48,6 +49,22 @@ class TestRunnerWheelVersionPin:
         # bundle deliberately does not set (the app publishes the wheel to a volume instead).
         assert "./.build/dqx_mcp_runner" not in text, "runner dep still uses a relative artifact path"
         assert "artifact_path:" not in text, "workspace.artifact_path must stay unset"
+
+
+@pytest.mark.parametrize(
+    "pyproject",
+    [
+        _MCP_SERVER / "runner" / "pyproject.toml",
+        _MCP_SERVER.parent / "tests" / "integration_mcp" / "coverage_bootstrap" / "pyproject.toml",
+    ],
+    ids=["runner", "coverage_bootstrap"],
+)
+def test_wheel_requires_python_matches_the_server(pyproject: Path):
+    """The runner and coverage-bootstrap wheels must accept the same Python range as the server."""
+    expected = tomllib.loads((_MCP_SERVER / "pyproject.toml").read_text())["project"]["requires-python"]
+    actual = tomllib.loads(pyproject.read_text())["project"]["requires-python"]
+
+    assert actual == expected, f"{pyproject} requires-python is {actual!r}, the MCP server uses {expected!r}"
 
 
 class TestFindRunnerWheel:
