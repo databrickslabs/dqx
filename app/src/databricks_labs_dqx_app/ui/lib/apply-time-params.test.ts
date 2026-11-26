@@ -149,6 +149,35 @@ describe("typed parameters", () => {
     expect(substituteSqlParameters("msg = '{{note}}'", parameters)).toBe("msg = 'it''s'");
   });
 
+  test("SQL substitution doubles backslashes so a value cannot break out of the literal", () => {
+    const trailing = [{ name: "v", type: "string" as const, value: "a\\" }];
+    expect(substituteSqlParameters("s = {{v}}", trailing)).toBe("s = 'a\\\\'");
+    expect(substituteSqlParameters("s = '{{v}}'", trailing)).toBe("s = 'a\\\\'");
+    const regex = [{ name: "r", type: "string" as const, value: "^\\d+$" }];
+    expect(substituteSqlParameters("s rlike '{{r}}'", regex)).toBe("s rlike '^\\\\d+$'");
+  });
+
+  test("SQL substitution escapes tokens embedded in a longer literal", () => {
+    const prefix = [{ name: "p", type: "string" as const, value: "a'b" }];
+    expect(substituteSqlParameters("s rlike '^{{p}}.*'", prefix)).toBe("s rlike '^a''b.*'");
+  });
+
+  test("a quoted list token expands to separately quoted items", () => {
+    const values = [{ name: "a", type: "list" as const, value: ["A", "it's"] }];
+    expect(substituteSqlParameters("s IN ('{{a}}')", values)).toBe("s IN ('A', 'it''s')");
+    expect(substituteSqlParameters("s = 'pre-{{a}}'", values)).toBe("s = 'pre-A, it''s'");
+    expect(substituteSqlParameters("s IN ({{a}})", values)).toBe("s IN ('A', 'it''s')");
+  });
+
+  test("quote tracking ignores comments and double-quoted strings, and rejects unsafe contexts", () => {
+    const v = [{ name: "v", type: "string" as const, value: "x" }];
+    expect(substituteSqlParameters("-- don't\n/* it's */ s = \"it's\" AND t = {{v}}", v)).toBe(
+      "-- don't\n/* it's */ s = \"it's\" AND t = 'x'",
+    );
+    expect(() => substituteSqlParameters('s = "{{v}}"', v)).toThrow(/double-quoted/);
+    expect(() => substituteSqlParameters("SELECT `{{v}}`", v)).toThrow(/backticked/);
+  });
+
   test("native argument trees replace whole-token placeholders", () => {
     expect(
       substituteParamPlaceholders({ allowed: "{{allowed}}", col: "{{column}}" }, { allowed: ["a", "b"] }),

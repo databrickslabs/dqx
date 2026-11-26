@@ -19,7 +19,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RuleSlot,
     is_sql_param_placeholder_name,
 )
-from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string
+from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string_strict
 
 RESERVED_PARAMETER_VALUES_KEY = "parameter_values"
 
@@ -398,7 +398,10 @@ def validate_parameter_declarations(parameters: list[RuleParameter], slots: list
 
 
 def _escape_sql_string(text: str) -> str:
-    return escape_sql_string(text)
+    # Apply-time values are user-supplied and never pass through ``validate_fqn``, so
+    # backslashes must be doubled too: a trailing ``\\`` would otherwise consume the
+    # closing quote of the literal and let the value break out of it.
+    return escape_sql_string_strict(text)
 
 
 def _sql_number(param: RuleParameter, value: object) -> str:
@@ -406,11 +409,14 @@ def _sql_number(param: RuleParameter, value: object) -> str:
     return str(int(number)) if number == int(number) else repr(number)
 
 
-def sql_literal(param: RuleParameter, value: object, *, quoted: bool) -> str:
+def sql_literal(param: RuleParameter, value: object, *, quoted: bool, whole_literal: bool = False) -> str:
     """Render *value* for a ``{{token}}`` in SQL text.
 
-    *quoted* means the author already wrapped the token in single quotes
-    (``'{{name}}'``), so only the escaped content is returned.
+    *quoted* means the token sits inside a single-quoted literal the author
+    wrote (``'{{name}}'``, ``'^{{name}}$'``), so only the escaped content is
+    returned. *whole_literal* means the token is the entire literal; a list
+    value is then rendered as separately quoted items so ``IN ('{{vals}}')``
+    becomes ``IN ('a', 'b')`` rather than the single string ``'a, b'``.
     """
     if param.type == "boolean" or isinstance(value, bool):
         flag = value if isinstance(value, bool) else str(value).strip().lower() == "true"
@@ -419,7 +425,9 @@ def sql_literal(param: RuleParameter, value: object, *, quoted: bool) -> str:
         return _sql_number(param, value)
     if isinstance(value, list):
         items = [_escape_sql_string(str(item)) for item in value]
-        return ", ".join(items) if quoted else ", ".join(f"'{item}'" for item in items)
+        if not quoted:
+            return ", ".join(f"'{item}'" for item in items)
+        return "', '".join(items) if whole_literal else ", ".join(items)
     text = _escape_sql_string(str(value))
     if quoted:
         return text
@@ -428,21 +436,90 @@ def sql_literal(param: RuleParameter, value: object, *, quoted: bool) -> str:
     return f"'{text}'"
 
 
-def substitute_sql_parameters(text: str, parameters: list[RuleParameter]) -> str:
-    """Replace bound ``{{param}}`` tokens in SQL text with literals formatted by parameter type."""
-    for param in parameters:
-        if is_unbound_parameter_value(param.value):
+_SQL_TOKEN_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+
+
+def _skip_sql_region(text: str, start: int, delimiter: str) -> int:
+    """Return the index just past the quoted region opening at *start* (doubled / backslash escapes honoured)."""
+    i = start + 1
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\" and delimiter != "`":
+            i += 2
             continue
-        token_re = re.compile(r"(')?\{\{\s*" + re.escape(param.name) + r"\s*\}\}(')?")
+        if ch == delimiter:
+            if text[i + 1 : i + 2] == delimiter:
+                i += 2
+                continue
+            return i + 1
+        i += 1
+    return n
 
-        def render(match: re.Match[str], param: RuleParameter = param) -> str:
-            before, after = match.group(1) or "", match.group(2) or ""
-            if before and after:
-                return f"'{sql_literal(param, param.value, quoted=True)}'"
-            return before + sql_literal(param, param.value, quoted=False) + after
 
-        text = token_re.sub(render, text)
-    return text
+def substitute_sql_parameters(text: str, parameters: list[RuleParameter]) -> str:
+    """Replace bound ``{{param}}`` tokens in SQL text with literals formatted by parameter type.
+
+    The text is scanned (not regex-replaced) so each token is rendered for the
+    context it sits in: bare tokens become full literals, tokens inside a
+    single-quoted literal are escaped for that literal (also when embedded in a
+    longer string such as ``'^{{prefix}}.*'``). Tokens inside comments are left
+    untouched, and a token inside a double-quoted string or backticked identifier
+    is rejected because it cannot be escaped safely there.
+    """
+    bound = {param.name: param for param in parameters if not is_unbound_parameter_value(param.value)}
+    if not bound:
+        return text
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if text.startswith("--", i):
+            end = text.find("\n", i)
+            end = n if end == -1 else end
+            out.append(text[i:end])
+            i = end
+            continue
+        if text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            end = n if end == -1 else end + 2
+            out.append(text[i:end])
+            i = end
+            continue
+        if ch in ("'", '"', "`"):
+            end = _skip_sql_region(text, i, ch)
+            region = text[i:end]
+            out.append(_substitute_in_region(region, ch, bound) if _SQL_TOKEN_RE.search(region) else region)
+            i = end
+            continue
+        match = _SQL_TOKEN_RE.match(text, i)
+        if match and match.group(1) in bound:
+            param = bound[match.group(1)]
+            out.append(sql_literal(param, param.value, quoted=False))
+            i = match.end()
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _substitute_in_region(region: str, delimiter: str, bound: dict[str, RuleParameter]) -> str:
+    """Render tokens inside one quoted region (*region* includes its delimiters)."""
+
+    def render(match: re.Match[str]) -> str:
+        param = bound.get(match.group(1))
+        if param is None:
+            return match.group(0)
+        if delimiter != "'":
+            raise InvalidParameterValueError(
+                f"{param.name} cannot be used inside a double-quoted string or backticked identifier; "
+                "use a single-quoted literal or a bare token instead."
+            )
+        whole = match.start() == 1 and match.end() == len(region) - 1 and region.endswith("'")
+        return sql_literal(param, param.value, quoted=True, whole_literal=whole)
+
+    return _SQL_TOKEN_RE.sub(render, region)
 
 
 def leftover_placeholders(value: object, *, ignore: frozenset[str] = _RESERVED_PLACEHOLDERS) -> list[str]:

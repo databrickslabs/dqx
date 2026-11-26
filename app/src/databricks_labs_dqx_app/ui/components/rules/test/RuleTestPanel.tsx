@@ -359,13 +359,19 @@ export function RuleTestPanel({
       })),
     [parameters, paramValues],
   );
-  const parameterError = validateGroupParameterValues(
-    parameters,
-    paramValues,
-    bindsEveryParameter(ruleMode),
-  ).error;
-  const testPredicate =
-    ruleMode === "dqx_native" ? "" : substituteSqlParameters(predicate, boundParameters);
+  let testPredicate = "";
+  let substitutionError: string | null = null;
+  if (ruleMode !== "dqx_native") {
+    try {
+      testPredicate = substituteSqlParameters(predicate, boundParameters);
+    } catch (err) {
+      testPredicate = predicate;
+      substitutionError = err instanceof Error ? err.message : String(err);
+    }
+  }
+  const parameterError =
+    validateGroupParameterValues(parameters, paramValues, bindsEveryParameter(ruleMode)).error ??
+    substitutionError;
   const testNativeArguments =
     ruleMode === "dqx_native"
       ? (substituteParamPlaceholders(

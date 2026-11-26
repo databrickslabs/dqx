@@ -266,12 +266,9 @@ export function parameterInputFamily(type: RuleParameter["type"]): "numeric" | "
   return "text";
 }
 
+/** Double backslashes as well as quotes, matching backend ``escape_sql_string_strict``. */
 function escapeSqlString(text: string): string {
-  return text.replaceAll("'", "''");
-}
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.replaceAll("\\", "\\\\").replaceAll("'", "''");
 }
 
 function sqlNumber(value: unknown): string {
@@ -279,8 +276,17 @@ function sqlNumber(value: unknown): string {
   return Number.isInteger(number) ? String(number) : String(number);
 }
 
-/** Render a bound parameter as a SQL literal, matching backend ``sql_literal``. */
-export function sqlLiteral(param: Pick<RuleParameter, "name" | "type">, value: unknown, quoted: boolean): string {
+/**
+ * Render a bound parameter as a SQL literal, matching backend ``sql_literal``.
+ * `quoted` means the token sits inside a single-quoted literal; `wholeLiteral`
+ * means it is the entire literal (a list then becomes separately quoted items).
+ */
+export function sqlLiteral(
+  param: Pick<RuleParameter, "name" | "type">,
+  value: unknown,
+  quoted: boolean,
+  wholeLiteral = false,
+): string {
   if (param.type === "boolean" || typeof value === "boolean") {
     const flag = typeof value === "boolean" ? value : String(value).trim().toLowerCase() === "true";
     if (quoted) return flag ? "true" : "false";
@@ -291,7 +297,8 @@ export function sqlLiteral(param: Pick<RuleParameter, "name" | "type">, value: u
   }
   if (Array.isArray(value)) {
     const items = value.map((item) => escapeSqlString(String(item)));
-    return quoted ? items.join(", ") : items.map((item) => `'${item}'`).join(", ");
+    if (!quoted) return items.map((item) => `'${item}'`).join(", ");
+    return items.join(wholeLiteral ? "', '" : ", ");
   }
   const text = escapeSqlString(String(value));
   if (quoted) return text;
@@ -299,20 +306,91 @@ export function sqlLiteral(param: Pick<RuleParameter, "name" | "type">, value: u
   return `'${text}'`;
 }
 
-/** Replace bound ``{{param}}`` tokens in SQL text with typed literals. */
-export function substituteSqlParameters(text: string, parameters: RuleParameter[]): string {
-  let result = text;
-  for (const param of parameters) {
-    if (isUnboundParameterValue(param.value)) continue;
-    const token = new RegExp(`(')?\\{\\{\\s*${escapeRegExp(param.name)}\\s*\\}\\}(')?`, "g");
-    result = result.replace(token, (_match, before: string | undefined, after: string | undefined) => {
-      const open = before ?? "";
-      const close = after ?? "";
-      if (open && close) return `'${sqlLiteral(param, param.value, true)}'`;
-      return `${open}${sqlLiteral(param, param.value, false)}${close}`;
-    });
+const SQL_TOKEN_RE = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/y;
+const SQL_TOKEN_GLOBAL_RE = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
+
+/** Index just past the quoted region opening at `start` (doubled / backslash escapes honoured). */
+function skipSqlRegion(text: string, start: number, delimiter: string): number {
+  let i = start + 1;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === "\\" && delimiter !== "`") {
+      i += 2;
+      continue;
+    }
+    if (ch === delimiter) {
+      if (text[i + 1] === delimiter) {
+        i += 2;
+        continue;
+      }
+      return i + 1;
+    }
+    i += 1;
   }
-  return result;
+  return text.length;
+}
+
+function substituteInRegion(region: string, delimiter: string, bound: Map<string, RuleParameter>): string {
+  return region.replace(SQL_TOKEN_GLOBAL_RE, (match: string, name: string, offset: number) => {
+    const param = bound.get(name);
+    if (!param) return match;
+    if (delimiter !== "'") {
+      throw new Error(
+        `${param.name} cannot be used inside a double-quoted string or backticked identifier; ` +
+          "use a single-quoted literal or a bare token instead.",
+      );
+    }
+    const whole = offset === 1 && offset + match.length === region.length - 1 && region.endsWith("'");
+    return sqlLiteral(param, param.value, true, whole);
+  });
+}
+
+/**
+ * Replace bound ``{{param}}`` tokens in SQL text with typed literals, matching backend
+ * ``substitute_sql_parameters``: the text is scanned so bare tokens become full literals
+ * and tokens inside a single-quoted literal (also a longer one such as ``'^{{p}}.*'``)
+ * are escaped for it. Comments are left untouched; tokens in a double-quoted string or
+ * backticked identifier throw.
+ */
+export function substituteSqlParameters(text: string, parameters: RuleParameter[]): string {
+  const bound = new Map(parameters.filter((param) => !isUnboundParameterValue(param.value)).map((p) => [p.name, p]));
+  if (bound.size === 0) return text;
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (text.startsWith("--", i)) {
+      const newline = text.indexOf("\n", i);
+      const end = newline === -1 ? text.length : newline;
+      out += text.slice(i, end);
+      i = end;
+      continue;
+    }
+    if (text.startsWith("/*", i)) {
+      const close = text.indexOf("*/", i + 2);
+      const end = close === -1 ? text.length : close + 2;
+      out += text.slice(i, end);
+      i = end;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === "`") {
+      const end = skipSqlRegion(text, i, ch);
+      out += substituteInRegion(text.slice(i, end), ch, bound);
+      i = end;
+      continue;
+    }
+    SQL_TOKEN_RE.lastIndex = i;
+    const match = SQL_TOKEN_RE.exec(text);
+    const param = match ? bound.get(match[1]) : undefined;
+    if (match && param) {
+      out += sqlLiteral(param, param.value, false);
+      i += match[0].length;
+      continue;
+    }
+    out += ch;
+    i += 1;
+  }
+  return out;
 }
 
 /** Replace ``{{param}}`` tokens inside native-argument trees with JSON scalars. */

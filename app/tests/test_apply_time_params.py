@@ -325,8 +325,40 @@ class TestSqlParameterSubstitution:
         assert self._sub("b = {{f}}", _param("f", "boolean", True)) == "b = TRUE"
 
     def test_author_quoted_tokens_get_escaped_content_only(self):
-        assert self._sub("s rlike '{{r}}'", _param("r", "regex", "^\\d+$")) == "s rlike '^\\d+$'"
+        # Backslashes are doubled so Spark's string-literal parser reads the regex back verbatim.
+        assert self._sub("s rlike '{{r}}'", _param("r", "regex", "^\\d+$")) == "s rlike '^\\\\d+$'"
         assert self._sub("d >= '{{d}}'", _param("d", "date", "2026-03-01")) == "d >= '2026-03-01'"
 
     def test_unbound_parameters_are_left_for_the_leftover_guard(self):
         assert self._sub("x > {{t}}", _param("t", "decimal")) == "x > {{t}}"
+
+    def test_trailing_backslash_cannot_break_out_of_the_literal(self):
+        param = _param("v", "string", "a\\")
+        assert self._sub("s = {{v}}", param) == "s = 'a\\\\'"
+        assert self._sub("s = '{{v}}'", param) == "s = 'a\\\\'"
+        assert self._sub("s = '{{v}}' OR 1 = 1", _param("v", "string", "x' OR '1'='1")) == (
+            "s = 'x'' OR ''1''=''1' OR 1 = 1"
+        )
+
+    def test_token_inside_a_longer_literal_is_escaped(self):
+        assert self._sub("s rlike '^{{p}}.*'", _param("p", "string", "a'b")) == "s rlike '^a''b.*'"
+        assert self._sub("s LIKE '{{p}}%' AND t = {{q}}", _param("p", "string", "x"), _param("q", "integer", 2)) == (
+            "s LIKE 'x%' AND t = 2"
+        )
+
+    def test_quoted_list_token_expands_to_separately_quoted_items(self):
+        values = _param("a", "list", ["A", "it's"])
+        assert self._sub("s IN ('{{a}}')", values) == "s IN ('A', 'it''s')"
+        assert self._sub("s IN ('x', '{{a}}')", values) == "s IN ('x', 'A', 'it''s')"
+        assert self._sub("s = 'pre-{{a}}'", values) == "s = 'pre-A, it''s'"
+
+    def test_quote_state_ignores_apostrophes_in_comments_and_other_literals(self):
+        text = "-- don't\n/* it's */ s = \"it's\" AND t = {{v}}"
+        assert self._sub(text, _param("v", "string", "x")) == "-- don't\n/* it's */ s = \"it's\" AND t = 'x'"
+
+    def test_tokens_in_double_quotes_or_backticks_are_rejected(self):
+        with pytest.raises(InvalidParameterValueError, match="double-quoted"):
+            self._sub('s = "{{v}}"', _param("v", "string", "x"))
+        with pytest.raises(InvalidParameterValueError, match="backticked"):
+            self._sub("SELECT `{{v}}`", _param("v", "string", "x"))
+        assert self._sub('s = "{{other}}"', _param("v", "string", "x")) == 's = "{{other}}"'
