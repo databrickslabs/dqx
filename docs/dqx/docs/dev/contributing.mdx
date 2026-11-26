@@ -45,6 +45,14 @@ While minimizing external dependencies is essential, exceptions can be made case
 justified, such as when a well-established and actively maintained library provides significant benefits, like time savings, performance improvements,
 or specialized functionality unavailable in standard libraries.
 
+## Running Integration Tests Locally
+
+When running integration tests locally, you may need to set the `DQX_AI_QUERY_TEST_ENDPOINT` environment variable to specify the model endpoint for AI-powered tests. This variable is used by:
+- `tests/integration_anomaly` - Anomaly AI-explanation integration tests
+- `tests/integration_mcp` - MCP integration tests
+
+Set this variable to a model endpoint that your workspace supports to enable these tests.
+
 ## First contribution
 
 If you're interested in contributing, please create a PR, contact us, or open an issue to discuss your ideas.
