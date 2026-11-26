@@ -72,11 +72,7 @@ def infer_sql_param_type(name: str) -> "ParamType":
     """Value type for a SQL ``{{token}}`` parameter, mirroring the UI's ``inferSqlParamType``."""
     lowered = name.lower()
     tokens = lowered.split("_")
-    if (
-        lowered == "scale"
-        or re.search(r"(?:^|_)(?:max|min)_length(?:_|$)", lowered)
-        or lowered.endswith("_scale")
-    ):
+    if lowered == "scale" or re.search(r"(?:^|_)(?:max|min)_length(?:_|$)", lowered) or lowered.endswith("_scale"):
         return "integer"
     if lowered in {"limit", "threshold"} or lowered.endswith("_threshold") or _RANGE_BOUND_RE.search(lowered):
         return "decimal"

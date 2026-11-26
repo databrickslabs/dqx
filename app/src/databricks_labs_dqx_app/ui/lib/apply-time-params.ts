@@ -9,9 +9,11 @@ const SQL_PARAM_NAME_RE =
 const RANGE_BOUND_RE = /(?:^|_)(?:min|max)_(?:limit|value)$/;
 
 /** Color for `{{column}}` tokens in the rule editor and apply mapping. */
-export const COLUMN_PLACEHOLDER_CLASS = "font-mono text-blue-600 dark:text-blue-400";
+export const COLUMN_PLACEHOLDER_CLASS =
+  "font-mono text-blue-600 dark:text-blue-400";
 /** Color for `{{parameter}}` tokens — distinct from column placeholders. */
-export const PARAM_PLACEHOLDER_CLASS = "font-mono text-amber-700 dark:text-amber-400";
+export const PARAM_PLACEHOLDER_CLASS =
+  "font-mono text-amber-700 dark:text-amber-400";
 // Length parameters match whole name tokens, mirroring the backend. `limit` is deliberately not a
 // length: DQX accepts zero, negative and decimal limits and validates them itself.
 const MAX_LENGTH_RE = /(?:^|_)max_length(?:_|$)/;
@@ -37,10 +39,16 @@ export function isSqlParamPlaceholderName(name: string): boolean {
 }
 
 export function mappingGroupKey(group: Record<string, string>): string {
-  return JSON.stringify(Object.fromEntries(Object.entries(group).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))));
+  return JSON.stringify(
+    Object.fromEntries(
+      Object.entries(group).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+    ),
+  );
 }
 
-export function displayParameterValue(value: RuleParameterValue | undefined): string {
+export function displayParameterValue(
+  value: RuleParameterValue | undefined,
+): string {
   if (isUnboundParameterValue(value)) return "";
   if (Array.isArray(value)) return value.join(", ");
   if (value === true) return "true";
@@ -53,7 +61,9 @@ function looksLikeMaxLengthParam(name: string): boolean {
 }
 
 function looksLikeLengthParam(name: string): boolean {
-  return looksLikeMaxLengthParam(name) || MIN_LENGTH_RE.test(name.toLowerCase());
+  return (
+    looksLikeMaxLengthParam(name) || MIN_LENGTH_RE.test(name.toLowerCase())
+  );
 }
 
 function looksLikeScaleParam(name: string): boolean {
@@ -66,7 +76,10 @@ function looksLikePercentParam(name: string): boolean {
 }
 
 function asNumber(name: string, value: unknown): number {
-  if (typeof value === "boolean" || (typeof value !== "number" && typeof value !== "string")) {
+  if (
+    typeof value === "boolean" ||
+    (typeof value !== "number" && typeof value !== "string")
+  ) {
     throw new Error(`${name} must be a number.`);
   }
   if (typeof value === "string" && !value.trim()) {
@@ -112,7 +125,10 @@ export function coerceParameterValue(
 
   if (param.type === "boolean") {
     if (typeof raw === "boolean") return raw;
-    if (typeof raw === "string" && ["true", "false"].includes(raw.trim().toLowerCase())) {
+    if (
+      typeof raw === "string" &&
+      ["true", "false"].includes(raw.trim().toLowerCase())
+    ) {
       return raw.trim().toLowerCase() === "true";
     }
     throw new Error(`${param.name} must be true or false.`);
@@ -122,7 +138,10 @@ export function coerceParameterValue(
     const items = Array.isArray(raw)
       ? raw.map((item) => String(item).trim()).filter(Boolean)
       : typeof raw === "string"
-        ? raw.split(",").map((part) => part.trim()).filter(Boolean)
+        ? raw
+            .split(",")
+            .map((part) => part.trim())
+            .filter(Boolean)
         : null;
     if (!items || items.length === 0) {
       throw new Error(`${param.name} is required.`);
@@ -133,9 +152,18 @@ export function coerceParameterValue(
     return items;
   }
 
-  if (param.type === "number" || param.type === "integer" || param.type === "decimal") {
+  if (
+    param.type === "number" ||
+    param.type === "integer" ||
+    param.type === "decimal"
+  ) {
     // A maximum length of 0 matches nothing, but a minimum length of 0 is valid.
-    if (looksLikeLengthParam(param.name)) return asInt(param.name, raw, looksLikeMaxLengthParam(param.name) ? 1 : 0);
+    if (looksLikeLengthParam(param.name))
+      return asInt(
+        param.name,
+        raw,
+        looksLikeMaxLengthParam(param.name) ? 1 : 0,
+      );
     if (looksLikeScaleParam(param.name)) return asInt(param.name, raw, 0);
     if (param.type === "integer") return asInt(param.name, raw, null);
     const number = asNumber(param.name, raw);
@@ -148,7 +176,11 @@ export function coerceParameterValue(
   if (param.type === "date") {
     const text = String(raw).trim().slice(0, 10);
     const parsed = new Date(`${text}T00:00:00Z`);
-    if (!ISO_DATE_RE.test(text) || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== text) {
+    if (
+      !ISO_DATE_RE.test(text) ||
+      Number.isNaN(parsed.getTime()) ||
+      parsed.toISOString().slice(0, 10) !== text
+    ) {
       throw new Error(`${param.name} must be a date (YYYY-MM-DD).`);
     }
     return text;
@@ -167,9 +199,17 @@ export function bindsEveryParameter(mode: string | null | undefined): boolean {
   return mode === "sql" || mode === "lowcode";
 }
 
-export function mustBindParameter(param: RuleParameter, bindAll = false): boolean {
+export function mustBindParameter(
+  param: RuleParameter,
+  bindAll = false,
+): boolean {
   if (bindAll || isPlaceholderString(param.value)) return true;
-  if (param.type === "integer" || param.type === "decimal" || param.type === "date") return true;
+  if (
+    param.type === "integer" ||
+    param.type === "decimal" ||
+    param.type === "date"
+  )
+    return true;
   if (isSqlParamPlaceholderName(param.name)) return true;
   const lowered = param.name.toLowerCase();
   if (
@@ -206,25 +246,37 @@ export function validateGroupParameterValues(
   const coerced: Record<string, RuleParameterValue> = {};
   try {
     for (const param of parameters) {
-      const canOverride = overridableNames == null || overridableNames.includes(param.name);
+      const canOverride =
+        overridableNames == null || overridableNames.includes(param.name);
       const raw = canOverride
-        ? (rawValues?.[param.name] ?? (isUnboundParameterValue(param.value) ? undefined : param.value))
-        : (isUnboundParameterValue(param.value) ? undefined : param.value);
-      if (isUnboundParameterValue(raw) && !mustBindParameter(param, bindAll)) continue;
+        ? (rawValues?.[param.name] ??
+          (isUnboundParameterValue(param.value) ? undefined : param.value))
+        : isUnboundParameterValue(param.value)
+          ? undefined
+          : param.value;
+      if (isUnboundParameterValue(raw) && !mustBindParameter(param, bindAll))
+        continue;
       coerced[param.name] = coerceParameterValue(param, raw);
     }
     for (const [minName, maxName] of RANGE_PAIRS) {
       if (!(minName in coerced) || !(maxName in coerced)) continue;
       const minimum = Number(coerced[minName]);
       const maximum = Number(coerced[maxName]);
-      if (Number.isFinite(minimum) && Number.isFinite(maximum) && minimum > maximum) {
+      if (
+        Number.isFinite(minimum) &&
+        Number.isFinite(maximum) &&
+        minimum > maximum
+      ) {
         throw new Error(
           `${minName} (${minimum}) must not be greater than ${maxName} (${maximum}).`,
         );
       }
     }
   } catch (err) {
-    return { values: coerced, error: err instanceof Error ? err.message : String(err) };
+    return {
+      values: coerced,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
   return { values: coerced, error: null };
 }
@@ -243,7 +295,11 @@ export function partitionPlaceholderSlots<T extends { name: string }>(
     if (seen.has(item.name)) continue;
     seen.add(item.name);
     if (isSqlParamPlaceholderName(item.name)) {
-      parameters.push({ name: item.name, type: inferSqlParamType(item.name), value: null });
+      parameters.push({
+        name: item.name,
+        type: inferSqlParamType(item.name),
+        value: null,
+      });
     } else {
       columns.push(item);
     }
@@ -255,7 +311,12 @@ export function inferSqlParamType(name: string): RuleParameter["type"] {
   const lowered = name.toLowerCase();
   const tokens = lowered.split("_");
   if (looksLikeLengthParam(name) || looksLikeScaleParam(name)) return "integer";
-  if (lowered === "limit" || lowered === "threshold" || lowered.endsWith("_threshold") || RANGE_BOUND_RE.test(lowered)) {
+  if (
+    lowered === "limit" ||
+    lowered === "threshold" ||
+    lowered.endsWith("_threshold") ||
+    RANGE_BOUND_RE.test(lowered)
+  ) {
     return "decimal";
   }
   if (tokens.includes("date")) return "date";
@@ -265,11 +326,21 @@ export function inferSqlParamType(name: string): RuleParameter["type"] {
 }
 
 /** Parameter types an author can declare on a SQL rule, in picker order. */
-export const SQL_PARAMETER_TYPES = ["string", "integer", "decimal", "date", "list", "boolean"] as const;
+export const SQL_PARAMETER_TYPES = [
+  "string",
+  "integer",
+  "decimal",
+  "date",
+  "list",
+  "boolean",
+] as const;
 
 /** The Test-rule cell family that renders the right input for a parameter type. */
-export function parameterInputFamily(type: RuleParameter["type"]): "numeric" | "temporal" | "boolean" | "text" {
-  if (type === "number" || type === "integer" || type === "decimal") return "numeric";
+export function parameterInputFamily(
+  type: RuleParameter["type"],
+): "numeric" | "temporal" | "boolean" | "text" {
+  if (type === "number" || type === "integer" || type === "decimal")
+    return "numeric";
   if (type === "date") return "temporal";
   if (type === "boolean") return "boolean";
   return "text";
@@ -297,11 +368,18 @@ export function sqlLiteral(
   wholeLiteral = false,
 ): string {
   if (param.type === "boolean" || typeof value === "boolean") {
-    const flag = typeof value === "boolean" ? value : String(value).trim().toLowerCase() === "true";
+    const flag =
+      typeof value === "boolean"
+        ? value
+        : String(value).trim().toLowerCase() === "true";
     if (quoted) return flag ? "true" : "false";
     return flag ? "TRUE" : "FALSE";
   }
-  if (param.type === "number" || param.type === "integer" || param.type === "decimal") {
+  if (
+    param.type === "number" ||
+    param.type === "integer" ||
+    param.type === "decimal"
+  ) {
     return sqlNumber(value);
   }
   if (Array.isArray(value)) {
@@ -339,19 +417,29 @@ function skipSqlRegion(text: string, start: number, delimiter: string): number {
   return text.length;
 }
 
-function substituteInRegion(region: string, delimiter: string, bound: Map<string, RuleParameter>): string {
-  return region.replace(SQL_TOKEN_GLOBAL_RE, (match: string, name: string, offset: number) => {
-    const param = bound.get(name);
-    if (!param) return match;
-    if (delimiter !== "'") {
-      throw new Error(
-        `${param.name} cannot be used inside a double-quoted string or backticked identifier; ` +
-          "use a single-quoted literal or a bare token instead.",
-      );
-    }
-    const whole = offset === 1 && offset + match.length === region.length - 1 && region.endsWith("'");
-    return sqlLiteral(param, param.value, true, whole);
-  });
+function substituteInRegion(
+  region: string,
+  delimiter: string,
+  bound: Map<string, RuleParameter>,
+): string {
+  return region.replace(
+    SQL_TOKEN_GLOBAL_RE,
+    (match: string, name: string, offset: number) => {
+      const param = bound.get(name);
+      if (!param) return match;
+      if (delimiter !== "'") {
+        throw new Error(
+          `${param.name} cannot be used inside a double-quoted string or backticked identifier; ` +
+            "use a single-quoted literal or a bare token instead.",
+        );
+      }
+      const whole =
+        offset === 1 &&
+        offset + match.length === region.length - 1 &&
+        region.endsWith("'");
+      return sqlLiteral(param, param.value, true, whole);
+    },
+  );
 }
 
 /**
@@ -361,8 +449,15 @@ function substituteInRegion(region: string, delimiter: string, bound: Map<string
  * are escaped for it. Comments are left untouched; tokens in a double-quoted string or
  * backticked identifier throw.
  */
-export function substituteSqlParameters(text: string, parameters: RuleParameter[]): string {
-  const bound = new Map(parameters.filter((param) => !isUnboundParameterValue(param.value)).map((p) => [p.name, p]));
+export function substituteSqlParameters(
+  text: string,
+  parameters: RuleParameter[],
+): string {
+  const bound = new Map(
+    parameters
+      .filter((param) => !isUnboundParameterValue(param.value))
+      .map((p) => [p.name, p]),
+  );
   if (bound.size === 0) return text;
   let out = "";
   let i = 0;
@@ -403,8 +498,12 @@ export function substituteSqlParameters(text: string, parameters: RuleParameter[
 }
 
 /** Replace ``{{param}}`` tokens inside native-argument trees with JSON scalars. */
-export function substituteParamPlaceholders(value: unknown, values: Record<string, unknown>): unknown {
-  if (Array.isArray(value)) return value.map((item) => substituteParamPlaceholders(item, values));
+export function substituteParamPlaceholders(
+  value: unknown,
+  values: Record<string, unknown>,
+): unknown {
+  if (Array.isArray(value))
+    return value.map((item) => substituteParamPlaceholders(item, values));
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>).map(([key, item]) => [
@@ -419,7 +518,8 @@ export function substituteParamPlaceholders(value: unknown, values: Record<strin
   let result = value;
   for (const [name, replacement] of Object.entries(values)) {
     const token = `{{${name}}}`;
-    if (result.includes(token)) result = result.replaceAll(token, String(replacement));
+    if (result.includes(token))
+      result = result.replaceAll(token, String(replacement));
   }
   return result;
 }
