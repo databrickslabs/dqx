@@ -50,9 +50,10 @@ _RETENTION_DAYS_MIN = 7
 _RETENTION_DAYS_MAX = 3650
 
 _LABEL_DEFS_SETTING_KEY = "label_definitions"
-# Keys must be safe for YAML round-tripping and stable as DataFrame columns:
-# letters, digits, underscore, leading with a letter.
-_LABEL_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+# Keys are JSON object keys in YAML and user_metadata. Allow human-readable
+# labels while excluding control characters and punctuation with special uses
+# elsewhere in the app. The first character must be alphanumeric.
+_LABEL_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _./-]*$")
 # Per-value badge colors: strict 6-digit hex so the UI can trust the value
 # without re-validating (e.g. drop straight into a CSS custom property).
 _HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
@@ -107,6 +108,16 @@ class LabelDefinition(BaseModel):
     built-in defaults. Pruned to keys present in ``values`` on save, like the
     other per-value maps.
 
+    ``required`` marks a tag every rule must carry: the rule editor adds it to
+    new rules, authors cannot remove it, and a rule missing it (or carrying it
+    with an empty value) cannot be submitted for approval. Always ``False`` on
+    the reserved ``dimension``/``severity`` keys — those already have their own
+    dedicated, submit-gated fields on the rule form.
+
+    ``default_value`` optionally names one of ``values`` that new rules start
+    with. A tag with a default but no ``required`` flag is pre-filled yet still
+    removable. Pruned to ``None`` on save when it is not in ``values``.
+
     ``is_builtin`` flags a reserved, pre-seeded key (e.g. the Rules Registry
     ``dimension``/``severity`` tags) — such keys cannot be deleted or renamed
     via :func:`save_label_definitions`, though their values, colors, and
@@ -122,6 +133,8 @@ class LabelDefinition(BaseModel):
     value_colors: dict[str, str] | None = None
     value_descriptions: dict[str, str] | None = None
     value_criticality: dict[str, str] | None = None
+    required: bool = False
+    default_value: str | None = None
     is_builtin: bool = False
 
     @field_validator("value_colors")
@@ -611,8 +624,10 @@ def save_label_definitions(
     state, not the client payload — a caller can't strip the flag off a
     reserved key by omitting/flipping it in the request. ``dimension`` and
     ``severity`` additionally always save with ``allow_custom_values=False``
-    regardless of what the client sends — their value set is fixed/admin-
-    curated, never author-extensible.
+    and ``required=False`` regardless of what the client sends — their value
+    set is fixed/admin-curated, never author-extensible, and they are
+    submit-gated by their own form fields. ``default_value`` is dropped when it
+    is not one of the definition's (cleaned) values.
     """
     existing_builtin_keys = {d.key for d in _load_label_definitions(svc) if d.is_builtin}
 
@@ -626,8 +641,8 @@ def save_label_definitions(
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Invalid label key '{key}'. Keys must start with a letter and "
-                    "contain only letters, digits, and underscores."
+                    f"Invalid label key '{key}'. Keys must start with a letter or digit and "
+                    "contain only letters, digits, spaces, dots, underscores, hyphens, and slashes."
                 ),
             )
         if key in seen_keys:
@@ -650,6 +665,7 @@ def save_label_definitions(
             if v in seen_values and (desc or "").strip()
         } or None
         cleaned_criticality = {v: c for v, c in (d.value_criticality or {}).items() if v in seen_values} or None
+        default_value = (d.default_value or "").strip()
 
         cleaned.append(
             LabelDefinition(
@@ -660,6 +676,9 @@ def save_label_definitions(
                 value_colors=cleaned_colors,
                 value_descriptions=cleaned_descriptions,
                 value_criticality=cleaned_criticality,
+                # Reserved dimension/severity fields already gate submission.
+                required=False if key in _NO_CUSTOM_VALUE_BUILTIN_KEYS else bool(d.required),
+                default_value=default_value if default_value in seen_values else None,
                 # Authoritative from the previously-persisted state, never
                 # from the client payload — a caller cannot grant or strip
                 # ``is_builtin`` protection via the request body.

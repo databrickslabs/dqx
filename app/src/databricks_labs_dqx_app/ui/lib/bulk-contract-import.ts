@@ -121,9 +121,16 @@ export interface SchemaOutcome {
   pending: number;
   /** Approved rules whose slots couldn't be auto-mapped → need manual mapping. */
   needsMapping: number;
+  /** Created rules that stayed drafts because submission failed. */
+  submitFailed: number;
   /** Rules that failed to create or apply. */
   failed: number;
   errors: string[];
+}
+
+/** Only rules already awaiting approval may receive a pre-staged application. */
+export function shouldPreStageRule(status: string): boolean {
+  return status === "pending_approval";
 }
 
 /** Roll a flat list of per-schema outcomes up into one summary row per contract file. */
@@ -137,6 +144,7 @@ export interface ContractResult {
   applied: number;
   pending: number;
   needsMapping: number;
+  submitFailed: number;
   failed: number;
   errors: string[];
   /** Tables with pending-approval or needs-manual-mapping rules, for deep-links. */
@@ -158,6 +166,7 @@ export function aggregateByContract(outcomes: SchemaOutcome[]): ContractResult[]
         applied: 0,
         pending: 0,
         needsMapping: 0,
+        submitFailed: 0,
         failed: 0,
         errors: [],
         attentionTables: [],
@@ -171,6 +180,7 @@ export function aggregateByContract(outcomes: SchemaOutcome[]): ContractResult[]
     row.applied += o.applied;
     row.pending += o.pending;
     row.needsMapping += o.needsMapping;
+    row.submitFailed += o.submitFailed;
     row.failed += o.failed;
     if (o.errors.length > 0) row.errors.push(...o.errors);
     if ((o.pending > 0 || o.needsMapping > 0) && o.tableFqn) {

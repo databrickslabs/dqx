@@ -309,6 +309,43 @@ class TestApplySuggestions:
         apply_rules.build_applied_rule.assert_not_called()
         apply_rules.apply_rule.assert_not_called()
 
+    def test_batch_reports_mandatory_tag_without_default(self, monitored_tables, registry, apply_rules):
+        # A mandatory tag with no default fails that suggestion, not the whole batch.
+        from databricks_labs_dqx_app.backend.services.registry_service import MissingRequiredTagsError
+
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile(
+            [_check("is_not_null", {"column": "amount"}), _check("is_not_null", {"column": "name"})]
+        )
+        registry.match_or_create_approved_rule.side_effect = [
+            MissingRequiredTagsError(["team"]),
+            (_approved_rule("prof1"), True),
+        ]
+        apply_rules.build_applied_rule.return_value = AppliedRule(
+            id="ar1", binding_id="b1", rule_id="prof1", column_mapping=[{"column": "name"}]
+        )
+        svc = _service(monitored_tables, registry, apply_rules)
+
+        result = svc.apply_suggestions("b1", [0, 1], "user@x")
+
+        assert len(result.applied) == 1
+        assert len(result.failed) == 1
+        assert result.failed[0].index == 0
+        assert "team" in result.failed[0].reason
+
+    def test_batch_reports_unreadable_tag_settings(self, monitored_tables, registry, apply_rules):
+        from databricks_labs_dqx_app.backend.services.registry_service import LabelDefinitionsUnavailableError
+
+        monitored_tables.get.return_value = _binding_detail()
+        monitored_tables.get_latest_profile.return_value = _profile([_check("is_not_null", {"column": "amount"})])
+        registry.match_or_create_approved_rule.side_effect = LabelDefinitionsUnavailableError("unavailable")
+        svc = _service(monitored_tables, registry, apply_rules)
+
+        result = svc.apply_suggestions("b1", [0], "user@x")
+
+        assert result.applied == []
+        assert len(result.failed) == 1
+
     def test_batch_reports_build_rule_error(self, monitored_tables, registry, apply_rules):
         # A staging-time failure (e.g. rule not published) is captured per-index.
         monitored_tables.get.return_value = _binding_detail()

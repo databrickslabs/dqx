@@ -16,10 +16,12 @@ from databricks_labs_dqx_app.backend.registry_models import (
     ORIGIN_TAG_AUTO,
     RESERVED_RULE_METADATA_KEYS,
     RESERVED_SLOT_TAGS_KEY,
+    apply_label_defaults,
     canonicalize_reserved_label_values,
     get_applied_column_pass_thresholds,
     get_rule_pass_threshold,
     get_slot_tags,
+    missing_required_labels,
     resolve_pass_threshold,
     set_slot_tags,
 )
@@ -570,3 +572,51 @@ def test_resolve_pass_threshold_precedence():
     )
     # zero is a real value, not "unset"
     assert resolve_pass_threshold(column_override=0, rule_override=80, registry_default=60, admin_default=70) == 0
+
+
+# ---------------------------------------------------------------------------
+# Mandatory tags + default tag values
+# ---------------------------------------------------------------------------
+
+_TAG_DEFS = [
+    {"key": "severity", "values": ["Low", "High"], "default_value": "Low"},
+    {"key": "team", "values": ["data-eng", "finance"], "default_value": "finance"},
+    {"key": "owner_group", "values": ["a", "b"], "required": True},
+    {"key": "pii", "values": [], "allow_custom_values": False, "required": True},
+    {"key": "note", "values": [], "allow_custom_values": True},
+]
+
+
+def test_apply_label_defaults_fills_missing_tags():
+    assert apply_label_defaults({"name": "r"}, _TAG_DEFS) == {
+        "name": "r",
+        "severity": "Low",
+        "team": "finance",
+        "owner_group": "",
+        "pii": "true",
+    }
+
+
+def test_apply_label_defaults_keeps_existing_values():
+    metadata = {"severity": "High", "team": "data-eng", "owner_group": "a", "pii": "true"}
+    assert apply_label_defaults(metadata, _TAG_DEFS) is metadata
+
+
+def test_apply_label_defaults_ignores_default_outside_values():
+    defs = [{"key": "team", "values": ["data-eng"], "default_value": "gone"}]
+    assert apply_label_defaults({}, defs) == {}
+
+
+def test_apply_label_defaults_handles_none_metadata():
+    assert apply_label_defaults(None, [{"key": "team", "values": ["x"], "default_value": "x"}]) == {"team": "x"}
+    assert apply_label_defaults(None, []) is None
+
+
+def test_missing_required_labels_reports_absent_and_empty_tags():
+    assert missing_required_labels({"owner_group": "  "}, _TAG_DEFS) == ["owner_group", "pii"]
+    assert missing_required_labels({"owner_group": "a", "pii": "true"}, _TAG_DEFS) == []
+
+
+def test_missing_required_labels_never_reports_dimension_or_severity():
+    defs = [{"key": "dimension", "values": ["Validity"], "required": True}]
+    assert missing_required_labels({}, defs) == []

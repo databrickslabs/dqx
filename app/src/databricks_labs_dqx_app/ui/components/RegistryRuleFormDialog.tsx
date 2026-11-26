@@ -63,6 +63,7 @@ import {
 } from "lucide-react";
 import { useApprovalsMode } from "@/hooks/use-approvals-mode";
 import { LabelsEditor } from "@/components/Labels";
+import { addMissingRequiredTags, missingRequiredTags, seedTagDefaults } from "@/lib/rule-tag-defaults";
 import { HelpTooltip } from "@/components/HelpTooltip";
 import { TagPicker } from "@/components/apply-rules/TagPicker";
 import { PermissionsTab, type OwnerGrantIntent } from "@/components/permissions/PermissionsTab";
@@ -1653,6 +1654,11 @@ function publishablePart(snapshot: RuleEditSnapshot): Omit<RuleEditSnapshot, "ow
   return publishable;
 }
 
+function withMissingRequiredTagRows(snapshot: RuleEditSnapshot, definitions: LabelDefinition[]): RuleEditSnapshot {
+  const tags = addMissingRequiredTags(snapshot.tags, definitions);
+  return tags === snapshot.tags ? snapshot : { ...snapshot, tags };
+}
+
 function snapshotFromRule(rule: RegistryRuleOut): RuleEditSnapshot {
   const md = (rule.user_metadata ?? {}) as Record<string, unknown>;
   const asString = (k: string) => (typeof md[k] === "string" ? (md[k] as string) : "");
@@ -1803,6 +1809,23 @@ export function RegistryRuleFormDialog({
   const tagDefinitions = useMemo(
     () => labelDefinitions.filter((d) => d.key !== RESERVED_DIMENSION_KEY && d.key !== RESERVED_SEVERITY_KEY),
     [labelDefinitions],
+  );
+  // Default dimension/severity plus every defaulted or mandatory tag. This is
+  // also the create form's dirty-tracking baseline, so seeded values are clean.
+  const newRuleDefaults = useMemo(() => {
+    const defaultOf = (key: string) => {
+      const def = labelDefinitions.find((d) => d.key === key);
+      return def?.default_value && def.values.includes(def.default_value) ? def.default_value : "";
+    };
+    return {
+      dimension: defaultOf(RESERVED_DIMENSION_KEY),
+      severity: defaultOf(RESERVED_SEVERITY_KEY),
+      tags: seedTagDefaults({}, tagDefinitions),
+    };
+  }, [labelDefinitions, tagDefinitions]);
+  const requiredTagKeys = useMemo(
+    () => tagDefinitions.filter((d) => d.required).map((d) => d.key),
+    [tagDefinitions],
   );
 
   const [mode, setMode] = useState<RegistryMode>("dqx_native");
@@ -2252,6 +2275,25 @@ export function RegistryRuleFormDialog({
   const resultsDisabled = !sourceRule || ruleScore === undefined || resultsNotApplied;
   const resultsNeedsApplyTooltip = !sourceRule || resultsNotApplied;
 
+  // Seed a new rule once per open, including when definitions arrive after the
+  // dialog opens. Existing author values always win over late-arriving defaults.
+  // An edited rule only gains blank rows for mandatory tags it lacks (a tag
+  // made mandatory after it was written), so Submit's gate is visible in the
+  // Tags editor; defaults are never applied to it.
+  const seededKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!open || readOnly || labelDefinitions.length === 0) return;
+    if (seededKeyRef.current === rehydrateKeyRef.current) return;
+    seededKeyRef.current = rehydrateKeyRef.current;
+    if (sourceRule) {
+      setTags((prev) => addMissingRequiredTags(prev, tagDefinitions));
+      return;
+    }
+    setDimension((prev) => prev || newRuleDefaults.dimension);
+    setSeverity((prev) => prev || newRuleDefaults.severity);
+    setTags((prev) => seedTagDefaults(prev, tagDefinitions));
+  }, [open, readOnly, sourceRule, labelDefinitions, newRuleDefaults, tagDefinitions]);
+
   // -- Dirty (unsaved-changes) tracking -------------------------------------
   // Editing an existing rule diffs against the last-persisted rule (mirrors
   // dqlake's `useEditRuleState.isDirty`). Creating a new rule diffs against
@@ -2280,7 +2322,11 @@ export function RegistryRuleFormDialog({
     groupBy,
     authorKind,
   };
-  const persistedSnapshot = editingRule ? snapshotFromRule(editingRule) : PRISTINE_NEW_SNAPSHOT;
+  // The blank mandatory-tag rows added to an edited rule are placeholders, not
+  // edits, so the baseline carries them too.
+  const persistedSnapshot = editingRule
+    ? withMissingRequiredTagRows(snapshotFromRule(editingRule), tagDefinitions)
+    : { ...PRISTINE_NEW_SNAPSHOT, ...newRuleDefaults };
   const isDirty = stableStringify(currentSnapshot) !== stableStringify(persistedSnapshot);
   // Whether anything the APPROVAL GATE cares about changed, which is a strictly
   // narrower question than `isDirty`. A publish freezes mode / definition /
@@ -2478,10 +2524,13 @@ export function RegistryRuleFormDialog({
         ? sqlPredicate.trim().length > 0 && sqlError === null && slotsHaveValidNames(sqlSlots)
         : lowcodePredicate.length > 0 && slotsHaveValidNames(sqlSlots);
   const canSaveDraft = name.trim().length > 0 && !nameError && structurallyValid && unusedSlots.length === 0;
+  // Mandatory tags gate submission, not draft saves, like severity/dimension.
+  const missingTags = missingRequiredTags(tags, tagDefinitions);
   const canSubmit =
     canSaveDraft &&
     severity.trim().length > 0 &&
     dimension.trim().length > 0 &&
+    missingTags.length === 0 &&
     (mode !== "dqx_native" || nativeRequiredParamsFilled);
   // An already-approved rule needs an actual REVISION to resubmit —
   // resubmitting anything else would only re-run the (already-passed) approval
@@ -2524,6 +2573,8 @@ export function RegistryRuleFormDialog({
   const missingSubmitFieldLabels: string[] = [...missingDraftFieldLabels];
   if (!severity.trim()) missingSubmitFieldLabels.push(t("rulesRegistry.severityLabel"));
   if (!dimension.trim()) missingSubmitFieldLabels.push(t("rulesRegistry.dimensionLabel"));
+  if (missingTags.length > 0)
+    missingSubmitFieldLabels.push(t("rulesRegistry.requiredTagsMissing", { tags: missingTags.join(", ") }));
   if (mode === "dqx_native" && functionName.trim() && !nativeRequiredParamsFilled)
     missingSubmitFieldLabels.push(t("rulesRegistry.requiredParametersLabel"));
 
@@ -3326,8 +3377,9 @@ export function RegistryRuleFormDialog({
         onChange={setTags}
         disabled={readOnly}
         title={t("rulesRegistry.tagsLabel")}
-        defaultOpen={Object.keys(tags).length > 0}
+        defaultOpen={Object.keys(tags).length > 0 || requiredTagKeys.length > 0}
         definitions={tagDefinitions}
+        requiredKeys={requiredTagKeys}
       />
       </div>
 

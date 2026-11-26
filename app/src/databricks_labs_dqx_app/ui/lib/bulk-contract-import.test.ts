@@ -6,6 +6,7 @@ import {
   classifyRuleMapping,
   isThreePartFqn,
   resolveTableFqn,
+  shouldPreStageRule,
   type SchemaOutcome,
 } from "./bulk-contract-import";
 
@@ -28,6 +29,7 @@ function outcome(partial: Partial<SchemaOutcome> & Pick<SchemaOutcome, "contract
     applied: 0,
     pending: 0,
     needsMapping: 0,
+    submitFailed: 0,
     failed: 0,
     errors: [],
     ...partial,
@@ -144,6 +146,15 @@ describe("chunk", () => {
   });
 });
 
+describe("shouldPreStageRule", () => {
+  test("pre-stages only rules awaiting approval", () => {
+    expect(shouldPreStageRule("pending_approval")).toBe(true);
+    expect(shouldPreStageRule("approved")).toBe(false);
+    expect(shouldPreStageRule("draft")).toBe(false);
+    expect(shouldPreStageRule("rejected")).toBe(false);
+  });
+});
+
 describe("aggregateByContract", () => {
   test("sums per-schema counters into one row per contract", () => {
     const results = aggregateByContract([
@@ -157,6 +168,7 @@ describe("aggregateByContract", () => {
         reused: 1,
         applied: 2,
         pending: 1,
+        submitFailed: 1,
       }),
       outcome({
         contractId: "c1",
@@ -168,6 +180,7 @@ describe("aggregateByContract", () => {
         created: 2,
         reused: 2,
         needsMapping: 1,
+        submitFailed: 2,
         failed: 1,
         errors: ["apply failed"],
       }),
@@ -190,6 +203,7 @@ describe("aggregateByContract", () => {
     expect(c1.reused).toBe(3);
     expect(c1.applied).toBe(2);
     expect(c1.pending).toBe(1);
+    expect(c1.submitFailed).toBe(3);
     expect(c1.needsMapping).toBe(1);
     expect(c1.failed).toBe(1);
     expect(c1.errors).toEqual(["apply failed"]);

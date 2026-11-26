@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
@@ -38,8 +39,13 @@ import {
 } from "@/lib/api-custom";
 import {
   HEX_COLOR_RE,
+  LABEL_KEY_RE,
+  SELF_GATED_TAG_KEYS,
   defToDraft,
   draftToDef,
+  labelDraftsSaveable,
+  reconcileSavedLabelDrafts,
+  shouldCloseExpandedValue,
   type CriticalityValue,
   type DraftDefinition,
 } from "@/lib/label-definition-drafts";
@@ -106,7 +112,7 @@ import { toast } from "sonner";
 import { useCurrentUserRoleSuspense } from "@/hooks/use-suspense-queries";
 import { usePermissions } from "@/hooks/use-permissions";
 import { sampleValueForKind } from "@/lib/sampling";
-import { Fragment, Suspense, useMemo, useState, useRef, useEffect, useCallback, type ComponentType, type ReactNode } from "react";
+import { Fragment, Suspense, useMemo, useState, useRef, useEffect, useCallback, type ComponentType, type ReactNode, type RefObject } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
@@ -306,7 +312,6 @@ function TimezoneSettings() {
 // reserved ``weight`` key (which controls the weight selector / row).
 // ─────────────────────────────────────────────────────────────────────────────
 
-const LABEL_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*$/;
 const RESERVED_WEIGHT_KEY = "weight";
 const RESERVED_SEVERITY_KEY = "severity";
 
@@ -382,20 +387,19 @@ function LabelDefinitionsSettings() {
 
   // Auto-save: debounced 600ms after any change, guarded by validation.
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Every edit increments this, including invalid/new blank drafts. Save
+  // responses may only reconcile the exact revision they were issued for.
+  const editRevisionRef = useRef(0);
 
   const triggerAutoSave = useCallback(
     (nextDrafts: DraftDefinition[]) => {
+      editRevisionRef.current += 1;
+      const saveRevision = editRevisionRef.current;
+      // An invalid draft (e.g. a new blank card) must not cancel a pending
+      // save of the last valid state, or an edit made just before it is lost.
+      // The bumped revision still marks that save's response as stale.
+      if (!labelDraftsSaveable(nextDrafts)) return;
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      const errs: string[] = [];
-      const seen = new Set<string>();
-      for (const d of nextDrafts) {
-        const k = d.key.trim();
-        if (!k) { errs.push("missing"); continue; }
-        if (!LABEL_KEY_RE.test(k)) errs.push("invalid");
-        if (seen.has(k)) errs.push("dup");
-        seen.add(k);
-      }
-      if (errs.length > 0) return;
       saveTimerRef.current = setTimeout(() => {
         const definitions = nextDrafts.map(draftToDef);
         saveMutation.mutate(
@@ -403,7 +407,14 @@ function LabelDefinitionsSettings() {
           {
             onSuccess: (resp) => {
               queryClient.invalidateQueries({ queryKey: getLabelDefinitionsQueryKey() });
-              setDrafts(resp.data.definitions.map(defToDraft));
+              setDrafts((current) =>
+                reconcileSavedLabelDrafts(
+                  current,
+                  resp.data.definitions,
+                  saveRevision,
+                  editRevisionRef.current,
+                ),
+              );
               toast.success(
                 definitions.length === 0
                   ? t("config.clearedLabels")
@@ -424,68 +435,61 @@ function LabelDefinitionsSettings() {
   // Clean up timer on unmount.
   useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); }, []);
 
+  // Compute the next drafts from the rendered state, then set and save them.
+  // Side effects stay out of setDrafts updaters, which React may run twice.
+  const commitDrafts = (next: DraftDefinition[]) => {
+    setDrafts(next);
+    triggerAutoSave(next);
+  };
+
   const updateDraft = (draftId: string, patch: Partial<DraftDefinition>) => {
-    setDrafts((prev) => {
-      const next = prev.map((d) => (d.draftId === draftId ? { ...d, ...patch } : d));
-      triggerAutoSave(next);
-      return next;
-    });
+    commitDrafts(drafts.map((d) => (d.draftId === draftId ? { ...d, ...patch } : d)));
   };
 
   const removeDraft = (draftId: string) => {
-    setDrafts((prev) => {
-      const next = prev.filter((d) => d.draftId !== draftId);
-      triggerAutoSave(next);
-      return next;
-    });
+    commitDrafts(drafts.filter((d) => d.draftId !== draftId));
   };
 
   const addDraft = () => {
-    setDrafts((prev) => {
-      const next = [
-        ...prev,
-        {
-          draftId: crypto.randomUUID(),
-          key: "",
-          description: "",
-          values: [],
-          allow_custom_values: false,
-          value_colors: null,
-          value_descriptions: null,
-          value_criticality: null,
-          is_builtin: false,
-        },
-      ];
-      // New draft has empty key — auto-save will be triggered once user fills it in.
-      return next;
-    });
+    // Empty keys don't save, but registering the edit prevents an older
+    // in-flight response from discarding this new blank card.
+    commitDrafts([
+      ...drafts,
+      {
+        draftId: crypto.randomUUID(),
+        key: "",
+        description: "",
+        values: [],
+        allow_custom_values: false,
+        value_colors: null,
+        value_descriptions: null,
+        value_criticality: null,
+        is_builtin: false,
+      },
+    ]);
   };
 
   // Seed a normal, editable custom-tag draft from a Unity Catalog governed tag.
   // Import-time population only — the key/description/allowed values are copied
   // once, then it behaves like any hand-authored draft (no ongoing sync).
   const addGovernedDraft = (seed: GovernedKeySeed) => {
-    setDrafts((prev) => {
-      // Guard against a governed key that already exists as a draft.
-      if (prev.some((d) => d.key.trim() === seed.key.trim())) return prev;
-      const next: DraftDefinition[] = [
-        ...prev,
-        {
-          draftId: crypto.randomUUID(),
-          key: seed.key,
-          description: seed.description,
-          values: [...seed.values],
-          allow_custom_values: false,
-          value_colors: null,
-          value_descriptions: null,
-          value_criticality: null,
-          is_builtin: false,
-        },
-      ];
-      // Governed key is valid and non-empty, so a save can fire immediately.
-      triggerAutoSave(next);
-      return next;
-    });
+    // Guard against a governed key that already exists as a draft.
+    if (drafts.some((d) => d.key.trim() === seed.key.trim())) return;
+    // Governed key is valid and non-empty, so a save can fire immediately.
+    commitDrafts([
+      ...drafts,
+      {
+        draftId: crypto.randomUUID(),
+        key: seed.key,
+        description: seed.description,
+        values: [...seed.values],
+        allow_custom_values: false,
+        value_colors: null,
+        value_descriptions: null,
+        value_criticality: null,
+        is_builtin: false,
+      },
+    ]);
   };
 
   if (isLoading) {
@@ -678,29 +682,27 @@ function nextAutoValueName(existing: string[]): string {
  * preview) that expands on click into name/color/description inputs.
  * Replaces the old "type a value + press Enter" text box.
  */
-function AllowedValuesEditor({
+export function AllowedValuesEditor({
   draft,
   onChange,
+  outsideClickRootRef,
 }: {
   draft: DraftDefinition;
   onChange: (patch: Partial<DraftDefinition>) => void;
+  outsideClickRootRef: RefObject<HTMLDivElement | null>;
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState<number | null>(null);
-  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (expanded === null) return;
     const handler = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null;
-      if (!target) return;
-      if (rootRef.current?.contains(target)) return;
-      if (target.closest("[data-radix-popper-content-wrapper]")) return;
-      setExpanded(null);
+      if (shouldCloseExpandedValue(target, outsideClickRootRef.current)) setExpanded(null);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [expanded]);
+  }, [expanded, outsideClickRootRef]);
 
   const values = draft.values;
   const colors = draft.value_colors ?? {};
@@ -720,7 +722,13 @@ function AllowedValuesEditor({
 
   const patchValue = (
     i: number,
-    patch: { name?: string; color?: string | null; description?: string; criticality?: CriticalityValue },
+    patch: {
+      name?: string;
+      color?: string | null;
+      description?: string;
+      criticality?: CriticalityValue;
+      isDefault?: boolean;
+    },
   ) => {
     const current = values[i];
     if (current === undefined) return;
@@ -728,9 +736,11 @@ function AllowedValuesEditor({
     let nextColors = colors;
     let nextDescriptions = descriptions;
     let nextCriticalities = criticalities;
+    let nextDefault = draft.default_value ?? null;
 
     if (patch.name !== undefined && patch.name !== current) {
       nextValues = values.map((v, idx) => (idx === i ? patch.name! : v));
+      if (nextDefault === current) nextDefault = patch.name;
       if (colors[current] !== undefined) {
         nextColors = { ...colors };
         nextColors[patch.name] = nextColors[current];
@@ -762,9 +772,14 @@ function AllowedValuesEditor({
     if (patch.criticality !== undefined) {
       nextCriticalities = { ...nextCriticalities, [targetKey]: patch.criticality };
     }
+    if (patch.isDefault !== undefined) {
+      // One default per tag: ticking a value replaces any previous default.
+      nextDefault = patch.isDefault ? targetKey : nextDefault === targetKey ? null : nextDefault;
+    }
 
     onChange({
       values: nextValues,
+      default_value: nextDefault,
       value_colors: Object.keys(nextColors).length > 0 ? nextColors : null,
       value_descriptions: Object.keys(nextDescriptions).length > 0 ? nextDescriptions : null,
       value_criticality: Object.keys(nextCriticalities).length > 0 ? nextCriticalities : null,
@@ -781,6 +796,7 @@ function AllowedValuesEditor({
     delete nextCriticalities[current];
     onChange({
       values: values.filter((_, idx) => idx !== i),
+      default_value: draft.default_value === current ? null : (draft.default_value ?? null),
       value_colors: Object.keys(nextColors).length > 0 ? nextColors : null,
       value_descriptions: Object.keys(nextDescriptions).length > 0 ? nextDescriptions : null,
       value_criticality: Object.keys(nextCriticalities).length > 0 ? nextCriticalities : null,
@@ -795,12 +811,13 @@ function AllowedValuesEditor({
   };
 
   return (
-    <div ref={rootRef} className="space-y-1.5">
+    <div className="space-y-1.5">
       {displayIndices.map((i) => {
         const v = values[i];
         const isOpen = expanded === i;
         const color = colors[v];
         const description = descriptions[v] ?? "";
+        const isDefault = !!v && draft.default_value === v;
         return (
           <div
             key={i}
@@ -812,13 +829,21 @@ function AllowedValuesEditor({
           >
             <div
               className={cn(
-                "grid items-center gap-2 px-2.5 py-1.5",
+                // Clicking the expand/collapse row must not select its text.
+                "grid items-center gap-2 px-2.5 py-1.5 select-none",
                 isSeverity ? "grid-cols-[auto_1fr_auto_auto]" : "grid-cols-[auto_1fr_auto]",
               )}
             >
               <ValueColorEditor value={v} color={color} onSetColor={(c) => patchValue(i, { color: c })} />
-              <span className="flex items-baseline gap-2 min-w-0">
+              <span className="flex items-center gap-2 min-w-0">
                 <span className="font-mono text-xs shrink-0">{v}</span>
+                <Badge
+                  variant="secondary"
+                  className={cn("h-4 px-1.5 text-[10px] font-normal shrink-0", !isDefault && "invisible")}
+                  aria-hidden={!isDefault}
+                >
+                  {t("config.defaultValueBadge")}
+                </Badge>
                 {description && !isOpen && (
                   <span className="truncate text-xs text-muted-foreground">{description}</span>
                 )}
@@ -898,6 +923,16 @@ function AllowedValuesEditor({
                           rows={1}
                         />
                       </div>
+                      <label
+                        className="flex h-7 shrink-0 cursor-pointer items-center gap-1.5 text-xs select-none"
+                        title={t("config.defaultValueHint")}
+                      >
+                        <Checkbox
+                          checked={isDefault}
+                          onCheckedChange={(c) => patchValue(i, { isDefault: c === true })}
+                        />
+                        <span>{t("config.defaultValueLabel")}</span>
+                      </label>
                     </div>
                   </div>
                 </motion.div>
@@ -906,34 +941,67 @@ function AllowedValuesEditor({
           </div>
         );
       })}
-      <div className="flex items-center gap-3">
-        <Button type="button" variant="outline" size="sm" onClick={addValue} className="h-7 gap-1.5 text-xs">
-          <Plus className="h-3.5 w-3.5" />
-          {t("config.addValue")}
-        </Button>
-        {/* Allow-custom-values sits immediately to the right of Add value.
-            Reserved keys (dimension/severity) always disallow custom values
-            server-side, so it's shown disabled/unchecked for built-ins. */}
-        <label
-          className={cn(
-            "flex items-center gap-1.5 text-sm",
-            draft.is_builtin ? "text-muted-foreground" : "cursor-pointer",
-          )}
-        >
-          <Checkbox
-            checked={draft.is_builtin ? false : draft.allow_custom_values}
-            onCheckedChange={(c) => onChange({ allow_custom_values: c === true })}
-            disabled={draft.is_builtin}
-          />
-          <span>{t("config.allowCustomValues")}</span>
-        </label>
-      </div>
+      <Button type="button" variant="outline" size="sm" onClick={addValue} className="h-7 gap-1.5 text-xs">
+        <Plus className="h-3.5 w-3.5" />
+        {t("config.addValue")}
+      </Button>
+    </div>
+  );
+}
+
+/** Per-tag options. Reserved dimension/severity keys have fixed values and
+ * dedicated submit-gated fields, so both options render locked for them. */
+function TagOptionsEditor({
+  draft,
+  onChange,
+}: {
+  draft: DraftDefinition;
+  onChange: (patch: Partial<DraftDefinition>) => void;
+}) {
+  const { t } = useTranslation();
+  const selfGated = SELF_GATED_TAG_KEYS.has(draft.key.trim());
+  const customLocked = !!draft.is_builtin;
+  const option = (
+    checked: boolean,
+    locked: boolean,
+    onToggle: (checked: boolean) => void,
+    label: string,
+    hint: string,
+  ) => (
+    <label
+      className={cn(
+        "flex items-center gap-1.5 text-sm select-none",
+        locked ? "text-muted-foreground" : "cursor-pointer",
+      )}
+      title={hint}
+    >
+      <Checkbox checked={checked} onCheckedChange={(c) => onToggle(c === true)} disabled={locked} />
+      <span>{label}</span>
+    </label>
+  );
+  return (
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
+      {option(
+        customLocked ? false : draft.allow_custom_values,
+        customLocked,
+        (c) => onChange({ allow_custom_values: c }),
+        t("config.allowCustomValues"),
+        t("config.allowCustomValuesHint"),
+      )}
+      {option(
+        selfGated ? true : !!draft.required,
+        selfGated,
+        (c) => onChange({ required: c }),
+        t("config.mandatoryTag"),
+        selfGated ? t("config.mandatoryTagBuiltinHint") : t("config.mandatoryTagHint"),
+      )}
     </div>
   );
 }
 
 function DefinitionEditorCard({ draft, onChange, onRemove }: DefinitionEditorCardProps) {
   const { t } = useTranslation();
+  const cardRef = useRef<HTMLDivElement>(null);
   const keyValid = !draft.key || LABEL_KEY_RE.test(draft.key.trim());
   const isWeight = draft.key.trim() === RESERVED_WEIGHT_KEY;
   const isSeverityDef = draft.key.trim() === RESERVED_SEVERITY_KEY;
@@ -947,7 +1015,7 @@ function DefinitionEditorCard({ draft, onChange, onRemove }: DefinitionEditorCar
       : t("config.descriptionPlaceholder");
 
   return (
-    <div className="rounded-md border bg-muted/30 p-3 space-y-3">
+    <div ref={cardRef} className="rounded-md border bg-muted/30 p-3 space-y-3">
       {/* Key + Description + delete on one row */}
       <div className="flex items-end gap-2">
         <div className="space-y-1 shrink-0">
@@ -991,11 +1059,13 @@ function DefinitionEditorCard({ draft, onChange, onRemove }: DefinitionEditorCar
         </Button>
       </div>
       {!keyValid && <p className="text-xs text-destructive">{t("config.keyHint")}</p>}
-      {/* Allowed values (the allow-custom-values checkbox lives inline with the
-          "Add value" button inside AllowedValuesEditor). */}
       <div className="space-y-1.5">
         <Label className="text-sm">{t("config.allowedValues")}</Label>
-        <AllowedValuesEditor draft={draft} onChange={onChange} />
+        <AllowedValuesEditor draft={draft} onChange={onChange} outsideClickRootRef={cardRef} />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-sm">{t("config.tagOptions")}</Label>
+        <TagOptionsEditor draft={draft} onChange={onChange} />
       </div>
     </div>
   );

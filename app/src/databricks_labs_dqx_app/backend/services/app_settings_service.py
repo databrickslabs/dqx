@@ -960,28 +960,44 @@ class AppSettingsService:
         },
     ]
 
-    def get_label_definitions(self) -> list[dict]:
+    def get_label_definitions(self, *, strict: bool = False) -> list[dict]:
         """Return the stored ``label_definitions`` list as raw dicts.
 
-        Defensive read shared by the seeding path below and
-        ``registry_models.resolve_criticality``: malformed JSON, a
-        non-list payload, or non-dict entries degrade to an empty /
-        filtered list with a WARNING rather than propagating. Kept as
-        raw dicts (not the ``LabelDefinition`` pydantic model) to avoid
-        a services -> routes import cycle — see the class-level note.
+        The default read is defensive, shared by the seeding path below and
+        ``registry_models.resolve_criticality``: malformed JSON, a non-list
+        payload, or non-dict entries degrade to an empty / filtered list with a
+        WARNING rather than propagating. Kept as raw dicts (not the
+        ``LabelDefinition`` pydantic model) to avoid a services -> routes import
+        cycle — see the class-level note.
+
+        Args:
+            strict: Raise instead of degrading when the stored value is
+                malformed. Used by gates that must fail closed, such as the
+                mandatory-tag check on submission.
+
+        Raises:
+            ValueError: *strict* is set and the stored value is not a JSON
+                list of objects.
         """
         raw = self.get_setting(self._LABEL_DEFINITIONS_KEY)
         if not raw:
             return []
         try:
             parsed = json.loads(raw)
-        except (TypeError, json.JSONDecodeError):
+        except (TypeError, json.JSONDecodeError) as error:
+            if strict:
+                raise ValueError("label_definitions setting is not valid JSON") from error
             logger.warning("label_definitions setting is not valid JSON; treating as empty")
             return []
         if not isinstance(parsed, list):
+            if strict:
+                raise ValueError("label_definitions setting is not a list")
             logger.warning("label_definitions setting is not a list; treating as empty")
             return []
-        return [item for item in parsed if isinstance(item, dict)]
+        definitions = [item for item in parsed if isinstance(item, dict)]
+        if strict and len(definitions) != len(parsed):
+            raise ValueError("label_definitions setting contains non-object entries")
+        return definitions
 
     def seed_reserved_label_definitions_if_absent(self, *, user_email: str | None = None) -> bool:
         """Ensure the reserved ``dimension``/``severity`` label keys exist.

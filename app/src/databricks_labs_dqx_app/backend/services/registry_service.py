@@ -38,8 +38,11 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RuleStatus,
     RuleVersion,
     get_rule_dimension,
+    apply_label_defaults,
     get_rule_severity,
+    missing_required_labels,
 )
+from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.lifecycle_history import HistoryAction, LifecycleHistoryService
 from databricks_labs_dqx_app.backend.services.permissions_service import PermissionsService
 from databricks_labs_dqx_app.backend.services.owner_display_name_service import (
@@ -52,6 +55,21 @@ from databricks_labs_dqx_app.backend.sql_executor import OltpExecutorProtocol, W
 from databricks_labs_dqx_app.backend.sql_utils import escape_sql_string, strip_sql_line_comments
 
 logger = logging.getLogger(__name__)
+
+
+class LabelDefinitionsUnavailableError(Exception):
+    """Raised when mandatory tag definitions cannot be loaded for submission."""
+
+
+class MissingRequiredTagsError(ValueError):
+    """Raised when a rule lacks a value for one or more mandatory tags.
+
+    Subclasses ``ValueError`` so the submit route keeps mapping it to HTTP 400.
+    """
+
+    def __init__(self, missing: list[str]) -> None:
+        self.missing = missing
+        super().__init__(f"Missing required tag(s): {', '.join(missing)}. Add a value before submitting.")
 
 
 class DuplicateRegistryRuleError(Exception):
@@ -149,11 +167,13 @@ class RegistryService:
         sql: OltpExecutorProtocol,
         permissions: PermissionsService | None = None,
         sp_ws: WorkspaceClient | None = None,
+        app_settings: AppSettingsService | None = None,
         history: LifecycleHistoryService | None = None,
     ) -> None:
         self._sql = sql
         self._perms = permissions
         self._sp_ws = sp_ws
+        self._app_settings = app_settings
         self._history = history or LifecycleHistoryService(sql)
         self._table = sql.fqn("dq_rules")
         self._versions_table = sql.fqn("dq_rule_versions")
@@ -411,6 +431,10 @@ class RegistryService:
         Raises:
             UnsafeSqlQueryError: *definition*'s SQL body is unsafe (raised by
                 :meth:`create_rule`).
+            MissingRequiredTagsError: a mandatory tag has no default, so the
+                rule could never be submitted. Checked before creating, so no
+                orphan draft is left behind to block later retries.
+            LabelDefinitionsUnavailableError: tag definitions could not be read.
         """
         approved = self.find_approved_rule_for_definition(definition)
         if approved is not None:
@@ -427,6 +451,8 @@ class RegistryService:
             # duplicate it and don't auto-approve a rule this flow didn't author.
             return None, False
 
+        label_definitions = self._get_label_definitions(None)
+        user_metadata = self.with_required_tags(user_metadata, label_definitions) or {}
         rule, _warning = self.create_rule(
             mode="dqx_native",
             definition=definition,
@@ -435,7 +461,7 @@ class RegistryService:
             user_metadata=user_metadata,
             source="profiling",
         )
-        self.submit(rule.rule_id, user_email)
+        self.submit(rule.rule_id, user_email, label_definitions=label_definitions)
         approved = self.approve(rule.rule_id, user_email)
         logger.info("Auto-created + approved profiling registry rule %s", approved.rule_id)
         return approved, True
@@ -894,7 +920,58 @@ class RegistryService:
     # Lifecycle transitions
     # ------------------------------------------------------------------
 
-    def submit(self, rule_id: str, user_email: str, rationale: str | None = None) -> RegistryRule:
+    def _get_label_definitions(self, supplied: list[dict] | None) -> list[dict]:
+        """Use a request's definitions snapshot, or read fresh settings once.
+
+        The fresh read is strict: a failed read or a malformed stored value
+        raises rather than degrading to "no mandatory tags".
+        """
+        if supplied is not None:
+            return supplied
+        if self._app_settings is None:
+            raise LabelDefinitionsUnavailableError("Cannot submit without tag definitions")
+        try:
+            return self._app_settings.get_label_definitions(strict=True)
+        except Exception as error:
+            raise LabelDefinitionsUnavailableError("Could not load tag definitions; submission aborted") from error
+
+    def with_required_tags(
+        self,
+        user_metadata: dict[str, Any] | None,
+        label_definitions: list[dict] | None = None,
+    ) -> dict[str, Any] | None:
+        """Fill tag defaults into *user_metadata* and confirm it can be submitted.
+
+        For non-interactive callers (profiling, demo seeding) that create and
+        submit in one step: they have no author to fill in a mandatory tag, so
+        they check up front instead of leaving a stuck draft behind.
+
+        Args:
+            user_metadata: The new rule's tags.
+            label_definitions: Optional settings snapshot; read fresh when omitted.
+
+        Returns:
+            *user_metadata* with every configured default applied.
+
+        Raises:
+            MissingRequiredTagsError: a mandatory tag has no value and no default.
+            LabelDefinitionsUnavailableError: tag definitions could not be read.
+        """
+        definitions = self._get_label_definitions(label_definitions)
+        metadata = apply_label_defaults(user_metadata, definitions)
+        missing = missing_required_labels(metadata, definitions)
+        if missing:
+            raise MissingRequiredTagsError(missing)
+        return metadata
+
+    def submit(
+        self,
+        rule_id: str,
+        user_email: str,
+        rationale: str | None = None,
+        *,
+        label_definitions: list[dict] | None = None,
+    ) -> RegistryRule:
         """Submit a rule for approval (-> pending_approval).
 
         Valid from ``draft`` (first publish) and from ``approved`` (an
@@ -907,13 +984,26 @@ class RegistryService:
         an identical, empty vN+1. An approved rule must therefore be modified
         (:meth:`_compute_modified`) before it can be resubmitted.
 
+        Args:
+            rule_id: Rule to submit.
+            user_email: Actor performing the submission.
+            rationale: Optional lifecycle rationale.
+            label_definitions: Optional per-request settings snapshot. Batch
+                callers share this across submissions to avoid per-rule reads;
+                long-lived callers omit it so each submission sees fresh settings.
+
         Raises:
             ValueError: an ``approved`` rule with no changes since publish is
                 submitted (mapped to HTTP 400 by the route).
+            MissingRequiredTagsError: a mandatory tag has no value.
+            LabelDefinitionsUnavailableError: tag definitions could not be read.
         """
         rule = self._get(rule_id)
         if rule is None:
             raise RuntimeError(f"Registry rule not found: {rule_id}")
+        missing_tags = missing_required_labels(rule.user_metadata, self._get_label_definitions(label_definitions))
+        if missing_tags:
+            raise MissingRequiredTagsError(missing_tags)
         if rule.status == "approved":
             snapshot = self._get_version(rule.rule_id, rule.version)
             if not self._compute_modified(rule, snapshot):

@@ -41,7 +41,11 @@ from databricks_labs_dqx_app.backend.services.apply_rules_service import (
     RuleNotPublishedError,
 )
 from databricks_labs_dqx_app.backend.services.monitored_table_service import MonitoredTableService
-from databricks_labs_dqx_app.backend.services.registry_service import RegistryService
+from databricks_labs_dqx_app.backend.services.registry_service import (
+    LabelDefinitionsUnavailableError,
+    MissingRequiredTagsError,
+    RegistryService,
+)
 
 if TYPE_CHECKING:
     from databricks_labs_dqx_app.backend.profiling_rule_builder import ProfilingRuleCandidate
@@ -330,9 +334,19 @@ class ProfilingSuggestionService:
         if candidate is None:
             raise SuggestionNotApplicableError("This profiler suggestion can't be applied to the table.")
 
-        rule, _created = self._registry.match_or_create_approved_rule(
-            candidate.definition, candidate.metadata, user_email
-        )
+        try:
+            rule, _created = self._registry.match_or_create_approved_rule(
+                candidate.definition, candidate.metadata, user_email
+            )
+        except MissingRequiredTagsError as e:
+            raise SuggestionNotApplicableError(
+                f"Tag(s) {', '.join(e.missing)} are mandatory and have no default, so this suggestion "
+                "can't be published automatically. Create the rule from the Rules page instead."
+            ) from e
+        except LabelDefinitionsUnavailableError as e:
+            raise SuggestionNotApplicableError(
+                "Tag settings couldn't be loaded, so this suggestion wasn't applied."
+            ) from e
         if rule is None:
             raise SuggestionNotApplicableError(
                 "A matching rule exists but isn't published yet, so it can't be applied."

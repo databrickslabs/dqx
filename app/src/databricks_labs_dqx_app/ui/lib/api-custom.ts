@@ -897,6 +897,15 @@ export interface LabelDefinition {
    */
   value_criticality?: Record<string, string> | null;
   /**
+   * Mandatory tag: added to every new rule, cannot be removed in the rule
+   * editor, and must have a value before the rule can be submitted. Always
+   * false on the reserved ``dimension``/``severity`` keys (they have their own
+   * submit-gated fields).
+   */
+  required?: boolean;
+  /** One of ``values`` that new rules start with; ``null`` when unset. */
+  default_value?: string | null;
+  /**
    * True for reserved, pre-seeded keys (e.g. the Rules Registry
    * ``dimension``/``severity`` tags). Such keys cannot be deleted or
    * renamed via `saveLabelDefinitions`, though their values, colors, and
@@ -913,6 +922,9 @@ export interface LabelDefinitionsOut {
 export interface LabelDefinitionsIn {
   definitions: LabelDefinition[];
 }
+
+/** Serialize tag-settings writes so rapid edits persist in invocation order. */
+export const LABEL_DEFINITIONS_SAVE_SCOPE = { id: "label-definitions-settings" } as const;
 
 export const getLabelDefinitions = (
   options?: AxiosRequestConfig,
@@ -967,6 +979,7 @@ export const useSaveLabelDefinitions = <
 > => {
   const { mutation: mutationOptions, axios: axiosOptions } = options ?? {};
   return useMutation({
+    scope: LABEL_DEFINITIONS_SAVE_SCOPE,
     mutationFn: ({ data }: { data: LabelDefinitionsIn }) => saveLabelDefinitions(data, axiosOptions),
     ...mutationOptions,
   });

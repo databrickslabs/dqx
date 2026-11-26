@@ -49,7 +49,12 @@ from databricks_labs_dqx_app.backend.models import (
     RegistryRuleSnapshotOut,
     UpdateRegistryRuleIn,
 )
-from databricks_labs_dqx_app.backend.registry_models import RegistryRule, canonicalize_reserved_label_values
+from databricks_labs_dqx_app.backend.registry_models import (
+    RegistryRule,
+    apply_label_defaults,
+    canonicalize_reserved_label_values,
+    missing_required_labels,
+)
 from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
 from databricks_labs_dqx_app.backend.services.apply_rules_service import ApplyRulesService
 from databricks_labs_dqx_app.backend.services.materializer import Materializer
@@ -78,19 +83,20 @@ _AUTHORS_AND_ABOVE = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTH
 _APPROVERS_ONLY = [UserRole.ADMIN, UserRole.RULE_APPROVER]
 
 
-def _read_label_definitions(app_settings: AppSettingsService) -> list[dict]:
-    """Read the configured label vocabulary, degrading to ``[]`` on any failure.
+def _read_label_definitions(app_settings: AppSettingsService) -> list[dict] | None:
+    """Read the configured label vocabulary strictly, returning ``None`` on any failure.
 
-    Best-effort by design: canonicalizing imported tag values is a nicety, so a
-    settings read that fails (or a mocked service returning a non-list) must
-    never fail an import — the values are then persisted verbatim.
+    Callers degrade differently: canonicalizing and defaulting imported tag
+    values is a nicety, so an unreadable vocabulary imports values verbatim.
+    Submission must fail closed, so the batch import passes ``None`` through to
+    :meth:`RegistryService.submit`, which re-reads and raises.
     """
     try:
-        definitions = app_settings.get_label_definitions()
+        definitions = app_settings.get_label_definitions(strict=True)
     except Exception as e:
-        logger.warning("Could not read label_definitions; importing tag values verbatim: %s", e)
-        return []
-    return definitions if isinstance(definitions, list) else []
+        logger.warning(f"Could not read label_definitions; importing tag values verbatim: {e}")
+        return None
+    return definitions if isinstance(definitions, list) else None
 
 
 def _mark_owner_unverified(out: OwnedObject) -> None:
@@ -351,6 +357,8 @@ def batch_import_registry_rules(
     # Resolved once per batch: every rule is canonicalized against the same
     # vocabulary, and the settings read is a DB round-trip.
     label_definitions = _read_label_definitions(app_settings)
+    # Canonicalizing degrades to "no vocabulary"; submission keeps ``None`` so it fails closed.
+    import_definitions = label_definitions or []
 
     created: list[CreateRegistryRuleOut] = []
     reused: list[CreateRegistryRuleOut] = []
@@ -401,13 +409,19 @@ def batch_import_registry_rules(
                     if name:
                         user_metadata["name"] = name
 
+            # Imported rules receive defaults after optional slot generalization,
+            # preserving any metadata rewritten above and all existing tag values.
+            user_metadata = apply_label_defaults(
+                canonicalize_reserved_label_values(user_metadata, import_definitions),
+                import_definitions,
+            )
             rule, warning = svc.create_rule(
                 mode=rule_in.mode,
                 definition=definition,
                 user_email=user_email,
                 polarity=rule_in.polarity,
                 author_kind=rule_in.author_kind,
-                user_metadata=canonicalize_reserved_label_values(user_metadata, label_definitions),
+                user_metadata=user_metadata,
                 owner=rule_in.owner,
                 owner_display_name=rule_in.owner_display_name,
                 source=body.source,
@@ -428,7 +442,15 @@ def batch_import_registry_rules(
             if key is not None:
                 seen_in_batch[key] = rule_out
 
-            if body.auto_approve:
+            missing_tags = missing_required_labels(user_metadata, import_definitions)
+            if missing_tags and (body.auto_approve or body.also_submit):
+                # Keep incomplete imports as drafts for the author to complete.
+                safe_missing = ", ".join(key.replace("\r", "\\r").replace("\n", "\\n") for key in missing_tags)
+                logger.warning(
+                    f"Batch import created rule {rule.rule_id} as a draft; missing required tags: {safe_missing}"
+                )
+                submit_failed += 1
+            elif body.auto_approve:
                 # Publish outright: submit to leave draft, then approve to
                 # bump v0 -> v1 and freeze the snapshot. A freshly-imported
                 # reusable rule has no applications yet, so no re-materialize
@@ -437,7 +459,7 @@ def batch_import_registry_rules(
                 # rule enters the suggestion corpus and shows up in Apply Rules
                 # → Suggest rules. embed_and_store is best-effort / never raises.
                 try:
-                    svc.submit(rule.rule_id, user_email)
+                    svc.submit(rule.rule_id, user_email, label_definitions=label_definitions)
                     approved = svc.approve(rule.rule_id, user_email)
                     embeddings.embed_and_store(approved)
                     submitted += 1
@@ -450,7 +472,7 @@ def batch_import_registry_rules(
                     submit_failed += 1
             elif body.also_submit:
                 try:
-                    svc.submit(rule.rule_id, user_email)
+                    svc.submit(rule.rule_id, user_email, label_definitions=label_definitions)
                     submitted += 1
                 except Exception as submit_err:
                     logger.warning(

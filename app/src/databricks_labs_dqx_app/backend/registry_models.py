@@ -871,3 +871,76 @@ def canonicalize_reserved_label_values(
         if canonical is not None:
             result = set_reserved_tag(result, key, canonical)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Mandatory tags + default tag values
+# ---------------------------------------------------------------------------
+
+
+def _is_boolean_label_definition(definition: dict) -> bool:
+    """Return whether this is a presence-only tag whose value is ``"true"``."""
+    values = definition.get("values")
+    return (not isinstance(values, list) or not values) and not definition.get("allow_custom_values")
+
+
+def _label_default_value(definition: dict) -> str | None:
+    """Return the default when it is one of the definition's configured values."""
+    default = definition.get("default_value")
+    if not isinstance(default, str) or not default:
+        return None
+    return default if default in _configured_label_values([definition], str(definition.get("key"))) else None
+
+
+def apply_label_defaults(
+    user_metadata: dict[str, Any] | None,
+    label_definitions: list[dict],
+) -> dict[str, Any] | None:
+    """Add every defaulted or mandatory tag absent from *user_metadata*.
+
+    Existing values are never overwritten. A missing mandatory tag starts blank
+    unless it is a boolean tag, whose only meaningful value is ``"true"``.
+
+    Args:
+        user_metadata: The rule's tags (``None`` is treated as no tags).
+        label_definitions: Raw definitions from ``AppSettingsService.get_label_definitions``.
+
+    Returns:
+        The original dict when nothing was added, otherwise a new dict.
+    """
+    result = user_metadata
+    for definition in label_definitions:
+        key = definition.get("key")
+        if not isinstance(key, str) or not key or (result and key in result):
+            continue
+        value = _label_default_value(definition)
+        if value is None and definition.get("required"):
+            value = "true" if _is_boolean_label_definition(definition) else ""
+        if value is not None:
+            result = {**(result or {}), key: value}
+    return result
+
+
+def missing_required_labels(user_metadata: dict[str, Any] | None, label_definitions: list[dict]) -> list[str]:
+    """Return mandatory tag keys that are absent or have an empty value.
+
+    Reserved ``dimension`` and ``severity`` keys are skipped because their
+    dedicated rule fields already gate submission.
+
+    Args:
+        user_metadata: The rule's tags.
+        label_definitions: Raw definitions from ``AppSettingsService.get_label_definitions``.
+
+    Returns:
+        Missing keys in definition order; empty when all mandatory tags have values.
+    """
+    metadata = user_metadata or {}
+    missing: list[str] = []
+    for definition in label_definitions:
+        key = definition.get("key")
+        if not isinstance(key, str) or not key or key in (_DIMENSION_LABEL_KEY, _SEVERITY_LABEL_KEY):
+            continue
+        value = get_reserved_tag(metadata, key)
+        if definition.get("required") and (value is None or not value.strip()):
+            missing.append(key)
+    return missing

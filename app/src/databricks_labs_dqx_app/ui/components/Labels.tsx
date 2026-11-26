@@ -59,6 +59,8 @@ interface LabelsEditorProps {
   showHeader?: boolean;
   /** Admin-managed catalog. Triggers constrained mode when non-empty. */
   definitions?: LabelDefinition[];
+  /** Mandatory tag keys: their rows are marked required and can't be removed. */
+  requiredKeys?: string[];
 }
 
 interface Row {
@@ -77,6 +79,12 @@ function isFreeTextDefinition(def: LabelDefinition): boolean {
   return def.values.length === 0 && !!def.allow_custom_values;
 }
 
+/** Whether a key can be added without creating a blank or duplicate row. */
+export function canAddLabelKey(key: string, usedKeys: Set<string>): boolean {
+  const normalized = key.trim();
+  return normalized.length > 0 && !usedKeys.has(normalized);
+}
+
 function recordToRows(rec: Record<string, string>): Row[] {
   return Object.entries(rec).map(([key, value]) => ({
     id: crypto.randomUUID(),
@@ -85,11 +93,11 @@ function recordToRows(rec: Record<string, string>): Row[] {
   }));
 }
 
-function rowsToRecord(
+export function rowsToRecord(
   rows: Row[],
   definitionsMap?: Map<string, LabelDefinition>,
 ): Record<string, string> {
-  const out: Record<string, string> = {};
+  const out = Object.create(null) as Record<string, string>;
   for (const r of rows) {
     const key = r.key.trim();
     const value = r.value.trim();
@@ -124,6 +132,7 @@ export function LabelsEditor({
   variant = "inline",
   showHeader = true,
   definitions,
+  requiredKeys,
 }: LabelsEditorProps) {
   const { t } = useTranslation();
   const editorTitle = title ?? t("labelsEditor.title");
@@ -167,6 +176,7 @@ export function LabelsEditor({
     return m;
   }, [definitions]);
   const constrained = definitionsMap.size > 0;
+  const requiredSet = useMemo(() => new Set(requiredKeys ?? []), [requiredKeys]);
 
   const commit = (next: Row[]) => {
     const record = rowsToRecord(next, definitionsMap);
@@ -179,6 +189,7 @@ export function LabelsEditor({
     commit([...rows, { id: crypto.randomUUID(), key: "", value: "" }]);
 
   const addDefinedRow = (key: string) => {
+    if (!canAddLabelKey(key, usedKeys)) return;
     const def = definitionsMap.get(key);
     // Boolean tag (empty catalog, custom values disallowed): prefill "true".
     // Free-text tags (empty catalog + allow_custom_values) and catalog picks
@@ -211,6 +222,7 @@ export function LabelsEditor({
               definition={definitionsMap.get(r.key.trim())}
               constrained={constrained}
               disabled={disabled}
+              required={requiredSet.has(r.key.trim())}
               onChange={(patch) => updateRow(r.id, patch)}
               onRemove={() => removeRow(r.id)}
             />
@@ -228,9 +240,7 @@ export function LabelsEditor({
               definitions={definitions ?? []}
               usedKeys={usedKeys}
               onPick={addDefinedRow}
-              onPickCustom={(key) =>
-                commit([...rows, { id: crypto.randomUUID(), key, value: "" }])
-              }
+              onPickCustom={addDefinedRow}
             />
           ) : (
             <Button
@@ -293,6 +303,8 @@ interface LabelRowProps {
   definition: LabelDefinition | undefined;
   constrained: boolean;
   disabled?: boolean;
+  /** Mandatory tag (Settings → Tags): marked with an asterisk, not removable. */
+  required?: boolean;
   onChange: (patch: Partial<Row>) => void;
   onRemove: () => void;
 }
@@ -302,6 +314,7 @@ function LabelRow({
   definition,
   constrained,
   disabled,
+  required,
   onChange,
   onRemove,
 }: LabelRowProps) {
@@ -318,6 +331,11 @@ function LabelRow({
         >
           <Tag className="h-3 w-3 opacity-60" />
           <span className="truncate">{definition!.key}</span>
+          {required && (
+            <span className="text-destructive" aria-label={t("labelsEditor.requiredTag")}>
+              *
+            </span>
+          )}
         </Badge>
       ) : (
         <Input
@@ -345,17 +363,19 @@ function LabelRow({
           className="h-7 text-xs flex-1 min-w-0 max-w-40"
         />
       )}
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="h-7 w-7 shrink-0"
-        onClick={onRemove}
-        disabled={disabled}
-        aria-label={t("labelsEditor.removeLabel")}
-      >
-        <X className="h-3.5 w-3.5" />
-      </Button>
+      {!required && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 shrink-0"
+          onClick={onRemove}
+          disabled={disabled}
+          aria-label={t("labelsEditor.removeLabel")}
+        >
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      )}
     </div>
   );
 }
@@ -547,7 +567,9 @@ function KeyPickerButton({
           <CommandItem
             key={d.key}
             value={d.key}
+            disabled={used}
             onSelect={() => {
+              if (used) return;
               onPick(d.key);
               reset();
             }}

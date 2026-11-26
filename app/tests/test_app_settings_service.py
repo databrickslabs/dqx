@@ -553,3 +553,31 @@ class TestPassThresholdEnabled:
         _, kwargs = sql_executor_mock.upsert.call_args
         assert kwargs["key_cols"] == {"setting_key": "pass_threshold_enabled"}
         assert kwargs["value_cols"]["setting_value"] == "false"
+
+
+class TestLabelDefinitionsStrictRead:
+    @pytest.mark.parametrize(
+        "stored",
+        ["not json", '{"key": "team"}', '[{"key": "team"}, "stray"]'],
+        ids=["invalid-json", "not-a-list", "non-object-entry"],
+    )
+    def test_malformed_value_degrades_by_default_and_raises_when_strict(self, settings_service, stored):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [[stored]]
+
+        assert svc.get_label_definitions() == ([{"key": "team"}] if stored.startswith("[") else [])
+        with pytest.raises(ValueError, match="label_definitions"):
+            svc.get_label_definitions(strict=True)
+
+    @pytest.mark.parametrize("rows", [[], [[""]]], ids=["unset", "empty"])
+    def test_unset_value_is_empty_even_when_strict(self, settings_service, rows):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = rows
+
+        assert svc.get_label_definitions(strict=True) == []
+
+    def test_valid_value_is_returned_when_strict(self, settings_service):
+        svc, sql_executor_mock = settings_service
+        sql_executor_mock.query.return_value = [['[{"key": "team", "required": true}]']]
+
+        assert svc.get_label_definitions(strict=True) == [{"key": "team", "required": True}]

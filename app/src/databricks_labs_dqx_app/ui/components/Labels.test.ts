@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { labelsMatchFilter, tagPairsMatchFilter, type LabelSelection } from "./Labels";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createInstance } from "i18next";
+import { I18nextProvider, initReactI18next } from "react-i18next";
+import { canAddLabelKey, LabelsEditor, labelsMatchFilter, rowsToRecord, tagPairsMatchFilter, type LabelSelection } from "./Labels";
 
 // Unit tests for the key-first `labelsMatchFilter` semantics used by the
 // shared LabelFilter (Rules Registry overview + Drafts & Review list). A
@@ -9,6 +13,28 @@ import { labelsMatchFilter, tagPairsMatchFilter, type LabelSelection } from "./L
 
 const sel = (entries: [string, string[]][]): LabelSelection =>
   new Map(entries.map(([k, v]) => [k, new Set(v)]));
+
+const labelsI18n = createInstance();
+await labelsI18n.use(initReactI18next).init({
+  lng: "en",
+  resources: { en: { translation: { labelsEditor: { removeLabel: "Remove label" } } } },
+});
+
+function renderLabelsEditor(requiredKeys: string[]): string {
+  return renderToStaticMarkup(
+    createElement(
+      I18nextProvider,
+      { i18n: labelsI18n },
+      createElement(LabelsEditor, {
+        value: { test: "value_2" },
+        onChange: () => {},
+        showHeader: false,
+        definitions: [{ key: "test", values: ["value_2"], allow_custom_values: false }],
+        requiredKeys,
+      }),
+    ),
+  );
+}
 
 describe("labelsMatchFilter — key-first selection", () => {
   test("empty selection matches everything", () => {
@@ -92,5 +118,34 @@ describe("tagPairsMatchFilter — multi-valued bag", () => {
     ]);
     expect(tagPairsMatchFilter([{ key: "region", value: "eu" }], selection)).toBe(true);
     expect(tagPairsMatchFilter([{ key: "team", value: "ops" }], selection)).toBe(false);
+  });
+});
+
+describe("LabelsEditor — mandatory rows", () => {
+  test("does not render a remove button for a mandatory row", () => {
+    expect(renderLabelsEditor(["test"])).not.toContain('aria-label="Remove label"');
+  });
+
+  test("keeps the remove button for an optional row", () => {
+    expect(renderLabelsEditor([])).toContain('aria-label="Remove label"');
+  });
+});
+
+describe("canAddLabelKey", () => {
+  test("allows a new non-empty key", () => {
+    expect(canAddLabelKey("domain", new Set())).toBe(true);
+  });
+
+  test("rejects used and empty keys", () => {
+    expect(canAddLabelKey("domain", new Set(["domain"]))).toBe(false);
+    expect(canAddLabelKey("  ", new Set())).toBe(false);
+  });
+});
+
+describe("rowsToRecord — prototype-colliding keys", () => {
+  test.each(["constructor", "toString", "valueOf", "__proto__"])("stores %s as an own property", (key) => {
+    const out = rowsToRecord([{ id: "row-1", key, value: "expected" }]);
+    expect(Object.prototype.hasOwnProperty.call(out, key)).toBe(true);
+    expect(out[key]).toBe("expected");
   });
 });
