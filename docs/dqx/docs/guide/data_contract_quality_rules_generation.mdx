@@ -185,6 +185,7 @@ Predefined rules are automatically derived from schema field constraints defined
 | `maxLength` only | `logicalTypeOptions` | `sql_expression` (LENGTH &lt;= N) | Maximum field size |
 | `minLength` + `maxLength` | `logicalTypeOptions` | `sql_expression` (both checks) | Fixed-length codes |
 | `format` | `logicalTypeOptions` | `is_valid_date` (date) or `is_valid_timestamp` (timestamp or time; `datetime` is also accepted for compatibility) | Date, time, and timestamp formats such as `yyyy-MM-dd` or `HH:mm:ss` |
+| `format` (string) | `logicalTypeOptions` | `is_valid_email` (`email`), `is_valid_uuid` (`uuid`), `is_valid_url` (`uri`), `is_valid_ipv4_address` (`ipv4`) or `is_valid_ipv6_address` (`ipv6`); any other format is skipped with a warning | Email addresses, identifiers, links, IP addresses |
 | `enum` | Not supported directly | None; use `pattern` or a `type: library` quality rule | Status codes, categories |
 
 A required object gets its own `is_not_null` check even when it defines child properties. Optional objects rely on their child checks and receive no object-level check. Regenerate saved rules from the contract if you generated them with DQX 0.17.2 or earlier.

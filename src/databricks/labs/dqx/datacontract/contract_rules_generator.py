@@ -70,6 +70,15 @@ _FORMAT_CHECKS_BY_LOGICAL_TYPE: dict[str, _FormatCheck] = {
     "time": _FormatCheck("is_valid_timestamp", "timestamp_format", "valid_time_format"),
 }
 
+# For a string property the format value selects the check; it is not passed to the check as an argument.
+_CHECK_FUNCTIONS_BY_STRING_FORMAT: dict[str, str] = {
+    "email": "is_valid_email",
+    "uuid": "is_valid_uuid",
+    "uri": "is_valid_url",
+    "ipv4": "is_valid_ipv4_address",
+    "ipv6": "is_valid_ipv6_address",
+}
+
 _MAX_LOGGED_DESCRIPTION_LENGTH = 120
 
 
@@ -775,6 +784,12 @@ class DataContractRulesGenerator(DQEngineBase):
                 )
             )
 
+        # Handle string format constraints such as email or uuid
+        if prop.logicalType == 'string' and opts.get('format'):
+            rules.extend(
+                self._generate_string_format_rules_from_options(column, field_metadata, default_criticality, opts)
+            )
+
         return rules
 
     def _generate_not_null_rules_from_property(self, column: str, field_metadata: dict, criticality: str) -> list[dict]:
@@ -1087,6 +1102,38 @@ class DataContractRulesGenerator(DQEngineBase):
                     },
                 },
                 "name": f"{field_metadata['field']}_{format_check.rule_name_suffix}",
+                "criticality": criticality,
+                "user_metadata": {
+                    **field_metadata,
+                    "dimension": "validity",
+                    "rule_type": "predefined",
+                },
+            }
+        ]
+
+    def _generate_string_format_rules_from_options(
+        self, column: str, field_metadata: dict, criticality: str, opts: dict
+    ) -> list[dict]:
+        """
+        Generate a validity rule from logicalTypeOptions format on a string field.
+
+        The format value selects the check, e.g. *email* generates *is_valid_email*. A format without a
+        matching check is skipped with a warning.
+        """
+        format_value = opts['format']
+        function = _CHECK_FUNCTIONS_BY_STRING_FORMAT.get(format_value) if isinstance(format_value, str) else None
+        if function is None:
+            logger.warning(
+                f"Format '{sanitize_for_logging(str(format_value))}' isn't supported for string field "
+                f"'{sanitize_for_logging(column)}'; skipping it. "
+                f"Supported formats: {', '.join(_CHECK_FUNCTIONS_BY_STRING_FORMAT)}."
+            )
+            return []
+
+        return [
+            {
+                "check": {"function": function, "arguments": {"column": column}},
+                "name": f"{field_metadata['field']}_valid_{format_value}_format",
                 "criticality": criticality,
                 "user_metadata": {
                     **field_metadata,
