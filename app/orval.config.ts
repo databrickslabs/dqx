@@ -19,7 +19,8 @@ export default defineConfig({
       prettier: true,
       override: {
         query: {
-          useQuery: true,
+          // Don't set useQuery: true — since orval 8 it forces query hooks for
+          // every verb (POST/PUT/DELETE included) instead of mutations.
           useSuspenseQuery: true,
         },
       },
