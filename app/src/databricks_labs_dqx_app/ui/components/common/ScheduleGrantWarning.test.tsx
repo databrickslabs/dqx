@@ -6,10 +6,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ScheduleGrantWarning } from "./ScheduleGrantWarning";
 import type { ScheduleGrantPreflight } from "@/components/schedules/useScheduleGrantPreflight";
 import type { SchedulePreflightTableOut } from "@/lib/api";
+import de from "@/lib/i18n/locales/de.json";
 import en from "@/lib/i18n/locales/en.json";
 import es from "@/lib/i18n/locales/es.json";
 import fr from "@/lib/i18n/locales/fr.json";
 import it from "@/lib/i18n/locales/it.json";
+import pl from "@/lib/i18n/locales/pl.json";
 import ptBR from "@/lib/i18n/locales/pt-BR.json";
 
 const testI18n = i18next.createInstance();
@@ -120,6 +122,8 @@ describe("ScheduleGrantWarning missing grants", () => {
     ["es", es],
     ["it", it],
     ["pt-BR", ptBR],
+    ["de", de],
+    ["pl", pl],
   ] as const)("the failed re-check keeps its counts in %s", (_code, locale) => {
     const message = locale.schedule.grantWarning.apply.recheckFailed;
 
@@ -230,6 +234,8 @@ describe("ScheduleGrantWarning for a rule's joined tables", () => {
     ["es", es],
     ["it", it],
     ["pt-BR", ptBR],
+    ["de", de],
+    ["pl", pl],
   ] as const)("the joined-table copy is translated in %s", (_code, locale) => {
     for (const key of [
       "referenceMissingTitle",

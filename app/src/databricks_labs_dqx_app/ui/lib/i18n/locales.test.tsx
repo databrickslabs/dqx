@@ -3,10 +3,12 @@ import i18next from "i18next";
 import { I18nextProvider, Trans } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import de from "./locales/de.json";
 import en from "./locales/en.json";
 import es from "./locales/es.json";
 import fr from "./locales/fr.json";
 import it from "./locales/it.json";
+import pl from "./locales/pl.json";
 import ptBR from "./locales/pt-BR.json";
 
 // Trans parses translations as HTML, so a tag named after a void element
@@ -31,7 +33,7 @@ const VOID_ELEMENTS = new Set([
   "wbr",
 ]);
 
-const LOCALES = { en, es, fr, it, "pt-BR": ptBR } as const;
+const LOCALES = { de, en, es, fr, it, pl, "pt-BR": ptBR } as const;
 
 function strings(node: unknown, path: string): [string, string][] {
   if (typeof node === "string") return [[path, node]];
