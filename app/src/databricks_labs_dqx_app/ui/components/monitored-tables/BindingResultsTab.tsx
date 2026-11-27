@@ -19,7 +19,6 @@ import {
   useGetMonitoredTable,
   useGetTableColumns,
   useListRegistryRules,
-  getDqResultsFailedRows,
   type EntityResultsOut,
   type RunsOut,
   type TrendPointOut,
@@ -46,10 +45,8 @@ import { DimensionBreakdown } from "@/components/results/DimensionBreakdown";
 import { FilterChips } from "@/components/results/FilterChips";
 import { FailingRecordsTable } from "@/components/results/FailingRecordsTable";
 import { DownloadFailedRecordsMenu } from "@/components/results/DownloadFailedRecordsMenu";
-import {
-  EXPORT_ROW_LIMIT,
-  toFailingRecords,
-} from "@/components/results/failedRecordsExport";
+import { downloadRunId } from "@/components/results/failedRecordsDownload";
+import { toFailingRecords } from "@/components/results/failedRecordsExport";
 import { toCountSeries } from "@/components/results/countSeries";
 import { computeSchemaDriftSummary } from "@/components/apply-rules/schemaDrift";
 
@@ -820,18 +817,6 @@ function ResultsBody({
 
   const failingRows = toFailingRecords(failedRows?.rows);
 
-  // Download fetches the WHOLE undrilled set for the selected run (no facet
-  // filters, high limit) — independent of the 200-capped, filtered on-screen
-  // table, but scoped to the same single run.
-  const fetchAllFailedRows = async () => {
-    const res = await getDqResultsFailedRows(tableFqn, {
-      run_id: failedRowsRunId,
-      limit: EXPORT_ROW_LIMIT,
-      include_drafts: draftsParam,
-    });
-    return toFailingRecords(res.data.rows);
-  };
-
   /** A small per-widget spinner overlay for the over-time charts (F1). */
   const ChartFrame = ({
     loading,
@@ -1115,7 +1100,13 @@ function ResultsBody({
               </button>
               {!failedRows?.suppressed && (
                 <DownloadFailedRecordsMenu
-                  fetchRows={fetchAllFailedRows}
+                  tableFqn={tableFqn}
+                  runId={downloadRunId({
+                    pickedRunId: failedRowsRunId,
+                    shownRunId: failedRows?.run_id,
+                    isPlaceholderData: failedRowsQuery.isPlaceholderData,
+                  })}
+                  includeDrafts={draftsParam}
                   tableName={tableName}
                 />
               )}

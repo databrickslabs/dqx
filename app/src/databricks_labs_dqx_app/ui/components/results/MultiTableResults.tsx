@@ -7,7 +7,6 @@ import { ChevronDown, Loader2 } from "lucide-react";
 import {
   useGetTableResults,
   useGetDqResultsFailedRows,
-  getDqResultsFailedRows,
   useListResultDimensionsSuspense,
   useListResultSeveritiesSuspense,
   type EntityResultsOut,
@@ -29,10 +28,8 @@ import { FilterChips } from "@/components/results/FilterChips";
 import { ResultsFacetFilter, type FacetFilterOption } from "@/components/results/ResultsFacetFilters";
 import { FailingRecordsTable } from "@/components/results/FailingRecordsTable";
 import { DownloadFailedRecordsMenu } from "@/components/results/DownloadFailedRecordsMenu";
-import {
-  EXPORT_ROW_LIMIT,
-  toFailingRecords,
-} from "@/components/results/failedRecordsExport";
+import { downloadRunId } from "@/components/results/failedRecordsDownload";
+import { toFailingRecords } from "@/components/results/failedRecordsExport";
 import { perTableBreachMarkers } from "@/components/results/breachMarkers";
 import { toCountSeries } from "@/components/results/countSeries";
 import { RunModeSelect, includeDraftsParam } from "@/components/results/RunModeSelect";
@@ -760,18 +757,6 @@ export function MultiTableResultsSection({
     },
   );
 
-  // Download fetches the WHOLE undrilled set for the selected table (no facet
-  // filters, high limit) — independent of the 200-capped on-screen
-  // invalid-samples table.
-  const fetchAllFailedRows = async () => {
-    if (!selectedFqn) return [];
-    const res = await getDqResultsFailedRows(selectedFqn, {
-      limit: EXPORT_ROW_LIMIT,
-      include_drafts: draftsParam,
-    });
-    return toFailingRecords(res.data.rows);
-  };
-
   const toRows = (groups: EntityResultsOut["by_dimension"]) =>
     (groups ?? []).map((g) => ({
       label: g.label ?? null,
@@ -1392,7 +1377,12 @@ export function MultiTableResultsSection({
                 </button>
                 {selectedFqn && !failedRows?.suppressed && (
                   <DownloadFailedRecordsMenu
-                    fetchRows={fetchAllFailedRows}
+                    tableFqn={selectedFqn}
+                    runId={downloadRunId({
+                      shownRunId: failedRows?.run_id,
+                      isPlaceholderData: failedRowsQuery.isPlaceholderData,
+                    })}
+                    includeDrafts={draftsParam}
                     tableName={selectedTable}
                   />
                 )}

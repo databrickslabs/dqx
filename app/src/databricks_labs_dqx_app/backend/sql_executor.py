@@ -14,7 +14,7 @@ from contextlib import AbstractContextManager, contextmanager
 from typing import Any, Protocol, runtime_checkable
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.sql import Disposition, Format, StatementState, StatementStatus
+from databricks.sdk.service.sql import Disposition, Format, StatementResponse, StatementState, StatementStatus
 
 from databricks_labs_dqx_app.backend.sql_utils import escape_json_for_sql_string_literal, escape_sql_string
 
@@ -788,7 +788,12 @@ class SqlExecutor:
         return []
 
     def query_dicts(
-        self, sql: str, *, timeout_seconds: int = 120, require_complete: bool = False
+        self,
+        sql: str,
+        *,
+        timeout_seconds: int = 120,
+        require_complete: bool = False,
+        follow_chunks: bool = False,
     ) -> list[dict[str, str | None]]:
         """Execute a SQL query and return rows as column-name-keyed dicts.
 
@@ -800,6 +805,7 @@ class SqlExecutor:
             require_complete: Validate the result schema and read every data
                 chunk, rejecting incomplete or ambiguous results. Defaults to
                 the existing permissive first-chunk behavior.
+            follow_chunks: Read every result chunk, not only the first.
 
         Raises:
             RuntimeError: The query fails or complete results cannot be verified.
@@ -807,7 +813,7 @@ class SqlExecutor:
                 upstream error details.
         """
         if not require_complete:
-            return self._query_dicts(sql, timeout_seconds=timeout_seconds)
+            return self._query_dicts(sql, timeout_seconds=timeout_seconds, follow_chunks=follow_chunks)
         try:
             return self._query_dicts(sql, timeout_seconds=timeout_seconds, require_complete=True)
         except Exception:
@@ -819,7 +825,12 @@ class SqlExecutor:
             ) from None
 
     def _query_dicts(
-        self, sql: str, *, timeout_seconds: int = 120, require_complete: bool = False
+        self,
+        sql: str,
+        *,
+        timeout_seconds: int = 120,
+        require_complete: bool = False,
+        follow_chunks: bool = False,
     ) -> list[dict[str, str | None]]:
         """Execute a query with optional complete-result validation."""
         resp = self._ws.statement_execution.execute_statement(
@@ -925,14 +936,38 @@ class SqlExecutor:
                 chunk = self._ws.statement_execution.get_statement_result_chunk_n(resp.statement_id, index)
                 chunk_index = index
 
-        if not resp.result or not resp.result.data_array:
-            return []
-
         columns = [
             col.name or ""
             for col in ((resp.manifest.schema.columns if resp.manifest and resp.manifest.schema else None) or [])
         ]
+        if follow_chunks:
+            return self._read_all_chunks(resp, columns)
+
+        if not resp.result or not resp.result.data_array:
+            return []
         return [dict(zip(columns, row)) for row in resp.result.data_array]
+
+    def _read_all_chunks(self, resp: StatementResponse, columns: list[str]) -> list[dict[str, str | None]]:
+        """Read all result chunks of a succeeded statement."""
+        manifest = resp.manifest
+        if manifest and manifest.truncated:
+            raise RuntimeError("Incomplete SQL query result.")
+        chunk = resp.result
+        rows: list[dict[str, str | None]] = [
+            dict(zip(columns, row)) for row in (chunk.data_array if chunk else None) or []
+        ]
+        seen = {chunk.chunk_index if chunk and chunk.chunk_index is not None else 0}
+        index = chunk.next_chunk_index if chunk else None
+        while index is not None:
+            if index in seen or not resp.statement_id:
+                raise RuntimeError("Incomplete SQL query result.")
+            seen.add(index)
+            chunk = self._ws.statement_execution.get_statement_result_chunk_n(resp.statement_id, index)
+            rows.extend(dict(zip(columns, row)) for row in chunk.data_array or [])
+            index = chunk.next_chunk_index
+        if manifest and manifest.total_row_count is not None and manifest.total_row_count != len(rows):
+            raise RuntimeError("Incomplete SQL query result.")
+        return rows
 
     # ------------------------------------------------------------------
     # CRUD-builder shortcuts (Protocol contract)

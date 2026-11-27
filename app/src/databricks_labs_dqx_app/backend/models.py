@@ -2495,11 +2495,15 @@ class FailedRowsOut(BaseModel):
     *suppressed* is True when the source table carries fine-grained
     access controls (Task 7 semantics); an empty non-suppressed response
     is also what a caller without SELECT on the source table receives.
+    *run_id* is the run the rows belong to (None when *rows* is empty).
+    *next_cursor* is set when more rows follow; pass it back as *after*.
     """
 
     rows: list[FailedRowOut] = Field(default_factory=list)
     total: int = 0
     suppressed: bool = False
+    run_id: str | None = None
+    next_cursor: str | None = None
 
 
 class SeverityOut(BaseModel):

@@ -1905,11 +1905,15 @@ export interface FailedRowOut {
  * *suppressed* is True when the source table carries fine-grained
  * access controls (Task 7 semantics); an empty non-suppressed response
  * is also what a caller without SELECT on the source table receives.
+ * *run_id* is the run the rows belong to (None when *rows* is empty).
+ * *next_cursor* is set when more rows follow; pass it back as *after*.
  */
 export interface FailedRowsOut {
   rows?: FailedRowOut[];
   total?: number;
   suppressed?: boolean;
+  run_id?: string | null;
+  next_cursor?: string | null;
 }
 
 export interface FilterTablesByColumnsIn {
@@ -4903,12 +4907,13 @@ export type GetDqResultsFailedRowsParams = {
   run_id?: string | null;
   /**
    * @minimum 1
-   * @maximum 100000
+   * @maximum 5000
    */
   limit?: number;
   /** @minimum 0 */
   offset?: number;
   include_drafts?: boolean;
+  after?: string | null;
 };
 
 export type GetDqResultsRunsParams = {
@@ -31326,6 +31331,9 @@ export function useGetProductResultsSuspense<TData = Awaited<ReturnType<typeof g
  * legacy runs classify as published). ``include_drafts=true`` widens
  * which runs QUALIFY as "latest" — never how many runs are returned.
  *
+ * PAGING — a page is at most *limit* rows and ~8 MiB. Pass *next_cursor*
+ * back as *after*, with *run_id*, to get the next one.
+ *
  * SECURITY MODEL — the checks from ``services/quarantine_sample_service.py``,
  * in the same load-bearing order:
  *
@@ -31412,6 +31420,9 @@ export type GetDqResultsFailedRowsQueryError = AxiosError<HTTPValidationError>
  * legacy runs classify as published). ``include_drafts=true`` widens
  * which runs QUALIFY as "latest" — never how many runs are returned.
  *
+ * PAGING — a page is at most *limit* rows and ~8 MiB. Pass *next_cursor*
+ * back as *after*, with *run_id*, to get the next one.
+ *
  * SECURITY MODEL — the checks from ``services/quarantine_sample_service.py``,
  * in the same load-bearing order:
  *
@@ -31447,6 +31458,9 @@ export function useGetDqResultsFailedRows<TData = Awaited<ReturnType<typeof getD
  * (the one place run_mode is resolved: stamped tag first, untagged
  * legacy runs classify as published). ``include_drafts=true`` widens
  * which runs QUALIFY as "latest" — never how many runs are returned.
+ *
+ * PAGING — a page is at most *limit* rows and ~8 MiB. Pass *next_cursor*
+ * back as *after*, with *run_id*, to get the next one.
  *
  * SECURITY MODEL — the checks from ``services/quarantine_sample_service.py``,
  * in the same load-bearing order:
@@ -31484,6 +31498,9 @@ export function useGetDqResultsFailedRows<TData = Awaited<ReturnType<typeof getD
  * legacy runs classify as published). ``include_drafts=true`` widens
  * which runs QUALIFY as "latest" — never how many runs are returned.
  *
+ * PAGING — a page is at most *limit* rows and ~8 MiB. Pass *next_cursor*
+ * back as *after*, with *run_id*, to get the next one.
+ *
  * SECURITY MODEL — the checks from ``services/quarantine_sample_service.py``,
  * in the same load-bearing order:
  *
@@ -31513,6 +31530,9 @@ export function useGetDqResultsFailedRows<TData = Awaited<ReturnType<typeof getD
  * (the one place run_mode is resolved: stamped tag first, untagged
  * legacy runs classify as published). ``include_drafts=true`` widens
  * which runs QUALIFY as "latest" — never how many runs are returned.
+ *
+ * PAGING — a page is at most *limit* rows and ~8 MiB. Pass *next_cursor*
+ * back as *after*, with *run_id*, to get the next one.
  *
  * SECURITY MODEL — the checks from ``services/quarantine_sample_service.py``,
  * in the same load-bearing order:
@@ -31580,6 +31600,9 @@ export type GetDqResultsFailedRowsSuspenseQueryError = AxiosError<HTTPValidation
  * legacy runs classify as published). ``include_drafts=true`` widens
  * which runs QUALIFY as "latest" — never how many runs are returned.
  *
+ * PAGING — a page is at most *limit* rows and ~8 MiB. Pass *next_cursor*
+ * back as *after*, with *run_id*, to get the next one.
+ *
  * SECURITY MODEL — the checks from ``services/quarantine_sample_service.py``,
  * in the same load-bearing order:
  *
@@ -31610,35 +31633,8 @@ export function useGetDqResultsFailedRowsSuspense<TData = Awaited<ReturnType<typ
  * legacy runs classify as published). ``include_drafts=true`` widens
  * which runs QUALIFY as "latest" — never how many runs are returned.
  *
- * SECURITY MODEL — the checks from ``services/quarantine_sample_service.py``,
- * in the same load-bearing order:
- *
- * 1. Validate the FQN (400 before any backend call).
- * 2. Live OBO SELECT self-check on the SOURCE table, as the CALLER; on
- *    failure return HTTP 200 with an empty list — never 403/404.
- * 3. Fine-grained-control check via the caller's OBO metadata read; if
- *    present — or unknowable — suppress the sample entirely.
- * 4. Only then does the app's service principal read the quarantine
- *    table. Filters are applied AFTER the gates, over the parsed rows.
- * @summary Get Dq Results Failed Rows
- */
-export function useGetDqResultsFailedRowsSuspense<TData = Awaited<ReturnType<typeof getDqResultsFailedRows>>, TError = AxiosError<HTTPValidationError>>(
- tableFqn: string,
-    params?: GetDqResultsFailedRowsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDqResultsFailedRows>>, TError, TData>>, axios?: AxiosRequestConfig}
- , queryClient?: QueryClient
-  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
-/**
- * One run's failing rows for *table_fqn*, filtered server-side (OBO-gated).
- *
- * Failing records are PER-RUN — the response never stacks rows across
- * runs. An explicit *run_id* pins exactly that run; otherwise the
- * default is the table's LATEST run, resolved the way the dq-score
- * endpoints resolve it (``ORDER BY run_time DESC LIMIT 1`` under
- * run_mode filtering). ``dq_quarantine_records`` carries no run_mode of
- * its own, so the resolve is a subselect against ``v_dq_check_results``
- * (the one place run_mode is resolved: stamped tag first, untagged
- * legacy runs classify as published). ``include_drafts=true`` widens
- * which runs QUALIFY as "latest" — never how many runs are returned.
+ * PAGING — a page is at most *limit* rows and ~8 MiB. Pass *next_cursor*
+ * back as *after*, with *run_id*, to get the next one.
  *
  * SECURITY MODEL — the checks from ``services/quarantine_sample_service.py``,
  * in the same load-bearing order:
@@ -31669,6 +31665,42 @@ export function useGetDqResultsFailedRowsSuspense<TData = Awaited<ReturnType<typ
  * (the one place run_mode is resolved: stamped tag first, untagged
  * legacy runs classify as published). ``include_drafts=true`` widens
  * which runs QUALIFY as "latest" — never how many runs are returned.
+ *
+ * PAGING — a page is at most *limit* rows and ~8 MiB. Pass *next_cursor*
+ * back as *after*, with *run_id*, to get the next one.
+ *
+ * SECURITY MODEL — the checks from ``services/quarantine_sample_service.py``,
+ * in the same load-bearing order:
+ *
+ * 1. Validate the FQN (400 before any backend call).
+ * 2. Live OBO SELECT self-check on the SOURCE table, as the CALLER; on
+ *    failure return HTTP 200 with an empty list — never 403/404.
+ * 3. Fine-grained-control check via the caller's OBO metadata read; if
+ *    present — or unknowable — suppress the sample entirely.
+ * 4. Only then does the app's service principal read the quarantine
+ *    table. Filters are applied AFTER the gates, over the parsed rows.
+ * @summary Get Dq Results Failed Rows
+ */
+export function useGetDqResultsFailedRowsSuspense<TData = Awaited<ReturnType<typeof getDqResultsFailedRows>>, TError = AxiosError<HTTPValidationError>>(
+ tableFqn: string,
+    params?: GetDqResultsFailedRowsParams, options?: { query?:Partial<UseSuspenseQueryOptions<Awaited<ReturnType<typeof getDqResultsFailedRows>>, TError, TData>>, axios?: AxiosRequestConfig}
+ , queryClient?: QueryClient
+  ):  UseSuspenseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * One run's failing rows for *table_fqn*, filtered server-side (OBO-gated).
+ *
+ * Failing records are PER-RUN — the response never stacks rows across
+ * runs. An explicit *run_id* pins exactly that run; otherwise the
+ * default is the table's LATEST run, resolved the way the dq-score
+ * endpoints resolve it (``ORDER BY run_time DESC LIMIT 1`` under
+ * run_mode filtering). ``dq_quarantine_records`` carries no run_mode of
+ * its own, so the resolve is a subselect against ``v_dq_check_results``
+ * (the one place run_mode is resolved: stamped tag first, untagged
+ * legacy runs classify as published). ``include_drafts=true`` widens
+ * which runs QUALIFY as "latest" — never how many runs are returned.
+ *
+ * PAGING — a page is at most *limit* rows and ~8 MiB. Pass *next_cursor*
+ * back as *after*, with *run_id*, to get the next one.
  *
  * SECURITY MODEL — the checks from ``services/quarantine_sample_service.py``,
  * in the same load-bearing order:

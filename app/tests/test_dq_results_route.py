@@ -1315,6 +1315,7 @@ def quarantine_row(
     warnings: object = None,
     created_at: str = "2026-07-10 00:00:00",
     total_count: int | None = None,
+    fetched: int | None = None,
 ) -> dict[str, str | None]:
     row: dict[str, str | None] = {
         "quarantine_id": quarantine_id,
@@ -1328,10 +1329,13 @@ def quarantine_row(
         # COUNT(*) OVER() rides on each filtered row (Statement Execution
         # returns all columns as strings).
         row["total_count"] = str(total_count)
+    if fetched is not None:
+        row["fetched"] = str(fetched)
     return row
 
 
 FAILED_ROWS_URL = f"/api/v1/dq-results/failed-rows/{FQN}"
+EMPTY_FAILED_ROWS = {"rows": [], "total": 0, "suppressed": False, "run_id": None, "next_cursor": None}
 
 
 def _quarantine_stmt(sql_mock: MagicMock) -> str:
@@ -1353,7 +1357,7 @@ class TestFailedRowsSecurity:
         obo_sql_mock.query.side_effect = RuntimeError("PERMISSION_DENIED: no SELECT on table")
         resp = client.get(FAILED_ROWS_URL)
         assert resp.status_code == 200
-        assert resp.json() == {"rows": [], "total": 0, "suppressed": False}
+        assert resp.json() == EMPTY_FAILED_ROWS
         # The caller does not even learn whether the table has
         # fine-grained controls.
         obo_ws_mock.tables.get.assert_not_called()
@@ -1368,7 +1372,7 @@ class TestFailedRowsSecurity:
             row_filter=TableRowFilter(function_name="main.sales.f", input_column_names=["region"])
         )
         resp = client.get(FAILED_ROWS_URL)
-        assert resp.json() == {"rows": [], "total": 0, "suppressed": True}
+        assert resp.json() == {**EMPTY_FAILED_ROWS, "suppressed": True}
         sql_mock.query_dicts.assert_not_called()
 
     def test_column_mask_suppresses_sample(self, client, obo_ws_mock, sql_mock):
@@ -1401,8 +1405,10 @@ class TestFailedRowsSecurity:
         sql_mock.query_dicts.assert_not_called()
 
     def test_sp_query_failure_maps_to_500(self, client, sql_mock):
-        sql_mock.query_dicts.side_effect = RuntimeError("warehouse down")
-        assert client.get(FAILED_ROWS_URL).status_code == 500
+        sql_mock.query_dicts.side_effect = RuntimeError("warehouse down\nSQL: SELECT quarantine_id")
+        resp = client.get(FAILED_ROWS_URL)
+        assert resp.status_code == 500
+        assert resp.json() == {"detail": "Failed records could not be loaded."}
 
 
 class TestFailedRowsEntitlementPiggyback:
@@ -1612,20 +1618,20 @@ class TestFailedRowsShapeAndFilters:
 
     def test_unfiltered_scan_uses_limit(self, client, sql_mock):
         client.get(FAILED_ROWS_URL, params={"limit": 7})
-        assert "LIMIT 7" in _quarantine_stmt(sql_mock)
+        stmt = _quarantine_stmt(sql_mock)
+        assert "LIMIT 8 OFFSET 0" in stmt
+        assert "rn <= 7" in stmt
 
     def test_query_orders_with_quarantine_id_tiebreak(self, client, sql_mock):
-        # Bulk quarantine writes stamp one created_at across the whole run, so
-        # a deterministic tiebreak is required for stable paging.
         client.get(FAILED_ROWS_URL)
-        assert "ORDER BY created_at DESC, quarantine_id DESC" in _quarantine_stmt(sql_mock)
+        assert "ORDER BY quarantine_id DESC" in _quarantine_stmt(sql_mock)
 
     def test_offset_is_pushed_for_pagination(self, client, sql_mock):
         client.get(FAILED_ROWS_URL, params={"limit": 50, "offset": 100})
         stmt = _quarantine_stmt(sql_mock)
-        assert "LIMIT 50 OFFSET 100" in stmt
+        assert "LIMIT 51 OFFSET 100" in stmt
 
-    @pytest.mark.parametrize("limit", [0, 100001])
+    @pytest.mark.parametrize("limit", [0, 5001])
     def test_out_of_range_limit_is_rejected(self, client, sql_mock, limit):
         resp = client.get(FAILED_ROWS_URL, params={"limit": limit})
         assert resp.status_code == 422
@@ -1662,7 +1668,7 @@ class TestFailedRowsTrueTotal:
             metrics_rows=[metrics_row(FQN, "r1", input_rows=5000, valid_rows=200)],
         )
         body = client.get(FAILED_ROWS_URL, params={"limit": 1}).json()
-        assert "LIMIT 1 OFFSET 0" in _quarantine_stmt(sql_mock)  # cap enforced in SQL
+        assert "rn <= 1" in _quarantine_stmt(sql_mock)  # cap enforced in SQL
         assert len(body["rows"]) == 1
         assert body["total"] == 4800  # NOT the page size
 
@@ -1715,6 +1721,103 @@ class TestFailedRowsTrueTotal:
         body = client.get(FAILED_ROWS_URL).json()
         assert body["total"] == 0
         assert self._metrics_stmts(sql_mock) == []
+
+
+# ---------------------------------------------------------------------------
+# Failed rows — paging (#1707)
+# ---------------------------------------------------------------------------
+
+
+class TestFailedRowsPaging:
+    """Paged reads of one run's failed rows."""
+
+    CURSOR = "q2"
+
+    def test_page_is_one_byte_bounded_statement_read_in_full(self, client, sql_mock):
+        assert client.get(FAILED_ROWS_URL).status_code == 200
+        (call,) = [c for c in sql_mock.query_dicts.call_args_list if "dq_quarantine_records" in c[0][0]]
+        assert call.kwargs == {"follow_chunks": True}
+        stmt = call[0][0]
+        assert "octet_length(" in stmt
+        assert "page_bytes <= 8388608" in stmt
+        assert "rn = 1 OR" in stmt
+        # The next cursor is built from the last returned row, so page must come back in page order.
+        assert stmt.endswith("ORDER BY rn")
+
+    @pytest.mark.parametrize("fetched,expected_cursor", [(2, None), (3, "q2")])
+    def test_next_cursor_is_set_only_when_more_rows_exist(self, client, sql_mock, fetched, expected_cursor):
+        sql_dispatch(
+            sql_mock,
+            quarantine_rows=[quarantine_row("q1", fetched=fetched), quarantine_row("q2", fetched=fetched)],
+        )
+        body = client.get(FAILED_ROWS_URL).json()
+        assert [r["record_key"] for r in body["rows"]] == ["q1", "q2"]
+        assert body["next_cursor"] == expected_cursor
+        assert body["run_id"] == "r1"
+
+    def test_empty_run_has_no_run_id_even_when_pinned(self, client, sql_mock):
+        sql_dispatch(sql_mock, quarantine_rows=[])
+        assert client.get(FAILED_ROWS_URL, params={"run_id": "r1"}).json() == EMPTY_FAILED_ROWS
+
+    def test_after_pushes_the_keyset_predicate_for_the_pinned_run(self, client, sql_mock):
+        assert client.get(FAILED_ROWS_URL, params={"run_id": "r1", "after": self.CURSOR}).status_code == 200
+        stmt = _quarantine_stmt(sql_mock)
+        assert "AND quarantine_id < 'q2' " in stmt
+        assert "run_id = 'r1'" in stmt
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {"after": "q2"},
+            {"after": "q2", "run_id": "r1", "offset": 10},
+            {"after": "a b", "run_id": "r1"},
+            {"after": "a'b", "run_id": "r1"},
+            {"after": "a\\", "run_id": "r1"},
+            {"after": "q" * 129, "run_id": "r1"},
+        ],
+    )
+    def test_invalid_cursor_request_is_rejected_before_any_backend_call(
+        self, client, sql_mock, obo_sql_mock, obo_ws_mock, params
+    ):
+        resp = client.get(FAILED_ROWS_URL, params=params)
+        assert resp.status_code == 400
+        assert params["after"] not in resp.json()["detail"]
+        obo_sql_mock.query.assert_not_called()
+        obo_ws_mock.tables.get.assert_not_called()
+        sql_mock.query_dicts.assert_not_called()
+
+    def test_denied_continuation_is_an_empty_200_without_sp_read(self, client, obo_sql_mock, obo_ws_mock, sql_mock):
+        obo_sql_mock.query.side_effect = RuntimeError("PERMISSION_DENIED")
+        resp = client.get(FAILED_ROWS_URL, params={"run_id": "r1", "after": self.CURSOR})
+        assert resp.status_code == 200
+        assert resp.json() == EMPTY_FAILED_ROWS
+        obo_ws_mock.tables.get.assert_not_called()
+        sql_mock.query_dicts.assert_not_called()
+
+    def test_suppressed_continuation_is_an_empty_200_without_sp_read(self, client, obo_ws_mock, sql_mock):
+        obo_ws_mock.tables.get.return_value = TableInfo(
+            row_filter=TableRowFilter(function_name="main.sales.f", input_column_names=["region"])
+        )
+        resp = client.get(FAILED_ROWS_URL, params={"run_id": "r1", "after": self.CURSOR})
+        assert resp.status_code == 200
+        assert resp.json() == {**EMPTY_FAILED_ROWS, "suppressed": True}
+        sql_mock.query_dicts.assert_not_called()
+
+    @pytest.mark.parametrize("facet", [{}, {"rule": "c1"}])
+    def test_continuation_page_skips_totals_and_the_entitlement_write(self, client, sql_mock, entitlement_mock, facet):
+        sql_dispatch(
+            sql_mock,
+            quarantine_rows=[quarantine_row("q3", total_count=1183), quarantine_row("q4", total_count=1183)],
+            metrics_rows=[metrics_row(FQN, "r1", input_rows=5000, valid_rows=200)],
+        )
+        body = client.get(FAILED_ROWS_URL, params={"run_id": "r1", "after": self.CURSOR, **facet}).json()
+        assert body["total"] == 2
+        assert sql_mock.query_dicts.call_count == 1
+        stmt = _quarantine_stmt(sql_mock)
+        assert "total_count" not in stmt
+        # A continuation page still filters & only the count work is skipped.
+        assert ("registry_rule_id" in stmt and "'c1'" in stmt) == bool(facet)
+        entitlement_mock.record_entitlement.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
