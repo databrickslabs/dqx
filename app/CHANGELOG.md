@@ -4,6 +4,11 @@
 
 Pins DQX Core 0.17.2 (was 0.17.0) for the app and the task runner, on both DAB and Marketplace.
 
+### Packaging and deployment
+
+- Upgraded orval to 8.48.0, which clears the npm audit advisories in the frontend build tooling ([#1742](https://github.com/databrickslabs/dqx/pull/1742)).
+- Building Studio from source now needs Node.js 22.18 or newer (was 18). `app/package.json` declares this in `engines`, so `make app-install` fails early on an older Node.
+
 ## 0.1.2
 
 ### Fixes
