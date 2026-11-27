@@ -3,6 +3,7 @@ import re
 import pyspark.sql.functions as F
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 from tests.constants import TEST_CATALOG
+from tests.llm_endpoints import RULES_GENERATOR_TEST_MODEL
 from databricks.labs.dqx.engine import DQEngineCore
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.config import LLMModelConfig, InputConfig
@@ -124,7 +125,7 @@ def test_generate_dq_rules_ai_assisted_with_input_path(ws, spark, make_directory
 
 
 def test_generate_dq_rules_ai_assisted_custom_model(ws, spark):
-    llm_model_config = LLMModelConfig(model_name="databricks/databricks-llama-4-maverick")
+    llm_model_config = LLMModelConfig(model_name=RULES_GENERATOR_TEST_MODEL)
     generator = DQGenerator(ws, spark, llm_model_config=llm_model_config)
     actual_checks = generator.generate_dq_rules_ai_assisted(user_input=USER_INPUT)
     assert not DQEngineCore.validate_checks(actual_checks).has_errors

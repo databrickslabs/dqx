@@ -35,9 +35,6 @@ from tests.constants import TEST_CATALOG
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MCP_SCRIPTS = _REPO_ROOT / "mcp-server" / "scripts"
 
-# Reuse the same Model Serving endpoint the anomaly AI-explanation tests use.
-AI_QUERY_ENDPOINT = os.environ.get("DQX_AI_QUERY_TEST_ENDPOINT", "databricks-claude-sonnet-4-5")
-
 # Catalog the test creates/drops schemas + temp views in. Defaults to the shared TEST_CATALOG
 # (what CI uses); override with DQX_MCP_TEST_CATALOG to run locally against a workspace that
 # uses a different catalog.

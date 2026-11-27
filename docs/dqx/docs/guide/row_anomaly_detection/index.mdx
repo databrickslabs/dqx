@@ -367,12 +367,20 @@ checks = [
       "registry_table": "catalog.schema.dqx_anomaly_models",
       "threshold": 95.0,
       # Optional: override the serving endpoint (defaults to databricks-claude-sonnet-4-5)
-      # "ai_explanation_llm_model_config": {"model_name": "databricks-claude-sonnet-4-5"},
+      # "ai_explanation_llm_model_config": {"model_name": "databricks-llama-4-maverick"},
       # Optional: turn explanations off -> "enable_ai_explanation": False
     },
   )
 ]
 ```
+
+#### Choosing a model
+
+By default, explanations call the `databricks-claude-sonnet-4-5` endpoint: the `LLMModelConfig` default, `databricks/databricks-claude-sonnet-4-5`, with the `databricks/` prefix removed. To use another endpoint, set `ai_explanation_llm_model_config` as in the example above. Pass a Model Serving endpoint name such as `databricks-llama-4-maverick`; `system.ai.*` model names are not accepted by this option.
+
+`ai_query` runs as batch inference. Databricks lists the models it supports and optimizes for batch inference in the [`ai_query` supported models list](https://docs.databricks.com/aws/en/large-language-models/ai-query#supported-models), and the default model is not on that list today. Models outside the list are not optimized for batch inference, and some endpoints reject batch requests with an error such as `PERMISSION_DENIED: Endpoint <name> is not supported for batch inference`. DQX checks the endpoint with a one-row `ai_query` call before scoring, and that check can pass for an endpoint that then rejects the batch call.
+
+This applies only to features built on `ai_query`, such as AI explanations. The DSPy-based features, [AI-assisted quality checks generation](/docs/guide/ai_assisted_quality_checks_generation) and [AI-assisted primary key detection](/docs/guide/ai_assisted_primary_key_detection), call the model one request at a time, so the list does not apply to them.
 
 <Admonition type="note" title="Cost and privacy">
 * Explanations are **on by default** and call a Model Serving endpoint, so they add per-run LLM cost. `max_groups` (default 500) caps how many groups the model is called for per run. For segmented models the cap is shared across segments (at least one call each), so if you set `max_groups` lower than the number of segments you still get one call per segment — a warning is logged when that happens. Set `enable_ai_explanation=False` to turn explanations off.

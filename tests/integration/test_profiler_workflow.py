@@ -12,6 +12,7 @@ from databricks.labs.dqx.config import (
 from databricks.labs.dqx.engine import DQEngine
 from tests.integration.conftest import setup_custom_check_func
 from tests.constants import TEST_CATALOG
+from tests.llm_endpoints import PROFILER_WORKFLOW_TEST_MODEL
 
 
 def _assert_ai_excludes_c_prefix_on_name(checks, require_column_reference=True):
@@ -419,7 +420,7 @@ def test_profiler_workflow_with_ai_rules_generation_and_model_api_keys_as_secret
     ws.secrets.put_secret(scope=scope_name, key="api_base", string_value="")
 
     config = installation_ctx.config
-    config.llm_config.model.model_name = "databricks/databricks-meta-llama-3-1-8b-instruct"  # test different model
+    config.llm_config.model.model_name = PROFILER_WORKFLOW_TEST_MODEL  # test a non-default model
     config.llm_config.model.api_key = api_key  # test secret retrieval
     config.llm_config.model.api_base = api_base  # test secret retrieval
 
