@@ -6,7 +6,6 @@ end-to-end. Tests that need a live endpoint skip themselves when the workspace c
 configured endpoint (override with the DQX_AI_QUERY_TEST_ENDPOINT env var).
 """
 
-import os
 import re
 
 import pytest
@@ -18,14 +17,13 @@ from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.errors import InvalidParameterError
 from tests.integration_anomaly.conftest import qualify_model_name
 from tests.integration_anomaly.constants import (
-    DEFAULT_AI_QUERY_ENDPOINT,
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,
 )
+from tests.llm_endpoints import AI_QUERY_TEST_ENDPOINT
 
 _LLM_EXPLAINER_LOGGER = "databricks.labs.dqx.anomaly.anomaly_llm_explainer"
-_AI_QUERY_TEST_ENDPOINT = os.environ.get("DQX_AI_QUERY_TEST_ENDPOINT", DEFAULT_AI_QUERY_ENDPOINT)
 
 
 def _ai_query_llm_cfg(endpoint: str) -> LLMModelConfig:
@@ -65,7 +63,7 @@ def _ai_query_endpoint_available(spark: SparkSession) -> tuple[bool, str | None]
     """
     try:
         spark.sql(
-            f"SELECT ai_query('{_AI_QUERY_TEST_ENDPOINT}', 'reply with the single word: ok', "
+            f"SELECT ai_query('{AI_QUERY_TEST_ENDPOINT}', 'reply with the single word: ok', "
             f"modelParameters => named_struct('max_tokens', 8, 'temperature', 0.0)) AS r"
         ).collect()
         return True, None
@@ -80,10 +78,10 @@ def ai_query_endpoint(ws, spark):
     available, error = _ai_query_endpoint_available(spark)
     if not available:
         pytest.skip(
-            f"ai_query endpoint {_AI_QUERY_TEST_ENDPOINT!r} not reachable; "
+            f"ai_query endpoint {AI_QUERY_TEST_ENDPOINT!r} not reachable; "
             f"set DQX_AI_QUERY_TEST_ENDPOINT to override. Probe error: {error}"
         )
-    return _AI_QUERY_TEST_ENDPOINT
+    return AI_QUERY_TEST_ENDPOINT
 
 
 def test_ai_query_explanation_populated_for_anomalous_row(
@@ -135,7 +133,7 @@ def test_ai_query_explanation_null_for_non_anomalous_row(
         columns_schema="amount double, quantity double, discount double",
     )
     result_df = _score_with_explanation(
-        anomaly_scorer, test_df, shared_3d_model, llm_model_config=_ai_query_llm_cfg(_AI_QUERY_TEST_ENDPOINT)
+        anomaly_scorer, test_df, shared_3d_model, llm_model_config=_ai_query_llm_cfg(AI_QUERY_TEST_ENDPOINT)
     )
     row = result_df.collect()[0]
     anomaly_info = row["_dq_info"][0]["anomaly"]
@@ -338,7 +336,7 @@ def test_ai_query_explanation_disabled_without_contributions(
             anomaly_scorer,
             test_df,
             shared_3d_model,
-            llm_model_config=_ai_query_llm_cfg(_AI_QUERY_TEST_ENDPOINT),
+            llm_model_config=_ai_query_llm_cfg(AI_QUERY_TEST_ENDPOINT),
             enable_contributions=False,  # overrides the default-True; explanation is downgraded off
         )
         anomaly = result_df.collect()[0]["_dq_info"][0]["anomaly"]

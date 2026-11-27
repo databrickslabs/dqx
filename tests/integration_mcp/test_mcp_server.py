@@ -20,7 +20,6 @@ import requests
 from databricks.sdk import WorkspaceClient
 
 from tests.integration_mcp.conftest import (
-    AI_QUERY_ENDPOINT,
     CATALOG,
     CONTRACT_YAML,
     McpClient,
@@ -31,6 +30,7 @@ from tests.integration_mcp.conftest import (
     seed_demo_data,
     wait_until_ready,
 )
+from tests.llm_endpoints import AI_QUERY_TEST_ENDPOINT
 
 # The 10-row sample table (conftest._CUSTOMERS_ROWS) has exactly these error-level failures:
 #   - customer_id NULL ....... 1 row  (is_not_null)
@@ -67,7 +67,7 @@ ALL_TOOLS = {
 def _endpoint_reachable(host: str, get_token: Callable[[], str]) -> bool:
     try:
         resp = requests.post(
-            f"{host}/serving-endpoints/{AI_QUERY_ENDPOINT}/invocations",
+            f"{host}/serving-endpoints/{AI_QUERY_TEST_ENDPOINT}/invocations",
             headers={"Authorization": f"Bearer {get_token()}", "Content-Type": "application/json"},
             json={"messages": [{"role": "user", "content": "reply ok"}], "max_tokens": 5, "temperature": 0.0},
             timeout=30,
@@ -104,7 +104,7 @@ def _assert_agent_discovers_tools(
     final_text = ""
     for _turn in range(6):
         resp = requests.post(
-            f"{host}/serving-endpoints/{AI_QUERY_ENDPOINT}/invocations",
+            f"{host}/serving-endpoints/{AI_QUERY_TEST_ENDPOINT}/invocations",
             headers={"Authorization": f"Bearer {get_token()}", "Content-Type": "application/json"},
             json={"messages": messages, "tools": oai_tools, "max_tokens": 1024, "temperature": 0.0},
             timeout=120,
