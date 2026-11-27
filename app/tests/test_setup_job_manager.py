@@ -58,6 +58,11 @@ def job_with_run_as(
     )
 
 
+def job_acls_disabled() -> NotFound:
+    """Build the Jobs API answer to a permissions call where job access control is turned off."""
+    return NotFound("ACLs for jobs are disabled or not available in this tier", error_code="FEATURE_DISABLED")
+
+
 def test_exists_reports_a_deleted_job_as_missing(manager: TaskRunnerJobManager) -> None:
     manager.workspace.jobs.get.return_value = managed_job(42)
     assert manager.exists(42) is True
@@ -124,6 +129,51 @@ def test_resolve_creates_the_job_with_only_the_setup_admin_access(manager: TaskR
     assert all(entry.group_name is None for entry in acl)
 
 
+def test_resolve_creates_the_job_without_access_entries_where_job_access_control_is_off(
+    manager: TaskRunnerJobManager, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A workspace that refuses the access entry still gets its job, created once and without one."""
+    accepted = MagicMock(job_id=44)
+    manager.workspace.jobs.create.side_effect = [job_acls_disabled(), accepted]
+
+    assert manager.resolve(None) == ResolvedJob(job_id=44, created=True)
+
+    refused, retried = (call.kwargs for call in manager.workspace.jobs.create.call_args_list)
+    assert refused["access_control_list"][0].user_name == "admin@example.com"
+    assert retried == {**refused, "access_control_list": None}
+    assert "Job access control is turned off in this workspace" in caplog.text
+    assert "admin@example.com" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        PermissionDenied("no permission to create jobs"),
+        NotFound("Serverless compute is not enabled", error_code="FEATURE_DISABLED"),
+    ],
+)
+def test_resolve_does_not_retry_job_creation_after_an_unrelated_error(
+    manager: TaskRunnerJobManager, error: Exception
+) -> None:
+    manager.workspace.jobs.create.side_effect = error
+
+    with pytest.raises(type(error)):
+        manager.resolve(None)
+
+    manager.workspace.jobs.create.assert_called_once()
+
+
+def test_resolve_does_not_retry_job_creation_that_sent_no_access_entries() -> None:
+    """Without a setup administrator nothing can be left out, so the error is final."""
+    workspace = MagicMock(name="WorkspaceClient")
+    workspace.jobs.create.side_effect = job_acls_disabled()
+
+    with pytest.raises(NotFound):
+        TaskRunnerJobManager(workspace=workspace).resolve(None)
+
+    workspace.jobs.create.assert_called_once()
+
+
 def test_grant_workspace_view_adds_view_for_all_users_additively(manager: TaskRunnerJobManager) -> None:
     """An existing job gains workspace-wide view access through an additive update."""
     manager.workspace.jobs.get_permissions.return_value = JobPermissions(access_control_list=[])
@@ -184,6 +234,66 @@ def test_grant_setup_admin_preserves_existing_management_access(
     manager.grant_setup_admin(42, "admin@example.com")
 
     manager.workspace.jobs.update_permissions.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        job_acls_disabled(),
+        NotFound("ACLs for jobs are disabled or not available in this tier"),
+        NotFound("Feature is disabled", error_code="FEATURE_DISABLED"),
+    ],
+    ids=["code_and_message", "message_only", "code_only"],
+)
+def test_grant_setup_admin_is_skipped_where_job_access_control_is_off(
+    manager: TaskRunnerJobManager, caplog: pytest.LogCaptureFixture, error: NotFound
+) -> None:
+    """Job permissions can't be read or set there, so a setup administrator must not be blocked by them."""
+    manager.workspace.jobs.get_permissions.side_effect = error
+
+    manager.grant_setup_admin(42, "admin@example.com")
+
+    manager.workspace.jobs.update_permissions.assert_not_called()
+    assert "skipped granting the setup administrator's management access on the task-runner job" in caplog.text
+    assert "admin@example.com" not in caplog.text
+
+
+def test_grant_setup_admin_is_skipped_when_only_the_update_reports_job_access_control_off(
+    manager: TaskRunnerJobManager,
+) -> None:
+    manager.workspace.jobs.get_permissions.return_value = JobPermissions(access_control_list=[])
+    manager.workspace.jobs.update_permissions.side_effect = job_acls_disabled()
+
+    manager.grant_setup_admin(42, "admin@example.com")
+
+    manager.workspace.jobs.update_permissions.assert_called_once()
+
+
+def test_grant_workspace_view_is_skipped_where_job_access_control_is_off(
+    manager: TaskRunnerJobManager, caplog: pytest.LogCaptureFixture
+) -> None:
+    manager.workspace.jobs.get_permissions.side_effect = job_acls_disabled()
+
+    manager.grant_workspace_view(42)
+
+    manager.workspace.jobs.update_permissions.assert_not_called()
+    assert "skipped granting workspace users' view access on the task-runner job" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "error",
+    [NotFound("Job 42 does not exist."), NotFound("Principal does not exist"), PermissionDenied("no access")],
+)
+def test_grants_still_raise_errors_unrelated_to_job_access_control(
+    manager: TaskRunnerJobManager, error: Exception
+) -> None:
+    """A deleted job or an unknown principal must stay visible to setup."""
+    manager.workspace.jobs.get_permissions.side_effect = error
+
+    with pytest.raises(type(error)):
+        manager.grant_setup_admin(42, "admin@example.com")
+    with pytest.raises(type(error)):
+        manager.grant_workspace_view(42)
 
 
 def test_configure_preserves_external_run_as(manager: TaskRunnerJobManager) -> None:

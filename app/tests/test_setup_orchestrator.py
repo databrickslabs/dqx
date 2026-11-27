@@ -1119,6 +1119,35 @@ async def test_reconcile_keeps_a_job_that_still_exists_after_an_unrelated_not_fo
 
 
 @pytest.mark.asyncio
+async def test_failed_task_runner_reconciliation_is_logged_without_the_error_message(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The step only shows a generic summary, so the log must say what kind of error stopped it."""
+    harness = _harness()
+    harness.jobs.grant_failure = NotFound("user=secret does not exist", error_code="RESOURCE_DOES_NOT_EXIST")
+
+    report = await harness.orchestrator.reconcile(setup_user="admin@example.com")
+
+    assert report.step(SetupStepId.TASK_RUNNER).code == "task_runner_reconciliation_failed"
+    assert "Task-runner reconciliation failed (NotFound, RESOURCE_DOES_NOT_EXIST)" in caplog.text
+    assert "secret" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_failure_log_leaves_out_an_error_code_that_is_not_a_plain_token(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An error code is only logged when it can't forge a log line."""
+    harness = _harness()
+    harness.jobs.run_as_failure = PermissionDenied("denied", error_code="DENIED\nforged entry")
+
+    await harness.orchestrator.reconcile()
+
+    assert "Task-runner reconciliation failed (PermissionDenied)" in caplog.text
+    assert "forged entry" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_reconcile_keeps_the_job_after_a_transient_lookup_error() -> None:
     harness = _harness()
     await harness.orchestrator.reconcile(setup_user="admin@example.com")

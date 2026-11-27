@@ -2,13 +2,17 @@
 
 import logging
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
+from databricks.sdk.errors.base import DatabricksError
 from databricks.sdk.service.compute import Environment
 from databricks.sdk.service.jobs import (
+    CreateResponse,
     JobAccessControlRequest,
     JobEnvironment,
     JobParameterDefinition,
@@ -49,6 +53,10 @@ _VIEW_LEVELS = frozenset(
     }
 )
 _MANAGE_LEVELS = frozenset({JobPermissionLevel.CAN_MANAGE, JobPermissionLevel.IS_OWNER})
+# How the Jobs API answers a permissions call in a workspace where job access control is turned
+# off (HTTP 404). Azure workspaces upgraded from the Standard tier can have it off.
+_FEATURE_DISABLED_ERROR_CODE = "FEATURE_DISABLED"
+_JOB_ACLS_DISABLED_MESSAGE = "acls for jobs are disabled"
 # Must stay in sync with ``timeout_seconds`` on the DAB job and
 # ``_IN_FLIGHT_MAX_AGE`` in ``scheduler_service``.
 _TASK_RUNNER_TIMEOUT_SECONDS = 4 * 60 * 60
@@ -102,11 +110,29 @@ class TaskRunnerJobManager:
 
         The job is created with only the setup administrator's access. Workspace users' view
         access is added afterwards by *grant_workspace_view*, which may fail without blocking.
+        Where job access control is turned off, the job is created without any access entry.
         """
         if configured_job_id:
             return ResolvedJob(job_id=_parse_job_id(configured_job_id), created=False)
 
-        created = self.workspace.jobs.create(
+        admin_access = [_setup_admin_access(self._setup_user)] if self._setup_user else None
+        try:
+            created = self._create_job(admin_access)
+        except DatabricksError as error:
+            if admin_access is None or not _names_disabled_job_acls(error):
+                raise
+            logger.warning(
+                "Job access control is turned off in this workspace; creating the task-runner job "
+                "without the setup administrator's management access."
+            )
+            created = self._create_job(None)
+        job_id = getattr(created, "job_id", None)
+        if not isinstance(job_id, int):
+            raise RuntimeError("Databricks did not return a task-runner job ID.")
+        return ResolvedJob(job_id=job_id, created=True)
+
+    def _create_job(self, access_control_list: list[JobAccessControlRequest] | None) -> CreateResponse:
+        return self.workspace.jobs.create(
             name=_JOB_NAME,
             max_concurrent_runs=10,
             timeout_seconds=_TASK_RUNNER_TIMEOUT_SECONDS,
@@ -114,36 +140,39 @@ class TaskRunnerJobManager:
             tasks=[_task_runner_task()],
             parameters=_task_runner_parameters(),
             environments=[_task_runner_environment([])],
-            access_control_list=[_setup_admin_access(self._setup_user)] if self._setup_user else None,
+            access_control_list=access_control_list,
         )
-        job_id = getattr(created, "job_id", None)
-        if not isinstance(job_id, int):
-            raise RuntimeError("Databricks did not return a task-runner job ID.")
-        return ResolvedJob(job_id=job_id, created=True)
 
     def grant_setup_admin(self, job_id: int, user_name: str) -> None:
-        """Give the setup administrator management access to a task-runner job."""
-        permissions = self.workspace.jobs.get_permissions(str(job_id))
-        if _has_any_level(permissions, user_name, _MANAGE_LEVELS, is_group=False):
-            return
-        self.workspace.jobs.update_permissions(
-            str(job_id),
-            access_control_list=[_setup_admin_access(user_name)],
-        )
+        """Give the setup administrator management access to a task-runner job.
+
+        Nothing is granted, and no error is raised, in a workspace where job access control is
+        turned off: job permissions can be neither read nor set there.
+        """
+        with _skipped_when_job_acls_disabled("the setup administrator's management access"):
+            permissions = self.workspace.jobs.get_permissions(str(job_id))
+            if _has_any_level(permissions, user_name, _MANAGE_LEVELS, is_group=False):
+                return
+            self.workspace.jobs.update_permissions(
+                str(job_id),
+                access_control_list=[_setup_admin_access(user_name)],
+            )
 
     def grant_workspace_view(self, job_id: int) -> None:
         """Let every workspace user view task-runner job *job_id* and its runs, without changing other grants.
 
         Existing grants are preserved (the update is additive), and nothing is written when the
-        workspace users group already has a view level on the job.
+        workspace users group already has a view level on the job. Nothing is granted, and no
+        error is raised, in a workspace where job access control is turned off.
         """
-        permissions = self.workspace.jobs.get_permissions(str(job_id))
-        if _has_any_level(permissions, _WORKSPACE_USERS_GROUP, _VIEW_LEVELS, is_group=True):
-            return
-        self.workspace.jobs.update_permissions(
-            str(job_id),
-            access_control_list=[_workspace_users_view_access()],
-        )
+        with _skipped_when_job_acls_disabled("workspace users' view access"):
+            permissions = self.workspace.jobs.get_permissions(str(job_id))
+            if _has_any_level(permissions, _WORKSPACE_USERS_GROUP, _VIEW_LEVELS, is_group=True):
+                return
+            self.workspace.jobs.update_permissions(
+                str(job_id),
+                access_control_list=[_workspace_users_view_access()],
+            )
 
     def exists(self, job_id: int) -> bool:
         """Return whether task-runner job *job_id* still exists; other lookup errors propagate."""
@@ -356,6 +385,32 @@ def _setup_admin_access(user_name: str) -> JobAccessControlRequest:
 
 def _workspace_users_view_access() -> JobAccessControlRequest:
     return JobAccessControlRequest(group_name=_WORKSPACE_USERS_GROUP, permission_level=JobPermissionLevel.CAN_VIEW)
+
+
+def _names_disabled_job_acls(error: DatabricksError) -> bool:
+    """Whether *error*'s message says job access control is turned off in the workspace."""
+    return _JOB_ACLS_DISABLED_MESSAGE in str(error).casefold()
+
+
+@contextmanager
+def _skipped_when_job_acls_disabled(grant: str) -> Iterator[None]:
+    """Skip, with a warning, a job permission change the workspace can't make because job access control is off.
+
+    Wrap only Jobs permissions calls. Any other error propagates.
+
+    Args:
+        grant: What is being granted, for the warning.
+    """
+    try:
+        yield
+    except DatabricksError as error:
+        # On a permissions call, access control is the only feature that can be the disabled one.
+        if error.error_code != _FEATURE_DISABLED_ERROR_CODE and not _names_disabled_job_acls(error):
+            raise
+        logger.warning(
+            "Job access control is turned off in this workspace, so job permissions can't be set; "
+            f"skipped granting {grant} on the task-runner job."
+        )
 
 
 def _has_any_level(
