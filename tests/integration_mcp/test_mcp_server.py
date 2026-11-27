@@ -12,12 +12,14 @@ agent-in-the-loop check runs last (skipped if the serving endpoint is unreachabl
 """
 
 import json
+import re
 import sys
 import time
 from collections.abc import Callable
 
 import requests
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import DatabricksError
 
 from tests.integration_mcp.conftest import (
     AI_QUERY_ENDPOINT,
@@ -47,6 +49,25 @@ EXPLICIT_CHECKS: list[dict] = [
 ]
 EXPECTED_TOTAL_ROWS = 10
 EXPECTED_INVALID_ROWS = 4
+
+# Generated temp-view names (v_<epoch>_<hex>) must never appear in check results.
+_GENERATED_VIEW_NAME = re.compile(r"\bv_\d+_[0-9a-f]+\b")
+
+# Grace (customer 7, already invalid for age -3) is the only customer whose country, 'IN', is absent
+# from the seeded reference table. The NULL country is skipped by foreign_key's ANSI null semantics.
+COUNTRY_FOREIGN_KEY = "country_in_ref_countries"
+
+
+def country_foreign_key_check(ref_table: str) -> dict:
+    return {
+        "name": COUNTRY_FOREIGN_KEY,
+        "criticality": "error",
+        "check": {
+            "function": "foreign_key",
+            "arguments": {"columns": ["country"], "ref_columns": ["code"], "ref_table": ref_table},
+        },
+    }
+
 
 ALL_TOOLS = {
     "get_workflow",
@@ -610,6 +631,393 @@ def _assert_tool_calls_are_instrumented(client: McpClient, table: str) -> None:
     )
 
 
+def _runner_reference_read_paths(ws: WorkspaceClient, ref_table: str, runner_sp: str) -> list[str]:
+    """List the ways *runner_sp* could read *ref_table* without the caller's OBO view.
+
+    Covers ownership of the table, its schema, or its catalog (counted as read access, which errs
+    toward failing), plus direct and inherited SELECT or ALL_PRIVILEGES granted to *runner_sp*
+    itself. It does not inspect grants through group membership or metastore-admin rights. An
+    inspection failure is reported as a path, because an unverified precondition must not count as
+    a proven one.
+    """
+    try:
+        return _ownership_read_paths(ws, ref_table, runner_sp) + _privilege_read_paths(ws, ref_table, runner_sp)
+    except DatabricksError as exc:
+        return [f"could not inspect grants ({type(exc).__name__})"]
+
+
+def _ownership_read_paths(ws: WorkspaceClient, ref_table: str, runner_sp: str) -> list[str]:
+    """Securables in *ref_table*'s hierarchy that *runner_sp* owns, which implies read access."""
+    catalog, schema, _ = ref_table.split(".")
+    owners = {
+        ref_table: ws.tables.get(ref_table).owner,
+        f"{catalog}.{schema}": ws.schemas.get(f"{catalog}.{schema}").owner,
+        catalog: ws.catalogs.get(catalog).owner,
+    }
+    return [f"owns {name}" for name, owner in owners.items() if (owner or "").lower() == runner_sp.lower()]
+
+
+def _privilege_read_paths(ws: WorkspaceClient, ref_table: str, runner_sp: str) -> list[str]:
+    """Direct or inherited privileges that let *runner_sp* read *ref_table*."""
+    effective = ws.grants.get_effective("table", ref_table, principal=runner_sp)
+    grants = [grant for assignment in effective.privilege_assignments or [] for grant in assignment.privileges or []]
+    return [
+        f"{grant.privilege.value} via {grant.inherited_from_name or ref_table}"
+        for grant in grants
+        if grant.privilege and grant.privilege.value in {"SELECT", "ALL_PRIVILEGES"}
+    ]
+
+
+def _assert_runner_cannot_read_reference_table(ref_table: str, runner_sp: str) -> None:
+    """Fail if a dedicated runner can read *ref_table* without the caller's OBO view.
+
+    The foreign_key step proves the authorization boundary only when the runner cannot read the
+    reference table itself. CI's default runner is the deploying identity, which seeds and owns
+    the tables, so that configuration covers the reference-view path and says so instead.
+    """
+    ws = WorkspaceClient()  # the seeding identity, which is also the default runner
+    if not runner_sp:
+        reason = "the deployment did not report the runner identity"
+    elif runner_sp.lower() == (ws.current_user.me().user_name or "").lower():
+        reason = "the runner is the deploying identity, which owns the seeded tables"
+    else:
+        read_paths = _runner_reference_read_paths(ws, ref_table, runner_sp)
+        assert not read_paths, f"the runner can read {ref_table} without the caller's view: {'; '.join(read_paths)}"
+        return
+    sys.stderr.write(
+        f"note: {reason}, so the foreign_key step covers the reference-view path but not the authorization "
+        "boundary. Set DQX_MCP_RUNNER_SERVICE_PRINCIPAL_ID to a dedicated runner SP to cover it.\n"
+    )
+
+
+def _assert_foreign_key_violation_reads_reference_view(run: dict) -> None:
+    """Only Grace's 'IN' row violates the foreign key, and no generated view name leaks into the result."""
+    summary = {rule["rule_name"]: rule["error_count"] for rule in run["rule_summary"]}
+    assert summary.get(COUNTRY_FOREIGN_KEY) == 1, run["rule_summary"]
+    violating = [
+        row["customer_id"]
+        for row in run["error_sample"]
+        if any(error["name"] == COUNTRY_FOREIGN_KEY for error in row.get("_errors") or [])
+    ]
+    assert violating == [7], run["error_sample"]
+    # With a dedicated runner SP that cannot read the reference table (checked by
+    # _assert_runner_cannot_read_reference_table), the violation above proves the reference view was
+    # read. When the runner is the deploying identity, it could read the table directly, so the step
+    # then only covers the reference-view path. This guards against internal temp-view names leaking
+    # into the result returned to the caller.
+    assert not _GENERATED_VIEW_NAME.search(json.dumps(run, default=str)), run
+
+
+def _reference_checks_for_every_supported_function(table: str, ref_table: str) -> list[dict]:
+    """One check for each function that takes *ref_table*, plus the reference-view edge cases.
+
+    Only the two foreign_key checks can fail, each on Grace's 'IN' row. The second spells the
+    reference table in upper case, so the server must de-duplicate it onto the same view (Unity
+    Catalog names are case-insensitive). The other three reference the monitored table itself,
+    which the server serves from the monitored table's own view.
+    """
+    upper_case_reference = country_foreign_key_check(ref_table.upper())
+    upper_case_reference["name"] = f"{COUNTRY_FOREIGN_KEY}_upper"
+    return [
+        country_foreign_key_check(ref_table),
+        upper_case_reference,
+        {
+            "name": "customer_count_matches_itself",
+            "criticality": "error",
+            "check": {"function": "aggr_matches_dataset", "arguments": {"column": "customer_id", "ref_table": table}},
+        },
+        {
+            "name": "schema_matches_itself",
+            "criticality": "error",
+            "check": {"function": "has_valid_schema", "arguments": {"ref_table": table}},
+        },
+        {
+            "name": "rows_match_themselves",
+            "criticality": "error",
+            "check": {
+                "function": "compare_datasets",
+                "arguments": {"columns": ["customer_id"], "ref_columns": ["customer_id"], "ref_table": table},
+            },
+        },
+    ]
+
+
+def _assert_every_reference_function_reads_its_view(client: McpClient, table: str, ref_table: str) -> None:
+    """Every reference-capable check runs through the caller's views, not the runner's own grants.
+
+    Covers each check function the server adapts (foreign_key, aggr_matches_dataset,
+    has_valid_schema in reference mode, compare_datasets), a reference that differs from another
+    only by case, and references to the monitored table itself.
+    """
+    run = client.call(
+        "run_checks", {"table_name": table, "checks": _reference_checks_for_every_supported_function(table, ref_table)}
+    )
+    summary = {rule["rule_name"]: rule["error_count"] for rule in run["rule_summary"]}
+    assert summary == {COUNTRY_FOREIGN_KEY: 1, f"{COUNTRY_FOREIGN_KEY}_upper": 1}, run["rule_summary"]
+    assert run["invalid_rows"] == 1, run
+    assert not _GENERATED_VIEW_NAME.search(json.dumps(run, default=str)), run
+
+
+def _temp_views(tmp_schema: str) -> set[str]:
+    rows = execute_sql(
+        f"SELECT table_name FROM {CATALOG}.information_schema.views WHERE lower(table_schema) = '{tmp_schema.lower()}'"
+    )
+    return {row[0] for row in rows}
+
+
+def _assert_bad_reference_tables_fail_before_submission(
+    client: McpClient, table: str, seed_schema: str, tmp_schema: str
+) -> None:
+    """A reference the caller cannot expose fails the call up front and leaves no temp view behind.
+
+    The server creates the monitored table's view first, so each case also proves it drops that view
+    when a reference fails. A missing table fails view creation; a name that is not catalog.schema.table
+    is rejected before any SQL runs.
+    """
+    before = _temp_views(tmp_schema) if tmp_schema else set()
+    cases = {
+        f"{seed_schema}.no_such_reference_table": "Cannot create a temporary view over reference table",
+        "not_a_three_part_name": "Invalid reference table name",
+    }
+    for ref_table, expected in cases.items():
+        arguments = {"table_name": table, "checks": [country_foreign_key_check(ref_table)]}
+        result = _mcp_request(
+            client.url, client.current_token(), "tools/call", {"name": "run_checks", "arguments": arguments}
+        )
+        text = json.dumps(result, default=str)
+        assert result.get("isError") and expected in text, f"{ref_table!r} should fail with '{expected}': {result}"
+        assert "run_id" not in text, f"{ref_table!r} must fail before a job is submitted: {result}"
+    if tmp_schema:
+        leaked = _temp_views(tmp_schema) - before
+        assert not leaked, f"a failed reference left temp views behind: {sorted(leaked)}"
+
+
+def _assert_apply_reads_reference_view(client: McpClient, table: str, ref_table: str) -> None:
+    """apply_checks_and_save_to_table gives the runner the same reference views as run_checks."""
+    applied = client.call(
+        "apply_checks_and_save_to_table",
+        {
+            "table_name": table,
+            "checks": [country_foreign_key_check(ref_table)],
+            "output_name": "customers_fk_clean",
+            "quarantine_name": "customers_fk_quarantine",
+            "mode": "overwrite",
+        },
+    )
+    # Only Grace's 'IN' row violates the foreign key.
+    assert applied["quarantine_rows"] == 1, applied
+    assert applied["output_rows"] == EXPECTED_TOTAL_ROWS - 1, applied
+
+
+def _terminal_status(client: McpClient, run_id: int, timeout: float = 600) -> dict:
+    """Poll get_run_result until the run is completed or failed, and return the raw status."""
+    deadline = time.monotonic() + timeout
+    while True:
+        status = client.call("get_run_result", {"run_id": run_id}, poll=False)
+        if status.get("status") in {"failed", "completed"}:
+            return status
+        assert time.monotonic() < deadline, f"run {run_id} never reached a terminal state: {status}"
+
+
+def _ambiguous_reference_checks(ref_table: str) -> dict[str, tuple[dict, str]]:
+    """Checks the server must pass to DQX unchanged, each with the error DQX rejects it with."""
+
+    def check(function: str, arguments: object) -> dict:
+        return {"criticality": "error", "check": {"function": function, "arguments": arguments}}
+
+    both_given = "Both 'ref_df_name' and 'ref_table' were provided"
+    return {
+        "foreign_key naming both ref_table and ref_df_name": (
+            check(
+                "foreign_key",
+                {"columns": ["country"], "ref_columns": ["code"], "ref_table": ref_table, "ref_df_name": "countries"},
+            ),
+            both_given,
+        ),
+        "aggr_matches_dataset naming both ref_table and ref_df_name": (
+            check(
+                "aggr_matches_dataset", {"column": "customer_id", "ref_table": ref_table, "ref_df_name": "countries"}
+            ),
+            both_given,
+        ),
+        "has_valid_schema naming both ref_table and expected_schema": (
+            check("has_valid_schema", {"ref_table": ref_table, "expected_schema": "code STRING"}),
+            "Must specify one of 'expected_schema', 'ref_df_name', or 'ref_table'",
+        ),
+        "foreign_key with an empty ref_table": (
+            check("foreign_key", {"columns": ["country"], "ref_columns": ["code"], "ref_table": ""}),
+            "Either 'ref_df_name' or 'ref_table' is required",
+        ),
+        "a check block that is not an object": (
+            {"criticality": "error", "check": "foreign_key"},
+            "'check' field should be a dictionary",
+        ),
+        "arguments that are not an object": (
+            check("foreign_key", ref_table),
+            "'arguments' should be a dictionary",
+        ),
+    }
+
+
+def _assert_ambiguous_reference_checks_reach_dqx_unchanged(client: McpClient, table: str, ref_table: str) -> None:
+    """A check with conflicting or malformed references goes to DQX as written, and DQX rejects it.
+
+    The server only exposes reference tables and never edits checks. It must not pick a side of a
+    conflict (keeping ref_table over ref_df_name could check against the wrong data) or repair a
+    malformed check, so each case below has to fail with DQX's own error. The runs are submitted
+    together so they execute in parallel.
+    """
+    cases = _ambiguous_reference_checks(ref_table)
+    submitted = {
+        name: client.call("run_checks", {"table_name": table, "checks": [check]}, poll=False)
+        for name, (check, _) in cases.items()
+    }
+    for name, (_, expected) in cases.items():
+        run_id = submitted[name].get("run_id")
+        assert run_id, f"{name}: should be submitted for DQX to judge: {submitted[name]}"
+        status = _terminal_status(client, run_id)
+        assert status.get("status") == "failed", f"{name}: DQX should have rejected it: {status}"
+        assert expected in str(status.get("error")), f"{name}: expected DQX's '{expected}': {status}"
+
+
+def _runner_outcome(ws: WorkspaceClient, run_id: int, timeout: float = 900) -> tuple[str, str]:
+    """Wait for a runner job run and return its result state and its task error text."""
+    deadline = time.monotonic() + timeout
+    while True:
+        run = ws.jobs.get_run(run_id)
+        life_cycle = run.state.life_cycle_state.value if run.state and run.state.life_cycle_state else ""
+        if life_cycle in {"TERMINATED", "INTERNAL_ERROR", "SKIPPED"}:
+            break
+        assert time.monotonic() < deadline, f"runner run {run_id} did not finish (state {life_cycle})"
+        time.sleep(10)
+    result_state = run.state.result_state.value if run.state and run.state.result_state else life_cycle
+    errors = [ws.jobs.get_run_output(task.run_id).error or "" for task in run.tasks or [] if task.run_id]
+    return result_state, " ".join(errors)
+
+
+def _assert_runner_outcomes(ws: WorkspaceClient, job_id: str, cases: dict[str, tuple[str, str, str, str, str]]) -> None:
+    """Start one runner run per case, all at once, then check each run's result state and error.
+
+    Each case is (operation, params JSON, results volume, expected result state, expected error text).
+    """
+    runs = {
+        name: ws.jobs.run_now(
+            job_id=int(job_id),
+            job_parameters={"operation": op, "params": body, "results_volume": volume, "requesting_user": ""},
+        ).run_id
+        for name, (op, body, volume, _, _) in cases.items()
+    }
+    for name, (_, _, _, expected_state, expected_error) in cases.items():
+        state, error = _runner_outcome(ws, runs[name])
+        assert state == expected_state, f"{name}: expected {expected_state}, got {state}: {error[:300]}"
+        assert expected_error in error, f"{name}: expected '{expected_error}' in the run error: {error[:300]}"
+
+
+def _object_exists(fqn: str) -> bool:
+    catalog, schema, name = fqn.split(".")
+    rows = execute_sql(
+        f"SELECT count(*) FROM {catalog}.information_schema.tables "
+        f"WHERE lower(table_schema) = '{schema.lower()}' AND lower(table_name) = '{name.lower()}'"
+    )
+    return int(rows[0][0]) > 0
+
+
+def _assert_runner_rejects_tampered_parameters(job_id: str, tmp_schema: str, seed_schema: str, table: str) -> None:
+    """The runner refuses job parameters the server never sends, and only ever drops its own views.
+
+    App users cannot start the runner job, but anyone who can (its owner, or a leaked run permission)
+    can pass any view name. So the runner trusts only names in its own temp-view namespace, which it
+    derives from the results volume, and only ever drops views. The test identity owns the job, so
+    it starts the runs directly with tampered parameters, in parallel. Each must fail for the right
+    reason, and nothing outside the namespace (or any table) may be dropped.
+    """
+    ws = WorkspaceClient()
+    results_volume = f"/Volumes/{CATALOG}/{tmp_schema}/mcp_results"
+    epoch = int(time.time())
+    outside_view = f"{seed_schema}.planted_outside_view"
+    own_view = f"{CATALOG}.{tmp_schema}.v_{epoch}_aaaaaaaaaaaa"
+    unanchored_view = f"{CATALOG}.{tmp_schema}.v_{epoch}_bbbbbbbbbbbb"
+    table_named_like_a_view = f"{CATALOG}.{tmp_schema}.v_{epoch}_cccccccccccc"
+    for view in (outside_view, own_view, unanchored_view):
+        execute_sql(f"CREATE VIEW {view} AS SELECT * FROM {table}")
+    execute_sql(f"CREATE TABLE {table_named_like_a_view} AS SELECT 1 AS x")
+
+    def params(view_name: str, **extra: object) -> str:
+        return json.dumps({"view_name": view_name, "checks": EXPLICIT_CHECKS, **extra})
+
+    not_generated = "is not a generated view"
+    cases = {
+        "params that are not a JSON object": ("run_checks", "[]", results_volume, "FAILED", "must be a JSON object"),
+        "an unknown operation": ("drop_everything", "{}", results_volume, "FAILED", "Unknown operation"),
+        "a view outside the temp namespace": (
+            "run_checks",
+            params(outside_view),
+            results_volume,
+            "FAILED",
+            not_generated,
+        ),
+        "a malformed reference-view map": (
+            "run_checks",
+            params(own_view, ref_views={"cat.sch.tbl": 1}),
+            results_volume,
+            "FAILED",
+            "ref_views must be a mapping",
+        ),
+        "a results path outside /Volumes": (
+            "run_checks",
+            params(unanchored_view),
+            "/tmp/mcp_results",
+            "FAILED",
+            not_generated,
+        ),
+        "a results path with an invalid catalog name": (
+            "run_checks",
+            params(unanchored_view),
+            f"/Volumes/not-a-catalog/{tmp_schema}/mcp_results",
+            "FAILED",
+            not_generated,
+        ),
+        "a table named like a temp view": (
+            "list_available_checks",
+            json.dumps({"view_name": table_named_like_a_view}),
+            results_volume,
+            "SUCCESS",
+            "",
+        ),
+    }
+    try:
+        _assert_runner_outcomes(ws, job_id, cases)
+        # Refused names are never dropped, and the runner's DROP VIEW never removes a table.
+        assert _object_exists(outside_view), "the runner dropped a view outside its namespace"
+        assert _object_exists(unanchored_view), "the runner dropped a view without a trusted namespace"
+        assert _object_exists(table_named_like_a_view), "the runner dropped a table"
+        # A run that fails part-way still drops its own, valid view.
+        assert not _object_exists(own_view), "the runner left its own view behind after a failed run"
+    finally:
+        for view in (outside_view, own_view, unanchored_view):
+            execute_sql(f"DROP VIEW IF EXISTS {view}")
+        execute_sql(f"DROP TABLE IF EXISTS {table_named_like_a_view}")
+
+
+def _assert_reference_table_handling(client: McpClient, app: dict, data: dict) -> None:
+    """Reference-table behaviour beyond the basic foreign_key step, grouped to keep the test readable.
+
+    Every reference-capable check function, case-insensitive de-duplication and self-references; bad
+    references fail up front without leaking views; the persisting tool gets the same reference
+    views; checks with conflicting references reach DQX unchanged; and the runner refuses tampered
+    job parameters without touching anything outside its namespace.
+    """
+    table, ref_table, tmp_schema = data["table"], data["ref_table"], app.get("tmp_schema") or ""
+    _assert_every_reference_function_reads_its_view(client, table, ref_table)
+    _assert_bad_reference_tables_fail_before_submission(client, table, data["schema"], tmp_schema)
+    _assert_apply_reads_reference_view(client, table, ref_table)
+    _assert_ambiguous_reference_checks_reach_dqx_unchanged(client, table, ref_table)
+    if app.get("runner_job_id") and tmp_schema:
+        _assert_runner_rejects_tampered_parameters(app["runner_job_id"], tmp_schema, data["schema"], table)
+    else:
+        sys.stderr.write("note: runner job or tmp_schema not reported; skipped the runner guard checks\n")
+
+
 def test_mcp_server_end_to_end(workspace_auth, app_auth):
     """Deploy the MCP app once and exercise every tool end-to-end against the seeded table."""
     host, get_token = workspace_auth  # control-plane bearer: CLI deploy + Model Serving
@@ -660,12 +1068,21 @@ def test_mcp_server_end_to_end(workspace_auth, app_auth):
         assert client.call("validate_checks", {"checks": from_contract["rules"]})["valid"] is True
         _assert_contract_sources(client, data["contract"], data["workspace_contract"])
 
-        # 8. run_checks — flags exactly the known-dirty rows.
-        run = client.call("run_checks", {"table_name": table, "checks": EXPLICIT_CHECKS})
+        # 8. run_checks — flags exactly the known-dirty rows. The foreign_key check reads a reference
+        #    table the runner is not granted, through the caller's OBO view. Its only violating row
+        #    is already invalid, so the row counts are unchanged.
+        _assert_runner_cannot_read_reference_table(data["ref_table"], app.get("runner_service_principal", ""))
+        checks = [*EXPLICIT_CHECKS, country_foreign_key_check(data["ref_table"])]
+        run = client.call("run_checks", {"table_name": table, "checks": checks})
         assert run["total_rows"] == EXPECTED_TOTAL_ROWS
         assert run["invalid_rows"] == EXPECTED_INVALID_ROWS
         assert run["valid_rows"] == EXPECTED_TOTAL_ROWS - EXPECTED_INVALID_ROWS
         assert run["error_sample"] and run["rule_summary"]
+        _assert_foreign_key_violation_reads_reference_view(run)
+
+        # 8b-8c. The rest of the reference-table behaviour: every adapted check function, bad and
+        #        ambiguous references, the persisting tool, and the runner's own guards.
+        _assert_reference_table_handling(client, app, data)
 
         # 9-10. Persisting tools (save_checks -> load_checks round-trip, then
         #       apply_checks_and_save_to_table) — both write to the caller's private per-user schema.

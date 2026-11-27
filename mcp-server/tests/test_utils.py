@@ -257,8 +257,12 @@ class TestTempViews:
         assert view_fqn.startswith("dqx_mcp.dqx_mcp_tmp.v_")
         call_args = ws.statement_execution.execute_statement.call_args
         sql = call_args.kwargs["statement"]
-        assert "CREATE VIEW" in sql
-        assert "`my_catalog`.`my_schema`.`my_table`" in sql
+        # The whole statement, so any sampling, filtering, or limit clause fails: reference and
+        # monitored views must expose every row of the source.
+        view_name = view_fqn.rsplit(".", 1)[-1]
+        assert sql == (
+            f"CREATE VIEW `dqx_mcp`.`dqx_mcp_tmp`.`{view_name}` AS SELECT * FROM `my_catalog`.`my_schema`.`my_table`"
+        )
 
     def test_drop_view(self):
         from server.utils import drop_view

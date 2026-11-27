@@ -22,13 +22,15 @@ import datetime
 import io
 import json
 import logging
+from collections.abc import Callable, Mapping
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from databricks.sdk import WorkspaceClient
-from pyspark.sql import SparkSession
+from pyspark.sql import DataFrame, SparkSession
 
 if TYPE_CHECKING:
+    from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.profiler.profiler import DQProfile
 
 from dqx_mcp_runner.config_compat import config_has_field, config_replace
@@ -38,6 +40,13 @@ from dqx_mcp_runner.naming import (
     output_schema_for_user,
     qualify_output,
     validate_identifier,
+)
+from dqx_mcp_runner.temp_views import (
+    collect_temp_views,
+    drop_temp_views,
+    ensure_views_in_namespace,
+    parse_ref_views,
+    trusted_view_namespace,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -59,6 +68,33 @@ def _make_json_safe(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_make_json_safe(v) for v in value]
     return value
+
+
+def _load_ref_dfs(spark: SparkSession, params: Mapping[str, object]) -> dict[str, DataFrame] | None:
+    """Resolve server-generated reference views to DataFrames, or None when absent."""
+    ref_views = parse_ref_views(params)
+    if not ref_views:
+        return None
+    return {ref_name: spark.table(view_name) for ref_name, view_name in ref_views.items()}
+
+
+def _check_engine(spark: SparkSession, ws: WorkspaceClient, ref_dfs: dict[str, DataFrame] | None) -> "DQEngine":
+    """Build the engine for a check run, reading each check's *ref_table* from its reference view.
+
+    Checks keep their *ref_table*, so their fingerprints and messages match the stored checks.
+    The engine opts in to serving those reads from *ref_dfs*, which the server keyed by table name.
+    """
+    from databricks.labs.dqx.config import ExtraParams
+    from databricks.labs.dqx.engine import DQEngine
+
+    if not ref_dfs:
+        return DQEngine(workspace_client=ws, spark=spark)
+    if not config_has_field(ExtraParams(), "resolve_ref_tables_from_ref_dfs"):
+        raise RuntimeError(
+            "Reference-table checks need a DQX release with ExtraParams.resolve_ref_tables_from_ref_dfs, "
+            "which the runner's installed DQX does not have. Upgrade the DQX version the runner installs."
+        )
+    return DQEngine(workspace_client=ws, spark=spark, extra_params=ExtraParams(resolve_ref_tables_from_ref_dfs=True))
 
 
 def profile_table(spark: SparkSession, ws: WorkspaceClient, params: dict) -> dict:
@@ -196,7 +232,6 @@ def apply_checks_and_save_to_table(spark: SparkSession, ws: WorkspaceClient, par
     only where it is guaranteed to have permission and users are isolated from each other.
     """
     from databricks.labs.dqx.config import InputConfig, OutputConfig
-    from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.errors import InvalidParameterError
 
     view_name = params["view_name"]
@@ -208,18 +243,20 @@ def apply_checks_and_save_to_table(spark: SparkSession, ws: WorkspaceClient, par
     grant_to = params.get("grant_to")
     if not grant_to:
         raise InvalidParameterError("A caller identity is required to create your private output schema.")
+    ref_dfs = _load_ref_dfs(spark, params)
+    engine = _check_engine(spark, ws, ref_dfs)
 
     user_schema = output_schema_for_user(grant_to)
     _ensure_output_schema(spark, catalog, user_schema, grant_to)
     output_table = qualify_output(catalog, user_schema, output_name)
     quarantine_table = qualify_output(catalog, user_schema, quarantine_name) if quarantine_name else None
 
-    engine = DQEngine(workspace_client=ws, spark=spark)
     engine.apply_checks_by_metadata_and_save_in_table(
         input_config=InputConfig(location=view_name),
         output_config=OutputConfig(location=output_table, mode=mode),
         checks=checks,
         quarantine_config=OutputConfig(location=quarantine_table, mode=mode) if quarantine_table else None,
+        ref_dfs=ref_dfs,
     )
 
     created_tables = [tbl for tbl in (output_table, quarantine_table) if tbl]
@@ -268,15 +305,14 @@ def generate_rules_from_contract(spark: SparkSession, ws: WorkspaceClient, param
 
 def run_checks(spark: SparkSession, ws: WorkspaceClient, params: dict) -> dict:
     """Run DQX checks against a view."""
-    from databricks.labs.dqx.engine import DQEngine
-
     view_name = params["view_name"]
     checks = params["checks"]
     sample_size = params.get("sample_size", 50)
 
-    engine = DQEngine(workspace_client=ws, spark=spark)
+    ref_dfs = _load_ref_dfs(spark, params)
+    engine = _check_engine(spark, ws, ref_dfs)
     df = spark.table(view_name)
-    valid_df, invalid_df = engine.apply_checks_by_metadata_and_split(df, checks)
+    valid_df, invalid_df = engine.apply_checks_by_metadata_and_split(df, checks, ref_dfs=ref_dfs)
 
     error_sample = [_make_json_safe(r.asDict(recursive=True)) for r in invalid_df.limit(sample_size).collect()]
     return {
@@ -392,22 +428,6 @@ def _grant_table_access(spark: SparkSession, table_name: str, principal: str) ->
         return False
 
 
-def _drop_view_safe(spark: SparkSession, view_name) -> None:
-    """Drop the OBO-created temp view for this run. Best-effort: logs, never raises."""
-    if not view_name:
-        return
-    parts = str(view_name).split(".")
-    if len(parts) != 3 or not all(IDENTIFIER_RE.match(p) for p in parts):
-        logger.warning(f"Skipping drop of invalid view name: {view_name!r}")
-        return
-    safe_fqn = ".".join(f"`{p}`" for p in parts)
-    try:
-        spark.sql(f"DROP VIEW IF EXISTS {safe_fqn}")
-        logger.info(f"Dropped temp view {view_name}")
-    except Exception:
-        logger.warning(f"Failed to drop temp view {view_name}", exc_info=True)
-
-
 OPERATIONS = {
     "profile_table": profile_table,
     "generate_rules": generate_rules,
@@ -437,32 +457,59 @@ def _write_result(ws: WorkspaceClient, results_volume: str, run_id: str, result:
     logger.info(f"Wrote result to {path} ({len(payload)} bytes)")
 
 
-def _parse_args() -> argparse.Namespace:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="DQX MCP runner")
     parser.add_argument("--operation", required=True, help="DQX operation name")
     parser.add_argument("--params", default="{}", help="JSON parameters for the operation")
     parser.add_argument("--run-id", required=True, help="Job run id (result file key)")
     parser.add_argument("--results-volume", required=True, help="UC volume path for result files")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = _parse_args()
+def _create_spark_session() -> SparkSession:
+    return SparkSession.builder.getOrCreate()
+
+
+def main(
+    argv: list[str] | None = None,
+    spark_factory: Callable[[], SparkSession] = _create_spark_session,
+    workspace_client_factory: Callable[[], WorkspaceClient] = WorkspaceClient,
+) -> None:
+    """Run one operation and write its result file.
+
+    *argv*, *spark_factory* and *workspace_client_factory* default to the production behaviour and
+    exist so the entry point can be exercised without a real cluster.
+
+    Startup failures that happen before a Spark session exists (invalid ``--params`` JSON, Spark
+    cannot initialise) raise immediately: there is no session to clean up with. Once Spark is
+    available, every later failure (workspace client, unknown operation, the operation itself,
+    result write) still drops all of the run's temp views — the monitored view and its reference
+    views — before the error propagates.
+    """
+    args = _parse_args(argv)
     operation = args.operation
     params = json.loads(args.params)
+    if not isinstance(params, dict):
+        raise ValueError("--params must be a JSON object.")
     logger.info(f"Running operation: {operation}, params keys: {list(params.keys())}")
 
-    spark = SparkSession.builder.getOrCreate()
-    ws = WorkspaceClient()
+    spark = spark_factory()
 
-    if operation not in OPERATIONS:
-        raise ValueError(f"Unknown operation: {operation}. Valid: {list(OPERATIONS.keys())}")
-
+    # Anchor the views this run may read/drop to the namespace of the results volume the server
+    # passed in (same server config as the view schema) rather than a caller-supplied allowlist.
+    namespace = trusted_view_namespace(args.results_volume)
+    temp_views = collect_temp_views(params)
     try:
+        ws = workspace_client_factory()
+        if operation not in OPERATIONS:
+            raise ValueError(f"Unknown operation: {operation}. Valid: {list(OPERATIONS.keys())}")
+        ensure_views_in_namespace(temp_views, namespace)
         result = OPERATIONS[operation](spark, ws, params)
         # Echo the source table name so the client knows which table the result is for.
         if isinstance(result, dict) and params.get("table_name") and "table_name" not in result:
             result["table_name"] = params["table_name"]
+        _write_result(ws, args.results_volume, args.run_id, result)
+        logger.info(f"Operation '{operation}' complete.")
     except Exception as e:
         # Do NOT write a result file — raising makes the job result_state FAILED, and the app
         # surfaces the error from the run output. Writing a success-shaped file would make the app
@@ -470,11 +517,8 @@ def main() -> None:
         logger.error(f"Operation '{operation}' failed: {e}", exc_info=True)
         raise
     finally:
-        # Always drop the run's temp view, on success or failure.
-        _drop_view_safe(spark, params.get("view_name"))
-
-    _write_result(ws, args.results_volume, args.run_id, result)
-    logger.info(f"Operation '{operation}' complete.")
+        # Always drop every temp view this run owns, on success or failure.
+        drop_temp_views(spark, temp_views, namespace)
 
 
 if __name__ == "__main__":

@@ -43,7 +43,7 @@ from databricks.labs.dqx.config import (
     TableActionsStorageConfig,
     LakebaseActionsStorageConfig,
 )
-from databricks.labs.dqx.check_funcs import add_dataset_aggregates
+from databricks.labs.dqx.check_funcs import RefTableDataFrames, add_dataset_aggregates
 from databricks.labs.dqx.manager import DQRuleManager
 from databricks.labs.dqx.reporting_columns import ColumnArguments, DefaultColumnNames, merge_info_columns
 from databricks.labs.dqx.rule import (
@@ -126,6 +126,7 @@ class DQEngineCore(DQEngineCoreBase):
         )
         self.engine_user_metadata = extra_params.user_metadata
         self.suppress_skipped = extra_params.suppress_skipped
+        self.resolve_ref_tables_from_ref_dfs = extra_params.resolve_ref_tables_from_ref_dfs
 
         self.observer = observer
         if self.observer:
@@ -167,6 +168,8 @@ class DQEngineCore(DQEngineCoreBase):
             InvalidCheckError: If any of the checks are invalid.
         """
         self._validate_result_column_collisions(df)
+        if ref_dfs is not None and self.resolve_ref_tables_from_ref_dfs:
+            ref_dfs = RefTableDataFrames(ref_dfs)
 
         if not checks:
             observed_result = self._observe_metrics(self._append_empty_checks(df))

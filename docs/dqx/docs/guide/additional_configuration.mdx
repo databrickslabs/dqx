@@ -181,6 +181,32 @@ from pyspark.sql import functions as F
 skipped = checked_df.select(F.explode("_errors").alias("e")).filter(F.col("e.skipped") == True)
 ```
 
+## Reading reference tables from supplied DataFrames
+
+Checks such as `foreign_key` and `compare_datasets` take a reference as either `ref_df_name` (a key in the `ref_dfs` you pass when applying checks) or `ref_table` (a table read from the catalog). By default, `ref_dfs` is used only for `ref_df_name`.
+
+Set `resolve_ref_tables_from_ref_dfs=True` in `ExtraParams` to also serve a check's `ref_table` from `ref_dfs`, when you supply a DataFrame under that table name. For example, the caller can expose a table through a view and pass the view as the DataFrame. The check still names the table, so its rule fingerprint and messages are unchanged. A `ref_table` with no matching key is read from the catalog as usual.
+
+```python
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import ExtraParams
+
+dq_engine = DQEngine(WorkspaceClient(), extra_params=ExtraParams(resolve_ref_tables_from_ref_dfs=True))
+
+checks = [
+    {
+        "criticality": "error",
+        "check": {
+            "function": "foreign_key",
+            "arguments": {"columns": ["region_id"], "ref_columns": ["id"], "ref_table": "main.sales.regions"},
+        },
+    }
+]
+# The check reads regions_df instead of the main.sales.regions table.
+checked_df = dq_engine.apply_checks_by_metadata(df, checks, ref_dfs={"main.sales.regions": regions_df})
+```
+
 ## Defining default variables for substitution
 
 <FeatureTags>
