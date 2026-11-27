@@ -38,13 +38,13 @@ function ToggleItem({ label, checked, onCheckedChange, disabled }: Omit<Sortable
   );
 }
 
-/** A pinned entry: toggleable, but with no drag handle and outside the sortable list. */
+/** A pinned entry outside the sortable list. Its drag handle is dimmed so it
+ *  reads as fixed in place. */
 function PinnedItem({ label, checked, onCheckedChange, disabled }: Omit<SortableItemProps<string>, "id">) {
   return (
     <div className="flex items-center">
-      {/* Same footprint as the drag handle so labels line up with the sortable rows. */}
-      <span className="px-1" aria-hidden>
-        <span className="block h-4 w-4" />
+      <span className="px-1 cursor-not-allowed text-muted-foreground opacity-50" aria-hidden>
+        <GripVertical className="h-4 w-4" />
       </span>
       <ToggleItem label={label} checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} />
     </div>
@@ -74,6 +74,13 @@ function SortableItem<K extends string>({ id, label, checked, onCheckedChange, d
   );
 }
 
+/** See *pinnedLast* on {@link SortableToggleListConfig}. */
+export interface PinnedLastEntry {
+  label: string;
+  checked: boolean;
+  onToggle: () => void;
+}
+
 /**
  * A drag-reorderable, toggleable list of keys — one view of the Edit View
  * menu. The column view is fed by `useColumnLayout` or `useSavedViews`; the filter
@@ -85,9 +92,13 @@ export interface SortableToggleListConfig<K extends string> {
   labelOf: (id: K) => string;
   /** False locks an entry on (shown checked and disabled). */
   toggleableOf: (id: K) => boolean;
-  /** True pins an entry to the top: listed first with no drag handle, never
-   *  reorderable, and nothing can be dropped above it. Still toggleable. */
+  /** True pins an entry to the top: listed first with a dimmed drag handle,
+   *  never reorderable, and nothing can be dropped above it. Still toggleable. */
   pinnedOf?: (id: K) => boolean;
+  /** A trailing entry (e.g. the Actions column): listed last with a dimmed drag
+   *  handle and outside the sortable list, so nothing can be dropped below it.
+   *  Still toggleable. */
+  pinnedLast?: PinnedLastEntry;
   isChecked: (id: K) => boolean;
   onToggle: (id: K) => void;
   onDragEnd: (event: DragEndEvent) => void;
@@ -99,6 +110,7 @@ function SortableToggleList<K extends string>({
   labelOf,
   toggleableOf,
   pinnedOf,
+  pinnedLast,
   isChecked,
   onToggle,
   onDragEnd,
@@ -126,6 +138,9 @@ function SortableToggleList<K extends string>({
           ))}
         </SortableContext>
       </DndContext>
+      {pinnedLast && (
+        <PinnedItem label={pinnedLast.label} checked={pinnedLast.checked} onCheckedChange={pinnedLast.onToggle} />
+      )}
     </>
   );
 }

@@ -30,6 +30,7 @@ import {
   STICKY_ACTIONS_HEAD_CLASS,
   STICKY_ACTIONS_CELL_CLASS,
   ACTIONS_COL_WIDTH,
+  ACTIONS_ROW_MIN_HEIGHT_CLASS,
 } from "@/components/data-table/sticky-actions";
 import { AI_GRADIENT_URL } from "@/lib/ai-style";
 import { AuthorKindIcon } from "./AuthorKindIcon";
@@ -389,8 +390,7 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
   },
   modified: {
     labelKey: "rulesRegistry.colModified",
-    // Always visible — owners need the modified timestamp at a glance.
-    toggleable: false,
+    toggleable: true,
     defaultVisible: true,
     defaultWidth: 140,
     sortable: true,
@@ -444,9 +444,8 @@ const COLUMNS: Record<ColumnKey, ColumnDef> = {
   },
   actions: {
     labelKey: "rulesRegistry.colActions",
-    // Pinned: always visible, since it's the only surface for the rule
-    // lifecycle actions (submit/approve/reject/deprecate/delete).
-    toggleable: false,
+    // Hideable, but always rendered last (see orderedKeys in RulesTable).
+    toggleable: true,
     defaultVisible: true,
     // Shared with the other overview tables so the Actions column width is
     // consistent app-wide (item B2-43).
@@ -661,11 +660,10 @@ export function RulesTable<F extends string = string>({
     (showSelection ? 40 : 0) +
     visibleKeys.reduce((acc, k) => acc + (colWidths[k] ?? COLUMNS[k].defaultWidth), 0);
 
-  // Actions is pinned last: excluded from the Edit Columns list/reorder
-  // entirely (it's the only surface for rule lifecycle actions and must
-  // never be hidden or moved), and rendered as the final, sticky-right
-  // column regardless of where it happens to sit in the persisted column
-  // order — so a stale/corrupted layout payload can't move it.
+  // Actions is pinned last: kept out of the sortable Edit Columns list and shown
+  // there as a fixed (still toggleable) trailing entry instead, and rendered as
+  // the final, sticky-right column regardless of where it sits in the persisted
+  // column order — so a stale/corrupted layout payload can't move it.
   const editableOrder = colOrder.filter((k) => k !== "actions");
   const orderedKeys: ColumnKey[] = visibleKeys.includes("actions")
     ? [...visibleKeys.filter((k) => k !== "actions"), "actions"]
@@ -686,6 +684,11 @@ export function RulesTable<F extends string = string>({
           <EditColumnsDropdown
             order={editableOrder}
             labelOf={(key) => t(COLUMNS[key].labelKey)}
+            pinnedLast={{
+              label: t(COLUMNS.actions.labelKey),
+              checked: visibleKeys.includes("actions"),
+              onToggle: () => toggleColumn("actions"),
+            }}
             toggleableOf={(key) => COLUMNS[key].toggleable}
             isChecked={(key) => visibleKeys.includes(key)}
             onToggle={toggleColumn}
@@ -843,8 +846,8 @@ export function RulesTable<F extends string = string>({
                       )}
                       onClick={k === "actions" ? (e) => e.stopPropagation() : undefined}
                     >
-                      <CollapsibleCellContent phase={rowPhase} className="py-2">
-                        {k === "actions" ? renderActions(r) : COLUMNS[k].renderCell(r, ctx)}
+                      <CollapsibleCellContent phase={rowPhase} className={cn("py-2", ACTIONS_ROW_MIN_HEIGHT_CLASS)}>
+                        <div>{k === "actions" ? renderActions(r) : COLUMNS[k].renderCell(r, ctx)}</div>
                       </CollapsibleCellContent>
                     </TableCell>
                   );

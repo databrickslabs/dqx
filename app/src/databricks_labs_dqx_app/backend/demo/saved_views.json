@@ -20,7 +20,8 @@
             "owner",
             "dimension",
             "severity",
-            "status"
+            "status",
+            "actions"
           ],
           "visibility": {
             "appliedRules": false,
@@ -150,7 +151,8 @@
             "version",
             "owner",
             "status",
-            "schedule"
+            "schedule",
+            "actions"
           ],
           "visibility": {
             "dqScore": true,
