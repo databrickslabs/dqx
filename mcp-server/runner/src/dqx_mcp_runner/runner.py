@@ -39,6 +39,7 @@ from dqx_mcp_runner.naming import (
     qualify_output,
     validate_identifier,
 )
+from dqx_mcp_runner.rule_summary import RuleCount, summarize_rule_counts
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dqx-mcp-runner")
@@ -334,20 +335,28 @@ def list_available_checks(spark: SparkSession, ws: WorkspaceClient, params: dict
     return {"checks": checks, "count": len(checks)}
 
 
-def _compute_rule_summary(invalid_df) -> list:
-    """Aggregate per-rule error/warning counts."""
+def _count_entries_per_rule(invalid_df, col_name: str) -> list[RuleCount]:
+    """Count the result entries in one result column per rule (fingerprint + name)."""
     import pyspark.sql.functions as F
 
-    summary: dict = {}
-    for col_name in ("_errors", "_warnings"):
-        if col_name not in invalid_df.columns:
-            continue
-        exploded = invalid_df.select(F.explode(F.col(col_name)).alias("item"))
-        for row in exploded.groupBy("item.name").count().collect():
-            rule_name = row["name"] or "unknown"
-            summary.setdefault(rule_name, {"error_count": 0, "warning_count": 0})
-            summary[rule_name]["error_count" if col_name == "_errors" else "warning_count"] = row["count"]
-    return [{"rule_name": name, **counts} for name, counts in summary.items()]
+    if col_name not in invalid_df.columns:
+        return []
+    exploded = invalid_df.select(F.explode(F.col(col_name)).alias("item"))
+    grouped = exploded.groupBy(
+        F.col("item.rule_fingerprint").alias("rule_fingerprint"), F.col("item.name").alias("rule_name")
+    ).count()
+    return [
+        RuleCount(rule_fingerprint=row["rule_fingerprint"], rule_name=row["rule_name"], count=row["count"])
+        for row in grouped.collect()
+    ]
+
+
+def _compute_rule_summary(invalid_df) -> list:
+    """Aggregate error/warning counts per rule, keyed by rule fingerprint (see rule_summary)."""
+    return summarize_rule_counts(
+        error_counts=_count_entries_per_rule(invalid_df, "_errors"),
+        warning_counts=_count_entries_per_rule(invalid_df, "_warnings"),
+    )
 
 
 def _ensure_output_schema(spark: SparkSession, catalog: str, user_schema: str, grant_to: str) -> None:
