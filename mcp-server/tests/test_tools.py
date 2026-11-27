@@ -1,4 +1,7 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, create_autospec, patch
+
+import pytest
+from databricks.sdk import WorkspaceClient
 
 _ENV = {
     "DQX_RUNNER_JOB_ID": "42",
@@ -166,6 +169,61 @@ class TestRunChecks:
         assert "metadata" not in mock_submit.call_args.kwargs
         assert result["status"] == "submitted"
         assert result["run_id"] == 999
+
+
+@pytest.mark.parametrize("tool_name", ("run_checks", "apply_checks_and_save_to_table"))
+def test_registered_check_tools_forward_reference_views(tool_name: str) -> None:
+    """Exercise registration and real adaptation, mocking only the SQL/SDK I/O boundaries."""
+    tools = _register_tools()
+    source, reference = "catalog.schema.children", "catalog.schema.parents"
+    primary_view = "dqx_mcp.dqx_mcp_tmp.v_1234567890_000000000001"
+    reference_view = "dqx_mcp.dqx_mcp_tmp.v_1234567890_000000000002"
+    obo_ws = create_autospec(WorkspaceClient, instance=True)
+    checks = [
+        {
+            "name": "fk_parent",
+            "check": {
+                "function": "foreign_key",
+                "arguments": {"columns": ["parent_id"], "ref_columns": ["id"], "ref_table": reference},
+            },
+        }
+    ]
+    kwargs: dict[str, object] = {"output_name": "checked"} if tool_name == "apply_checks_and_save_to_table" else {}
+
+    with (
+        patch("server.tools.utils.get_obo_client", autospec=True, return_value=obo_ws),
+        patch("server.tools.utils.get_warehouse_id", autospec=True, return_value="wh123"),
+        patch("server.tools.utils.get_user_email", autospec=True, return_value="user@example.com"),
+        patch(
+            "server.tools.utils.create_temp_view", autospec=True, side_effect=[primary_view, reference_view]
+        ) as create,
+        patch("server.tools.utils.submit_job_async", autospec=True, return_value=999) as submit,
+        patch("server.tools.utils.drop_view", autospec=True) as drop,
+        patch.dict("os.environ", _ENV),
+    ):
+        result = tools[tool_name](source, checks, **kwargs)
+
+    assert create.call_args_list == [
+        call(obo_ws, source, "dqx_mcp", "dqx_mcp_tmp", "wh123"),
+        call(obo_ws, reference, "dqx_mcp", "dqx_mcp_tmp", "wh123"),
+    ]
+    submit.assert_called_once()
+    operation, params = submit.call_args.args
+    assert operation == tool_name
+    assert params["view_name"] == primary_view
+    assert params["ref_views"] == {reference: reference_view}
+    assert params["checks"] == [
+        {
+            "name": "fk_parent",
+            "check": {
+                "function": "foreign_key",
+                "arguments": {"columns": ["parent_id"], "ref_columns": ["id"], "ref_df_name": reference},
+            },
+        }
+    ]
+    assert checks[0]["check"]["arguments"]["ref_table"] == reference
+    assert result["run_id"] == 999
+    drop.assert_not_called()
 
 
 class TestGetRunResult:

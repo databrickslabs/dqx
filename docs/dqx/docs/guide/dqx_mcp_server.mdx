@@ -146,6 +146,19 @@ These are natural-language prompts you can give any connected agent. Replace `<c
 `profile_table` samples the data by default (good for large tables, but on a tiny table it can miss issues). Pass `{"sample_fraction": 1.0}` in the tool's `options` to profile every row.
 </Admonition>
 
+<Admonition type="note" title="Reference-table checks">
+`run_checks` and `apply_checks_and_save_to_table` expose reference tables through full, unsampled views created with your on-behalf-of (OBO) credentials. This applies to `foreign_key`, `compare_datasets`, `aggr_matches_dataset`, and the reference-table mode of `has_valid_schema`.
+
+For `ref_table`, use an unquoted, three-part name: `catalog.schema.table`. Each part can contain only letters, digits, and underscores. Two-part names, backtick-quoted names, and names containing hyphens or spaces are not supported by this path.
+
+You must have access to each reference table. The runner receives reference DataFrames keyed by the original table names, not standing access to the underlying tables. Tables named inside `sql_query` SQL are not automatically adapted by this mechanism.
+
+To pass those DataFrames, the server rewrites each eligible check from `ref_table` to `ref_df_name`, keeping the original table name as the value. This has two visible effects:
+
+- Rule fingerprints match across MCP runs of the same checks, but differ from the fingerprints of the same checks run directly through DQX with `ref_table`.
+- `aggr_matches_dataset` violation messages name the reference as `DataFrame '<catalog.schema.table>'` instead of `table '<catalog.schema.table>'`.
+</Admonition>
+
 ### Recommended workflow
 
 You don't run these tools by hand — you ask in plain English (see [Example prompts](#example-prompts)) and the assistant orchestrates them. Behind a request, it calls `get_workflow` to discover the recommended sequence and then runs roughly:

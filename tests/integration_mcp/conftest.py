@@ -676,6 +676,9 @@ _CUSTOMERS_ROWS = """
  (NULL, 'Peggy',   'peggy@example.com',   39,  'US', DATE'2024-01-05', 180.00)
 """
 
+# Countries a customer may reference. 'IN' (Grace, row 7) is absent, so it is the only FK violation.
+_REF_COUNTRY_ROWS = "('US'), ('UK'), ('DE'), ('FR')"
+
 # Public so the test can also pass it as inline `contract_content` (the tool accepts either a
 # volume path or the contract text) without reaching into a private name.
 CONTRACT_YAML = """\
@@ -797,43 +800,57 @@ def seed_demo_data(app_sp: str, runner_sp: str = "") -> Iterator[dict[str, str]]
             err = resp.status.error if resp.status else None
             raise RuntimeError(f"SQL {state}: {err} :: {statement[:120]}")
 
-    run_sql(f"CREATE SCHEMA IF NOT EXISTS {fq_schema}")
-    run_sql(
-        f"CREATE TABLE {table} (customer_id INT, name STRING, email STRING, age INT, "
-        f"country STRING, signup_date DATE, amount DOUBLE)"
-    )
-    run_sql(f"INSERT INTO {table} VALUES {_CUSTOMERS_ROWS.strip()}")
-
-    # The contract is read by the runner job as the runner SP, so it must live somewhere the runner
-    # SP can read — a UC volume in the seed schema. Reading a volume file via FUSE open() needs
-    # USE SCHEMA on the parent schema *and* READ VOLUME on the volume (USE CATALOG comes from setup).
-    run_sql(f"CREATE VOLUME IF NOT EXISTS {fq_schema}.contracts")
-    if runner_sp:
-        run_sql(f"GRANT USE SCHEMA ON SCHEMA {fq_schema} TO `{runner_sp}`")
-        run_sql(f"GRANT READ VOLUME ON VOLUME {fq_schema}.contracts TO `{runner_sp}`")
+    ref_table = f"{fq_schema}.ref_countries"
     contract_path = f"/Volumes/{CATALOG}/{schema}/contracts/customers_contract.yaml"
-    client.files.upload(contract_path, io.BytesIO(CONTRACT_YAML.encode()), overwrite=True)
-
-    # The same contract as a *workspace* file. The tools accept either backend and read them
-    # differently (Files API download vs workspace export + base64), so the test covers both.
-    #
-    # It goes under /Shared, NOT the seeding identity's /Users home: the app reads the file with the
-    # *caller's* OBO token, and in CI the caller (an OAuth SP) is a different principal from the one
-    # that seeds, so it cannot read another identity's home folder ("Path doesn't exist"). Locally
-    # both are the same user, which is why a /Users path passed on a dev workspace and failed in CI.
-    #
-    # ImportFormat.AUTO with a .yml path keeps it a plain file (mirrors tests/conftest.py's
-    # make_check_file); without an explicit format the SDK tries to treat the bytes as an archive.
     ws_contract_dir = "/Shared/dqx_mcp_it"
     ws_contract_path = f"{ws_contract_dir}/{schema}_contract.yml"
-    client.workspace.mkdirs(ws_contract_dir)
-    client.workspace.upload(
-        path=ws_contract_path, format=ImportFormat.AUTO, content=CONTRACT_YAML.encode(), overwrite=True
-    )
 
+    def seed() -> None:
+        run_sql(f"CREATE SCHEMA IF NOT EXISTS {fq_schema}")
+        run_sql(
+            f"CREATE TABLE {table} (customer_id INT, name STRING, email STRING, age INT, "
+            f"country STRING, signup_date DATE, amount DOUBLE)"
+        )
+        run_sql(f"INSERT INTO {table} VALUES {_CUSTOMERS_ROWS.strip()}")
+
+        # Reference table for the foreign_key check. Deliberately NOT granted to the runner SP: the
+        # runner must read it through the caller's OBO view. 'IN' is omitted, so exactly one customer
+        # row violates the key (the NULL country is skipped by foreign_key's ANSI null semantics).
+        run_sql(f"CREATE TABLE {ref_table} (code STRING)")
+        run_sql(f"INSERT INTO {ref_table} VALUES {_REF_COUNTRY_ROWS}")
+
+        # The contract is read by the runner job as the runner SP, so it must live somewhere the
+        # runner SP can read — a UC volume in the seed schema. Reading a volume file via FUSE open()
+        # needs USE SCHEMA on the parent schema *and* READ VOLUME on the volume (USE CATALOG comes
+        # from setup).
+        run_sql(f"CREATE VOLUME IF NOT EXISTS {fq_schema}.contracts")
+        if runner_sp:
+            run_sql(f"GRANT USE SCHEMA ON SCHEMA {fq_schema} TO `{runner_sp}`")
+            run_sql(f"GRANT READ VOLUME ON VOLUME {fq_schema}.contracts TO `{runner_sp}`")
+        client.files.upload(contract_path, io.BytesIO(CONTRACT_YAML.encode()), overwrite=True)
+
+        # The same contract as a *workspace* file. The tools accept either backend and read them
+        # differently (Files API download vs workspace export + base64), so the test covers both.
+        #
+        # It goes under /Shared, NOT the seeding identity's /Users home: the app reads the file with
+        # the *caller's* OBO token, and in CI the caller (an OAuth SP) is a different principal from
+        # the one that seeds, so it cannot read another identity's home folder ("Path doesn't
+        # exist"). Locally both are the same user, which is why a /Users path passed on a dev
+        # workspace and failed in CI.
+        #
+        # ImportFormat.AUTO with a .yml path keeps it a plain file (mirrors tests/conftest.py's
+        # make_check_file); without an explicit format the SDK tries to treat the bytes as an archive.
+        client.workspace.mkdirs(ws_contract_dir)
+        client.workspace.upload(
+            path=ws_contract_path, format=ImportFormat.AUTO, content=CONTRACT_YAML.encode(), overwrite=True
+        )
+
+    # Seeding runs inside the try, so a setup step that fails part-way still drops what was created.
     try:
+        seed()
         yield {
             "table": table,
+            "ref_table": ref_table,
             "schema": fq_schema,
             "contract": contract_path,
             "workspace_contract": ws_contract_path,
