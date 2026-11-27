@@ -34,6 +34,7 @@ from databricks.sdk.service.sql import (
 from databricks_labs_dqx_app.backend.sql_executor import (
     RawSql,
     SqlExecutor,
+    SqlStatementError,
     WhereIn,
     _build_count,
     _build_delete,
@@ -322,6 +323,69 @@ def test_default_query_keeps_permissive_first_chunk_behavior(
         rows = query_executor.query_dicts("SHOW GRANTS ON CATALOG dqx")
     assert rows == ([{}] if missing_schema else [{"principal": "scheduler-sp"}])
     statement_api.get_statement_result_chunk_n.assert_not_called()
+
+
+@pytest.mark.parametrize("first_chunk_rows", [[["scheduler-sp", "USE CATALOG"]], []])
+def test_follow_chunks_reads_every_chunk_in_order(
+    query_executor: SqlExecutor, statement_api: MagicMock, first_chunk_rows: list[list[str]]
+) -> None:
+    statement_api.execute_statement.return_value = query_response(rows=first_chunk_rows, next_chunk_index=1)
+    statement_api.get_statement_result_chunk_n.side_effect = [
+        ResultData(chunk_index=1, data_array=[["runner-sp", "USE CATALOG"]], next_chunk_index=2),
+        ResultData(chunk_index=2, data_array=[["app-sp", "USE SCHEMA"]]),
+    ]
+    expected_first = [{"principal": "scheduler-sp", "actionType": "USE CATALOG"}] if first_chunk_rows else []
+    assert query_executor.query_dicts("SELECT 1", follow_chunks=True) == [
+        *expected_first,
+        {"principal": "runner-sp", "actionType": "USE CATALOG"},
+        {"principal": "app-sp", "actionType": "USE SCHEMA"},
+    ]
+    assert [c.args for c in statement_api.get_statement_result_chunk_n.call_args_list] == [
+        ("statement-1", 1),
+        ("statement-1", 2),
+    ]
+
+
+@pytest.mark.parametrize("result", [None, ResultData(chunk_index=0)])
+def test_follow_chunks_treats_missing_payload_as_empty(
+    query_executor: SqlExecutor, statement_api: MagicMock, result: ResultData | None
+) -> None:
+    response = query_response()
+    response.result = result
+    statement_api.execute_statement.return_value = response
+    assert query_executor.query_dicts("SELECT 1", follow_chunks=True) == []
+    statement_api.get_statement_result_chunk_n.assert_not_called()
+
+
+@pytest.mark.parametrize("defect", ["truncated", "short_total_row_count", "repeated_chunk_index", "no_statement_id"])
+def test_follow_chunks_rejects_incomplete_results(
+    query_executor: SqlExecutor, statement_api: MagicMock, defect: str
+) -> None:
+    response = query_response(rows=[["scheduler-sp", "USE CATALOG"]], next_chunk_index=1)
+    statement_api.get_statement_result_chunk_n.return_value = ResultData(
+        chunk_index=1, data_array=[["runner-sp", "USE CATALOG"]]
+    )
+    if defect == "truncated":
+        response.manifest.truncated = True
+    elif defect == "short_total_row_count":
+        response.manifest.total_row_count = 3
+    elif defect == "repeated_chunk_index":
+        statement_api.get_statement_result_chunk_n.return_value.next_chunk_index = 1
+    else:
+        response.statement_id = None
+    statement_api.execute_statement.return_value = response
+    with pytest.raises(RuntimeError, match="Incomplete"):
+        query_executor.query_dicts("SELECT 1", follow_chunks=True)
+
+
+def test_follow_chunks_keeps_the_upstream_statement_failure(
+    query_executor: SqlExecutor, statement_api: MagicMock
+) -> None:
+    response = query_response()
+    response.status = StatementStatus(state=StatementState.FAILED, error=ServiceError(message="result too large"))
+    statement_api.execute_statement.return_value = response
+    with pytest.raises(SqlStatementError, match="result too large"):
+        query_executor.query_dicts("SELECT 1", follow_chunks=True)
 
 
 # ---------------------------------------------------------------------------

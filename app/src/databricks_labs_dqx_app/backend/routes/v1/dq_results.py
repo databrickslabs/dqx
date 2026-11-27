@@ -108,6 +108,7 @@ from databricks_labs_dqx_app.backend.sql_utils import (
     quote_object_fqn,
     sql_string_in_list,
     validate_fqn,
+    validate_object_id,
     validate_run_id,
 )
 
@@ -117,11 +118,10 @@ router = APIRouter()
 _ALL_ROLES = [UserRole.ADMIN, UserRole.RULE_APPROVER, UserRole.RULE_AUTHOR, UserRole.VIEWER]
 
 _RUNS_LIMIT = 50
-# Upper bound on failing-row scans (matches the failed-rows endpoint's
-# ``limit`` ceiling and the UI download cap). Bounds both the preview
-# window and the true-filtered-count pass so neither can pull an unbounded
-# result set on a pathologically large run.
-_FAILED_ROWS_MAX = 100000
+# Failed-rows page caps; INLINE results abort above 25 MiB.
+_FAILED_ROWS_PAGE_MAX = 5000
+_FAILED_ROWS_PAGE_BYTES = 8 * 1024 * 1024
+_FAILED_ROWS_ROW_OVERHEAD_BYTES = 256
 # Fallback swatch for label values missing a configured colour (matches
 # the UI's muted gray).
 _DEFAULT_LABEL_COLOR = "#6B7280"
@@ -1334,9 +1334,10 @@ def get_dq_results_failed_rows(
     rule: Annotated[list[str] | None, Query()] = None,
     column: Annotated[list[str] | None, Query()] = None,
     run_id: str | None = Query(None),
-    limit: int = Query(200, ge=1, le=100000),
+    limit: int = Query(200, ge=1, le=_FAILED_ROWS_PAGE_MAX),
     offset: int = Query(0, ge=0),
     include_drafts: bool = Query(False),
+    after: str | None = Query(None),
 ) -> FailedRowsOut:
     """One run's failing rows for *table_fqn*, filtered server-side (OBO-gated).
 
@@ -1349,6 +1350,9 @@ def get_dq_results_failed_rows(
     (the one place run_mode is resolved: stamped tag first, untagged
     legacy runs classify as published). ``include_drafts=true`` widens
     which runs QUALIFY as "latest" — never how many runs are returned.
+
+    PAGING — a page is at most *limit* rows and ~8 MiB. Pass *next_cursor*
+    back as *after*, with *run_id*, to get the next one.
 
     SECURITY MODEL — the checks from ``services/quarantine_sample_service.py``,
     in the same load-bearing order:
@@ -1366,6 +1370,15 @@ def get_dq_results_failed_rows(
         validate_fqn(table_fqn)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if after is not None:
+        if not run_id:
+            raise HTTPException(status_code=400, detail="A cursor requires run_id.")
+        if offset > 0:
+            raise HTTPException(status_code=400, detail="A cursor cannot be combined with offset.")
+        try:
+            validate_object_id(after)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid cursor.") from exc
 
     # (2) Cheap denial, as the caller. Empty 200 — not 403/404 — so an
     # unauthorized caller cannot confirm or deny the table's existence.
@@ -1383,7 +1396,9 @@ def get_dq_results_failed_rows(
     # After BOTH gates deliberately: a fine-grained-controlled table must not
     # open in v_dq_failing_rows when this endpoint itself suppresses it.
     # Best-effort (never raises) and never affects this response.
-    entitlements.record_entitlement(email, table_fqn)
+    # First page only, no need to repeat the MERGE per page.
+    if after is None:
+        entitlements.record_entitlement(email, table_fqn)
 
     facets = _facets(dimension, severity, rule, column)
     active = facets.any_active()
@@ -1416,27 +1431,41 @@ def get_dq_results_failed_rows(
         )
     # All facet values are strict-escaped inside the predicate builder.
     facet_cond = f"AND ({_facet_pushdown_predicate(facets)}) " if active else ""
+    keyset_cond = f"AND quarantine_id < '{escape_sql_string(after)}' " if after else ""
     # COUNT(*) OVER() (computed before LIMIT/OFFSET) is the true filtered
     # total; only needed when filtering — the unfiltered total is the cheaper
-    # authoritative dq_metrics read below. A deterministic quarantine_id
-    # tiebreak keeps paging stable when many rows share one created_at (bulk
-    # quarantine writes stamp an identical timestamp across the whole run).
-    count_col = ", COUNT(*) OVER () AS total_count" if active else ""
+    # authoritative dq_metrics read below.
+    count_col = ", COUNT(*) OVER () AS total_count" if active and after is None else ""
+    # limit + 1 rows to detect a next page; the byte cap cuts the page but row 1 always stays.
+    order = "ORDER BY quarantine_id DESC"
+    row_bytes = (
+        f"{_FAILED_ROWS_ROW_OVERHEAD_BYTES} + COALESCE(octet_length(row_data), 0) "
+        f"+ COALESCE(octet_length(errors), 0) + COALESCE(octet_length(warnings), 0)"
+    )
     stmt = (
+        f"SELECT * FROM (SELECT p.*, COUNT(*) OVER () AS fetched, ROW_NUMBER() OVER ({order}) AS rn, "
+        f"SUM({row_bytes}) OVER ({order} ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS page_bytes FROM ("
         f"SELECT quarantine_id, run_id, to_json(row_data) AS row_data, "
         f"to_json(errors) AS errors, to_json(warnings) AS warnings, "
         f"CAST(created_at AS STRING) AS created_at{count_col} "
         f"FROM {quarantine_table} WHERE source_table_fqn = '{e_fqn}' "  # noqa: S608
-        f"{run_cond}{facet_cond}"
-        f"ORDER BY created_at DESC, quarantine_id DESC LIMIT {int(limit)} OFFSET {int(offset)}"
+        f"{run_cond}{facet_cond}{keyset_cond}"
+        f"{order} LIMIT {int(limit) + 1} OFFSET {int(offset)}) p) w "
+        f"WHERE rn <= {int(limit)} AND (rn = 1 OR page_bytes <= {_FAILED_ROWS_PAGE_BYTES}) ORDER BY rn"
     )
     try:
-        raw_rows = sp_sql.query_dicts(stmt)
+        raw_rows = sp_sql.query_dicts(stmt, follow_chunks=True)
     except Exception as exc:
         # Only reachable after both OBO checks passed, so this 500 leaks
         # nothing to unauthorized callers.
         logger.exception(f"Failed to load failed rows for {table_fqn}")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail="Failed records could not be loaded.") from exc
+
+    has_more = bool(raw_rows) and (safe_int(raw_rows[0].get("fetched")) or 0) > len(raw_rows)
+    next_cursor = raw_rows[-1].get("quarantine_id") if has_more else None
+    # Every returned row belongs to exactly ONE run (the WHERE clause pins
+    # it), so the effective run is the pin or the run the page carries.
+    resolved_run_id = (run_id or raw_rows[0].get("run_id")) if raw_rows else None
 
     # The SQL already applied the facets, so every returned row is a match —
     # parse each purely to shape it for display. Severity/dimension/rule_id
@@ -1463,20 +1492,19 @@ def get_dq_results_failed_rows(
     #  - No active facets: the run's authoritative distinct failing-row count
     #    from dq_metrics (input_row_count - valid_row_count), so the "download
     #    to view all N" headline is correct even when the page is capped.
-    if active:
+    #  - Continuation page: the page's own size.
+    if after is not None:
+        total = len(rows)
+    elif active:
         total = int(raw_rows[0].get("total_count") or 0) if raw_rows else 0
     else:
         total = len(rows)
-        if raw_rows:
-            # Every returned row belongs to exactly ONE run (the WHERE clause
-            # pins it), so the effective run is the pin or the run the page carries.
-            resolved_run_id = run_id or raw_rows[0].get("run_id")
-            if resolved_run_id:
-                failed_by_run = _fetch_failed_records_by_run(sp_sql, app_conf, [table_fqn])
-                true_total = failed_by_run.get((table_fqn, resolved_run_id))
-                if true_total is not None:
-                    total = true_total
-    return FailedRowsOut(rows=rows, total=total, suppressed=False)
+        if resolved_run_id:
+            failed_by_run = _fetch_failed_records_by_run(sp_sql, app_conf, [table_fqn])
+            true_total = failed_by_run.get((table_fqn, resolved_run_id))
+            if true_total is not None:
+                total = true_total
+    return FailedRowsOut(rows=rows, total=total, suppressed=False, run_id=resolved_run_id, next_cursor=next_cursor)
 
 
 # ---------------------------------------------------------------------------

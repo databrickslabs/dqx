@@ -6,6 +6,7 @@ import {
   buildFailedRecordsXlsx,
   columnsFromRows,
   distinctRules,
+  EXCEL_CELL_MAX_CHARS,
   EXPORT_ROW_LIMIT,
   failedRecordsFilename,
   toFailingRecords,
@@ -117,18 +118,57 @@ describe("buildFailedRecordsCsv", () => {
     // Embedded quotes are doubled.
     expect(lines[2]).toBe('2,,"say ""hi""",');
   });
+
+  it("quotes a value holding a lone carriage return", () => {
+    const csv = buildFailedRecordsCsv([
+      { record_key: "k", row_values: { note: "a\rb" }, failed_columns: [], failures: [] },
+    ]);
+    expect(csv).toBe('note,Failed Rules\n"a\rb",');
+  });
 });
 
 describe("buildFailedRecordsXlsx", () => {
   it("round-trips a workbook with sheet 'Failed records' and the CSV's columns", () => {
-    const buf = buildFailedRecordsXlsx(rows);
-    expect(buf.byteLength).toBeGreaterThan(0);
-    const book = XLSX.read(buf, { type: "array" });
+    const { bytes, truncatedCells } = buildFailedRecordsXlsx(rows);
+    expect(bytes.byteLength).toBeGreaterThan(0);
+    expect(truncatedCells).toBe(0);
+    const book = XLSX.read(bytes, { type: "array" });
     expect(book.SheetNames).toContain("Failed records");
     const aoa = XLSX.utils.sheet_to_json<string[]>(book.Sheets["Failed records"], { header: 1 });
     expect(aoa[0]).toEqual(["id", "note", "extra", "Failed Rules"]);
     expect(aoa[1].slice(0, 2)).toEqual(["1", "a, b"]);
     expect(aoa[1][3]).toBe("Not null, Positive");
+  });
+
+  it("shortens a value longer than Excel's cell limit instead of throwing", () => {
+    const { bytes, truncatedCells } = buildFailedRecordsXlsx([
+      {
+        record_key: "k",
+        row_values: { id: "1", payload: "x".repeat(40_000) },
+        failed_columns: [],
+        failures: [],
+      },
+    ]);
+    expect(truncatedCells).toBe(1);
+    const book = XLSX.read(bytes, { type: "array" });
+    const aoa = XLSX.utils.sheet_to_json<string[]>(book.Sheets["Failed records"], { header: 1 });
+    expect(aoa[1][1]).toBe(`${"x".repeat(EXCEL_CELL_MAX_CHARS - 1)}…`);
+  });
+
+  it("does not cut a surrogate pair in half when it shortens a cell", () => {
+    // The emoji's two code units straddle the cut, so the cell stops before it.
+    const prefix = "x".repeat(EXCEL_CELL_MAX_CHARS - 2);
+    const { bytes } = buildFailedRecordsXlsx([
+      {
+        record_key: "k",
+        row_values: { payload: `${prefix}\u{1F600} and more text` },
+        failed_columns: [],
+        failures: [],
+      },
+    ]);
+    const book = XLSX.read(bytes, { type: "array" });
+    const aoa = XLSX.utils.sheet_to_json<string[]>(book.Sheets["Failed records"], { header: 1 });
+    expect(aoa[1][0]).toBe(`${prefix}…`);
   });
 });
 
@@ -145,7 +185,7 @@ describe("failedRecordsFilename", () => {
 });
 
 describe("EXPORT_ROW_LIMIT", () => {
-  it("matches the backend's failed-rows cap", () => {
+  it("is the export's record cap", () => {
     expect(EXPORT_ROW_LIMIT).toBe(100000);
   });
 });

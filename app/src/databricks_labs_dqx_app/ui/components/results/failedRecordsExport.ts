@@ -22,9 +22,11 @@ export function toFailingRecords(
   }));
 }
 
-/** High row cap for a full (undrilled) export. Matches the backend's raised
- *  `le` on the failed-rows endpoint, so a download can pull the whole set. */
+/** Most failed records one download holds. */
 export const EXPORT_ROW_LIMIT = 100000;
+
+/** Excel's cell text limit; SheetJS throws above it. */
+export const EXCEL_CELL_MAX_CHARS = 32767;
 
 /** Source columns for the export/table = union of all rows' row_values keys
  *  AND their failed_columns, in first-seen order. Callers pass only rows; the
@@ -38,15 +40,12 @@ export const EXPORT_ROW_LIMIT = 100000;
  *  column made that very column vanish from the table (item 63). It renders
  *  with a "—" placeholder cell (the value genuinely is null). */
 export function columnsFromRows(rows: FailingRecord[]): string[] {
-  const columns: string[] = [];
-  const add = (key: string) => {
-    if (!columns.includes(key)) columns.push(key);
-  };
+  const columns = new Set<string>();
   for (const row of rows) {
-    for (const key of Object.keys(row.row_values)) add(key);
-    for (const key of row.failed_columns) add(key);
+    for (const key of Object.keys(row.row_values)) columns.add(key);
+    for (const key of row.failed_columns) columns.add(key);
   }
-  return columns;
+  return [...columns];
 }
 
 /** Distinct failed rule names for a row, in first-seen order, comma-joined.
@@ -59,10 +58,10 @@ export function distinctRules(row: FailingRecord): string {
   ).join(", ");
 }
 
-/** CSV-escape a cell: quote it if it has a comma, quote or newline; double up
+/** CSV-escape a cell: quote it if it has a comma, quote, CR or LF; double up
  *  embedded quotes. */
 function csvCell(v: string): string {
-  return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+  return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
 }
 
 /** Build a CSV of the failing records: every source column (derived from the
@@ -80,18 +79,55 @@ export function buildFailedRecordsCsv(rows: FailingRecord[]): string {
 }
 
 /** Build an .xlsx workbook (sheet "Failed records") with the same columns as
- *  the CSV plus the trailing "Failed Rules" column. Returns the raw bytes. */
-export function buildFailedRecordsXlsx(rows: FailingRecord[]): ArrayBuffer {
+ *  the CSV plus the trailing "Failed Rules" column. Cells over
+ *  EXCEL_CELL_MAX_CHARS are cut and counted in truncatedCells. */
+export function buildFailedRecordsXlsx(rows: FailingRecord[]): {
+  bytes: ArrayBuffer;
+  truncatedCells: number;
+} {
+  let truncatedCells = 0;
+  const fit = (value: string): string => {
+    if (value.length <= EXCEL_CELL_MAX_CHARS) return value;
+    truncatedCells += 1;
+    // room for the ellipsis; don't split a surrogate pair
+    let end = EXCEL_CELL_MAX_CHARS - 1;
+    const last = value.charCodeAt(end - 1);
+    if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+    return `${value.slice(0, end)}…`;
+  };
   const columns = columnsFromRows(rows);
-  const header = [...columns, "Failed Rules"];
+  const header = [...columns, "Failed Rules"].map(fit);
   const body = rows.map((row) => [
-    ...columns.map((c) => row.row_values[c] ?? ""),
-    distinctRules(row),
+    ...columns.map((c) => fit(row.row_values[c] ?? "")),
+    fit(distinctRules(row)),
   ]);
-  const sheet = XLSX.utils.aoa_to_sheet([header, ...body]);
+  const sheet = XLSX.utils.aoa_to_sheet([header, ...body], { dense: true });
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(book, sheet, "Failed records");
-  return XLSX.write(book, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+  // uncompressed, large sheets hit V8's "Invalid array length"
+  const bytes = XLSX.write(book, {
+    type: "array",
+    bookType: "xlsx",
+    compression: true,
+  }) as ArrayBuffer;
+  return { bytes, truncatedCells };
+}
+
+export type ExportFormat = "csv" | "xlsx";
+
+export const EXPORT_MIME: Record<ExportFormat, string> = {
+  csv: "text/csv;charset=utf-8;",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
+
+/** Build the CSV or Excel file for the rows. */
+export function buildExportFile(
+  format: ExportFormat,
+  rows: FailingRecord[],
+): { data: BlobPart; truncatedCells: number } {
+  if (format === "csv") return { data: buildFailedRecordsCsv(rows), truncatedCells: 0 };
+  const { bytes, truncatedCells } = buildFailedRecordsXlsx(rows);
+  return { data: bytes, truncatedCells };
 }
 
 /** Build the export filename base `<table>_<YYYY-MM-DD>_invalid_records` from a
@@ -117,30 +153,9 @@ export function downloadBlob(
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
+  // attached anchor + late revoke, some browsers drop the download otherwise
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
-}
-
-/** Download the rows as `<base>.csv` (base defaults to "failed-records"). */
-export function downloadFailedRecordsCsv(
-  rows: FailingRecord[],
-  filenameBase = "failed-records",
-): void {
-  downloadBlob(
-    buildFailedRecordsCsv(rows),
-    `${filenameBase}.csv`,
-    "text/csv;charset=utf-8;",
-  );
-}
-
-/** Download the rows as `<base>.xlsx` (base defaults to "failed-records"). */
-export function downloadFailedRecordsXlsx(
-  rows: FailingRecord[],
-  filenameBase = "failed-records",
-): void {
-  downloadBlob(
-    buildFailedRecordsXlsx(rows),
-    `${filenameBase}.xlsx`,
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  );
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
