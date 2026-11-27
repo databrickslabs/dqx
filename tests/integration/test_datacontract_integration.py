@@ -691,6 +691,66 @@ class TestDataContractIntegration:
         assert "scale" in str(exc_info.value).lower() or "precision" in str(exc_info.value).lower()
 
 
+def test_generated_string_format_rules_apply_on_spark(ws, spark):
+    """Rules generated from a string logicalTypeOptions format pass valid values and fail invalid ones on Spark."""
+    string_formats = ["email", "uuid", "uri", "ipv4", "ipv6"]
+    contract = {
+        "kind": "DataContract",
+        "apiVersion": "v3.0.2",
+        "id": "test:string_formats",
+        "name": "String Formats",
+        "version": "1.0.0",
+        "status": "active",
+        "schema": [
+            {
+                "name": "contacts",
+                "physicalType": "table",
+                "properties": [
+                    {
+                        "name": f"{string_format}_value",
+                        "physicalType": "STRING",
+                        "logicalType": "string",
+                        "logicalTypeOptions": {"format": string_format},
+                    }
+                    for string_format in string_formats
+                ],
+            },
+        ],
+    }
+    rules = _generate_rules_from_temp_contract(
+        ws,
+        spark,
+        contract,
+        process_text_rules=False,
+        generate_schema_validation=False,
+    )
+    test_df = spark.createDataFrame(
+        [
+            [
+                "valid",
+                "user@example.com",
+                "123e4567-e89b-12d3-a456-426614174000",
+                "https://example.com/path",
+                "192.168.1.1",
+                "2001:db8::1",
+            ],
+            ["invalid", "user-at-example", "123e4567", "not a uri", "999.168.1.1", "2001:db8::zzzz"],
+            ["null", None, None, None, None, None],
+        ],
+        "case: string, email_value: string, uuid_value: string, uri_value: string, ipv4_value: string, "
+        "ipv6_value: string",
+    )
+
+    checked_df = DQEngine(ws, spark).apply_checks_by_metadata(test_df, rules)
+
+    flagged_by_case = {row["case"]: _flagged_names(row) for row in checked_df.select("case", "_errors").collect()}
+    assert flagged_by_case == {
+        "valid": set(),
+        "invalid": {f"{string_format}_value_valid_{string_format}_format" for string_format in string_formats},
+        "null": set(),
+    }
+
+
 class TestDataContractIntegrationErrors:
     """Integration tests for data contract error paths and invalid inputs."""
 

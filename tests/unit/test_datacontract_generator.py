@@ -1965,6 +1965,86 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
         finally:
             os.unlink(temp_path)
 
+    @pytest.mark.parametrize(
+        "string_format, expected_function",
+        [
+            ("email", "is_valid_email"),
+            ("uuid", "is_valid_uuid"),
+            ("uri", "is_valid_url"),
+            ("ipv4", "is_valid_ipv4_address"),
+            ("ipv6", "is_valid_ipv6_address"),
+        ],
+    )
+    def test_format_on_string_type_generates_validity_check(self, generator, caplog, string_format, expected_function):
+        """Test that a supported format on a string field generates the matching validity check."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {
+                    "name": "contact",
+                    "physicalType": "STRING",
+                    "logicalType": "string",
+                    "logicalTypeOptions": {"format": string_format},
+                }
+            ]
+        )
+
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path, generate_schema_validation=False, process_text_rules=False
+                )
+
+            assert [r["check"] for r in rules] == [{"function": expected_function, "arguments": {"column": "contact"}}]
+            assert rules[0]["name"] == f"contact_valid_{string_format}_format"
+            assert rules[0]["criticality"] == "error"
+            assert rules[0]["user_metadata"].items() >= {"dimension": "validity", "rule_type": "predefined"}.items()
+            assert not [r for r in caplog.records if r.name == contract_rules_generator_module.__name__]
+        finally:
+            os.unlink(temp_path)
+
+    @pytest.mark.parametrize(
+        "string_format, logged_format",
+        [
+            ("hostname", "hostname"),
+            ("yyyy-MM-dd", "yyyy-MM-dd"),
+            ("EMAIL", "EMAIL"),
+            (["email"], "['email']"),
+        ],
+    )
+    def test_unsupported_format_on_string_type_is_skipped_with_warning(
+        self, generator, caplog, string_format, logged_format
+    ):
+        """Test that an unsupported format on a string field generates no rule and logs a warning."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {
+                    "name": "status",
+                    "physicalType": "STRING",
+                    "logicalType": "string",
+                    "required": True,
+                    "logicalTypeOptions": {"format": string_format},
+                }
+            ]
+        )
+
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path, generate_schema_validation=False, process_text_rules=False
+                )
+
+            assert [r["check"]["function"] for r in rules] == ["is_not_null"]
+            assert (
+                f"Format '{logged_format}' isn't supported for string field 'status'; skipping it. "
+                "Supported formats: email, uuid, uri, ipv4, ipv6." in caplog.messages
+            )
+        finally:
+            os.unlink(temp_path)
+
     def test_metadata_contains_contract_info(self, generator, sample_contract_path):
         """Test that generated rules contain contract metadata."""
         rules = generator.generate_rules_from_contract(contract_file=sample_contract_path, process_text_rules=False)
@@ -3374,38 +3454,6 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                 "arguments": {"column": "start_time", "timestamp_format": "HH:mm:ss"},
             }
             assert "Time bounds aren't supported yet for field 'start_time'; skipping them." in caplog.messages
-        finally:
-            os.unlink(temp_path)
-
-    def test_format_on_string_type_ignored(self, generator):
-        """Test that format on non-date type doesn't generate format validation rules."""
-        contract_dict = self.create_basic_contract(
-            properties=[
-                {
-                    "name": "status",
-                    "physicalType": "STRING",
-                    "logicalType": "string",  # Not date/timestamp
-                    "logicalTypeOptions": {"format": "yyyy-MM-dd"},  # Format should be ignored
-                }
-            ]
-        )
-
-        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
-
-        try:
-            rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
-            )
-
-            # Should not generate format validation rules for string type
-            format_rules = [
-                r
-                for r in rules
-                if "valid_date" in r["check"]["function"] or "valid_timestamp" in r["check"]["function"]
-            ]
-            assert (
-                len(format_rules) == 0
-            ), "Format validation rules should not be generated for non-date/timestamp types"
         finally:
             os.unlink(temp_path)
 
