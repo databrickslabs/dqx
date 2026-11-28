@@ -1,4 +1,5 @@
 import itertools
+from collections.abc import Callable
 import pprint
 import logging
 import datetime
@@ -8,6 +9,8 @@ import pytest
 import pyspark.sql.functions as F
 from pyspark.sql import Column
 import databricks.labs.dqx.utils as dqx_utils
+from databricks.labs.dqx import check_funcs
+from databricks.labs.dqx.geo import check_funcs as geo_check_funcs
 from databricks.labs.dqx.check_funcs import (
     is_not_null,
     is_not_null_and_not_empty,
@@ -46,6 +49,8 @@ from databricks.labs.dqx.rule import (
     DQDatasetRule,
     requires_dbr_version,
     CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE,
+    not_supported_in_streaming,
+    CHECK_FUNC_STREAMING_UNSUPPORTED_ATTRIBUTE,
 )
 from databricks.labs.dqx.checks_serializer import (
     ChecksSerializer,
@@ -2166,6 +2171,72 @@ def test_requires_dbr_version_returns_same_function():
 
     decorated = requires_dbr_version("12.0")(my_check)
     assert decorated is my_check
+
+
+def test_not_supported_in_streaming_sets_attribute_and_returns_same_function():
+    def my_check():
+        pass
+
+    decorated = not_supported_in_streaming(my_check)
+
+    assert decorated is my_check
+    assert getattr(my_check, CHECK_FUNC_STREAMING_UNSUPPORTED_ATTRIBUTE) is True
+
+
+def test_not_supported_in_streaming_stacked_with_register_rule():
+    @not_supported_in_streaming
+    @register_rule("dataset")
+    def my_streaming_unsupported_check():
+        pass
+
+    assert getattr(my_streaming_unsupported_check, CHECK_FUNC_STREAMING_UNSUPPORTED_ATTRIBUTE) is True
+    assert CHECK_FUNC_REGISTRY.get("my_streaming_unsupported_check") == "dataset"
+
+
+# Every dataset-level check in the core and geo check modules must declare whether it runs on a streaming DataFrame,
+# so a new check cannot skip the decision. True means marked with not_supported_in_streaming. The anomaly check
+# (has_no_row_anomalies) lives in an optional module and is left out: the anomaly docs support scoring streams.
+STREAMING_UNSUPPORTED_DATASET_CHECKS = {
+    "is_unique": True,
+    "is_aggr_not_greater_than": True,
+    "is_aggr_not_less_than": True,
+    "is_aggr_equal": True,
+    "is_aggr_not_equal": True,
+    "sql_query": True,
+    "aggr_matches_dataset": True,
+    "has_no_outliers": True,
+    "has_no_aggr_outliers": True,
+    "is_in_distribution": True,
+    "is_data_fresh_per_time_window": True,
+    "has_no_gaps_per_time_window": True,
+    "are_polygons_mutually_disjoint": True,
+    # Run on streaming DataFrames: foreign_key is a stream-static join, has_valid_schema reads the schema only.
+    "foreign_key": False,
+    "has_valid_schema": False,
+    # Raises its own error for streaming inputs (it also checks the reference side).
+    "compare_datasets": False,
+}
+
+
+def _registered_dataset_check_functions() -> dict[str, Callable]:
+    # Resolve registry names against the production modules only: other tests register their own dummy checks.
+    return {
+        name: function
+        for module in (check_funcs, geo_check_funcs)
+        for name, rule_type in CHECK_FUNC_REGISTRY.items()
+        if rule_type == "dataset" and (function := getattr(module, name, None)) is not None
+    }
+
+
+def test_streaming_support_is_declared_for_every_dataset_check():
+    assert set(STREAMING_UNSUPPORTED_DATASET_CHECKS) == set(_registered_dataset_check_functions())
+
+
+@pytest.mark.parametrize("check_name, unsupported", STREAMING_UNSUPPORTED_DATASET_CHECKS.items())
+def test_dataset_checks_streaming_support_marker(check_name, unsupported):
+    check_func = _registered_dataset_check_functions()[check_name]
+
+    assert getattr(check_func, CHECK_FUNC_STREAMING_UNSUPPORTED_ATTRIBUTE, False) is unsupported
 
 
 @pytest.mark.parametrize("bad_version", ["15", "15.4.1", "abc.def", "-1.0", "15.-1", ""])

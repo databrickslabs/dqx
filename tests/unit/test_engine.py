@@ -600,6 +600,44 @@ def test_preselect_original_columns_no_op_when_columns_already_in_kwargs(monkeyp
     assert result is rule  # early-return — columns already provided
 
 
+# --- Streaming support validation tests ---
+
+
+def test_apply_checks_rejects_streaming_unsupported_dataset_checks(make_streaming_df):
+    ws = create_autospec(WorkspaceClient)
+    spark = create_autospec(SparkSession)
+    engine = DQEngineCore(workspace_client=ws, spark=spark)
+    checks = [
+        DQDatasetRule(criticality="error", check_func=check_funcs.is_unique, columns=["a"], name="a_unique"),
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="a",
+            check_func_kwargs={"limit": 10},
+            name="a_count_max",
+        ),
+        DQRowRule(criticality="error", check_func=check_funcs.is_not_null, column="a", name="a_not_null"),
+    ]
+
+    with pytest.raises(InvalidCheckError, match="not supported on streaming DataFrames") as exc_info:
+        engine.apply_checks(make_streaming_df(["a"]), checks)
+
+    message = str(exc_info.value)
+    assert "a_count_max (is_aggr_not_greater_than), a_unique (is_unique)" in message
+    assert "a_not_null" not in message
+    assert "foreachBatch" in message
+
+
+def test_apply_checks_and_split_rejects_streaming_unsupported_dataset_checks(make_streaming_df):
+    ws = create_autospec(WorkspaceClient)
+    spark = create_autospec(SparkSession)
+    engine = DQEngineCore(workspace_client=ws, spark=spark)
+    checks = [DQDatasetRule(criticality="error", check_func=check_funcs.is_unique, columns=["a"], name="a_unique")]
+
+    with pytest.raises(InvalidCheckError, match=r"not supported on streaming DataFrames.*a_unique \(is_unique\)"):
+        engine.apply_checks_and_split(make_streaming_df(["a"]), checks)
+
+
 # --- DBR version validation error path tests ---
 
 
@@ -934,6 +972,7 @@ def test_dataset_check_manager_is_built_once(mock_workspace_client, monkeypatch)
     spark.conf.get.return_value = None
     df = create_autospec(engine_module.DataFrame)
     df.columns = ["a"]
+    df.isStreaming = False
     manager_cls = Mock(wraps=engine_module.DQRuleManager)
     monkeypatch.setattr(engine_module, "DQRuleManager", manager_cls)
 

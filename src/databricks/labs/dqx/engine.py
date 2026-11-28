@@ -50,6 +50,7 @@ from databricks.labs.dqx.rule import (
     Criticality,
     CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE,
     CHECK_FUNC_ROW_PRESERVING_ATTRIBUTE,
+    CHECK_FUNC_STREAMING_UNSUPPORTED_ATTRIBUTE,
     DQDatasetRule,
     DQRule,
     DQRowRule,
@@ -68,7 +69,13 @@ from databricks.labs.dqx.errors import (
     InvalidParameterError,
     TerminalActionError,
 )
-from databricks.labs.dqx.utils import list_tables, safe_strip_file_from_path, resolve_variables, VariableValue
+from databricks.labs.dqx.utils import (
+    list_tables,
+    safe_strip_file_from_path,
+    resolve_variables,
+    sanitize_for_logging,
+    VariableValue,
+)
 from databricks.labs.dqx.io import is_one_time_trigger
 from databricks.labs.dqx.actions.base import ActionContext, ActionResult, ActionServices
 from databricks.labs.dqx.actions.dq_action import DQAction
@@ -181,6 +188,7 @@ class DQEngineCore(DQEngineCoreBase):
             )
 
         self._validate_dbr_version_requirements(checks)
+        self._validate_streaming_support(df, checks)
 
         warning_checks = self._get_check_columns(checks, Criticality.WARN.value)
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
@@ -485,6 +493,39 @@ class DQEngineCore(DQEngineCoreBase):
     def _all_are_dq_rules(checks: list[DQRule]) -> bool:
         """Check if all elements in the checks list are instances of DQRule."""
         return all(isinstance(check, DQRule) for check in checks)
+
+    @staticmethod
+    def _validate_streaming_support(df: DataFrame, checks: list[DQRule]) -> None:
+        """Raise InvalidCheckError if *df* is streaming and any check cannot run on a streaming DataFrame.
+
+        A check function declares this by being decorated with *not_supported_in_streaming*. Failing here names
+        the checks up front, instead of the streaming query failing later with a Spark error that does not
+        mention them.
+
+        Args:
+            df: Input DataFrame the checks are applied to.
+            checks: List of DQRule instances to validate.
+
+        Raises:
+            InvalidCheckError: If *df* is streaming and any check function is marked as not supported in streaming.
+        """
+        if not df.isStreaming:
+            return
+
+        unsupported = sorted(
+            {
+                f"{check.name} ({check.check_func.__name__})"
+                for check in checks
+                if getattr(check.check_func, CHECK_FUNC_STREAMING_UNSUPPORTED_ATTRIBUTE, False)
+            }
+        )
+        if unsupported:
+            raise InvalidCheckError(
+                "These dataset-level checks are not supported on streaming DataFrames, because Structured "
+                "Streaming cannot run the window functions or aggregations they use: "
+                f"{sanitize_for_logging(', '.join(unsupported))}. Apply them to a batch DataFrame, or to each "
+                "micro-batch inside foreachBatch."
+            )
 
     def _validate_dbr_version_requirements(self, checks: list[DQRule]) -> None:
         """Raise InvalidCheckError if the current Databricks Runtime version is below the version required by any check.

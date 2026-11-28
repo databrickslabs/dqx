@@ -35,6 +35,8 @@ __all__ = [
     "requires_dbr_version",
     "row_preserving",
     "CHECK_FUNC_ROW_PRESERVING_ATTRIBUTE",
+    "not_supported_in_streaming",
+    "CHECK_FUNC_STREAMING_UNSUPPORTED_ATTRIBUTE",
 ]
 
 CHECK_FUNC_REGISTRY: dict[str, str] = {}
@@ -42,6 +44,7 @@ CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION: set[str] = set()
 
 CHECK_FUNC_MIN_DBR_VERSION_ATTRIBUTE = "dqx_requires_dbr_version"
 CHECK_FUNC_ROW_PRESERVING_ATTRIBUTE = "dqx_row_preserving"
+CHECK_FUNC_STREAMING_UNSUPPORTED_ATTRIBUTE = "dqx_streaming_unsupported"
 
 
 def register_rule(rule_type: str) -> Callable:
@@ -131,6 +134,35 @@ def row_preserving(func: Callable) -> Callable:
         The same function, marked with the *dqx_row_preserving* attribute.
     """
     setattr(func, CHECK_FUNC_ROW_PRESERVING_ATTRIBUTE, True)
+    return func
+
+
+def not_supported_in_streaming(func: Callable) -> Callable:
+    """Marks a dataset-level check function that cannot run on a streaming DataFrame.
+
+    Structured Streaming rejects window functions without a time window, and aggregations without a watermark
+    in append mode, which many dataset-level checks rely on. The engine reads this marker before applying the
+    checks and raises an error naming the marked checks when the input DataFrame is streaming, instead of
+    letting the streaming query fail later with a Spark error. Such checks can still be applied to each
+    micro-batch inside *foreachBatch*, where every micro-batch is a batch DataFrame. Unmarked (e.g. custom)
+    checks are not blocked.
+
+    Example usage:
+
+    ```python
+    @not_supported_in_streaming
+    @register_rule("dataset")
+    def my_check(column: str) -> tuple[Column, Callable]:
+        ...
+    ```
+
+    Args:
+        func: The check function to mark.
+
+    Returns:
+        The same function, marked with the *dqx_streaming_unsupported* attribute.
+    """
+    setattr(func, CHECK_FUNC_STREAMING_UNSUPPORTED_ATTRIBUTE, True)
     return func
 
 

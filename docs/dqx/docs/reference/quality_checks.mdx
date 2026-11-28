@@ -2164,6 +2164,13 @@ Most dataset-level check functions take `row_filter` as argument. This parameter
 The top-level `filter` condition is pushed down as `row_filter` to the check function and applied before aggregation, ensuring that the check operates only on the relevant subset of rows rather than on the aggregated results.
 </Admonition>
 
+<Admonition type="warning" title="Streaming DataFrames">
+Dataset-level checks that rely on window functions or aggregations can't run on a streaming DataFrame, because Structured
+Streaming doesn't support them there. Applying one to a streaming DataFrame raises an error that names the check, so you can
+apply it to each micro-batch instead (see [Applying checks using foreachBatch](/docs/guide/quality_checks_apply#applying-checks-using-spark-structured-streaming-foreachbatch)),
+where every micro-batch is checked on its own. Checks without them, such as `foreign_key` and `has_valid_schema`, run on streaming input as usual.
+</Admonition>
+
 <Admonition type="tip" title="Foreign-key reference performance">
 Compatible `foreign_key` checks that use the same reference DataFrame or table and reference columns share the reference
 read and deduplication plan. Set `broadcast_ref: true` to add a broadcast hint when the distinct reference keys are small
