@@ -27,5 +27,5 @@ echo "::group::bundle destroy (${NAME_PREFIX})"
 # One command: the schema and both volumes are bundle resources now, so this removes them along with
 # the app and the runner job — no follow-up `fs rm`/`volumes delete` needed, and no shared artifacts
 # volume that concurrent runs could clobber (each run has its own schema).
-databricks bundle destroy -t "${BUNDLE_TARGET}" --auto-approve "${VARS[@]}" "${PROFILE_ARG[@]}" || true
+databricks bundle destroy -t "${BUNDLE_TARGET}" --auto-approve "${VARS[@]}" ${PROFILE_ARG[@]+"${PROFILE_ARG[@]}"} || true
 echo "::endgroup::"
