@@ -468,6 +468,22 @@
       column: array_max(col4)
       limit: 10
 
+# is_not_null check applied to every element of an array column (array path)
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      column: col4[*]
+
+# is_in_range check applied to every element of an array column (array path)
+- criticality: error
+  check:
+    function: is_in_range
+    arguments:
+      column: col4[*]
+      min_limit: 1
+      max_limit: 10
+
 # sql_expression check applied to a map column element
 - criticality: error
   check:

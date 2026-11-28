@@ -44,7 +44,7 @@ from databricks.labs.dqx.config import (
     LakebaseActionsStorageConfig,
 )
 from databricks.labs.dqx.check_funcs import add_dataset_aggregates
-from databricks.labs.dqx.manager import DQRuleManager
+from databricks.labs.dqx.manager import DQRuleManager, is_case_sensitive_resolution
 from databricks.labs.dqx.reporting_columns import ColumnArguments, DefaultColumnNames, merge_info_columns
 from databricks.labs.dqx.rule import (
     Criticality,
@@ -187,6 +187,7 @@ class DQEngineCore(DQEngineCoreBase):
 
         rule_set_fingerprint = compute_rule_set_fingerprint(checks) if checks else None
         reference_cache: dict[tuple[str, str], DataFrame] = {}
+        case_sensitive = self._read_case_sensitivity_for_array_paths(checks)
         checks_before_row_changes = itertools.takewhile(_keeps_input_rows, error_checks + warning_checks)
         input_managers = {
             id(check): DQRuleManager(
@@ -202,6 +203,7 @@ class DQEngineCore(DQEngineCoreBase):
                 rule_set_fingerprint=rule_set_fingerprint,
                 input_df=df,
                 reference_cache=reference_cache,
+                case_sensitive=case_sensitive,
             )
             for check in checks_before_row_changes
             if isinstance(check, DQDatasetRule)
@@ -223,6 +225,7 @@ class DQEngineCore(DQEngineCoreBase):
             input_df=df,
             reference_cache=reference_cache,
             input_managers=input_managers,
+            case_sensitive=case_sensitive,
         )
         result_df, skipped_warning_checks = self._create_results_array(
             result_df,
@@ -234,6 +237,7 @@ class DQEngineCore(DQEngineCoreBase):
             input_df=df,
             reference_cache=reference_cache,
             input_managers=input_managers,
+            case_sensitive=case_sensitive,
         )
         if shared_aggregates:
             result_df = result_df.drop(*[aggregate.metric_col for aggregate in shared_aggregates])
@@ -598,6 +602,22 @@ class DQEngineCore(DQEngineCoreBase):
             F.lit(None).cast(dq_result_schema).alias(self._result_column_names[ColumnArguments.WARNINGS]),
         )
 
+    def _read_case_sensitivity_for_array_paths(self, checks: list[DQRule]) -> bool | None:
+        """Reads the case sensitivity of name resolution once per run, if any check uses an array path.
+
+        Array paths are matched against the schema with it. Reading it once rather than once per rule avoids a
+        round trip per rule on compute that does not expose the setting.
+
+        Args:
+            checks: The checks to apply.
+
+        Returns:
+            True or False if a check uses an array path, otherwise None (not read).
+        """
+        if any(isinstance(check, DQRowRule) and check.array_path is not None for check in checks):
+            return is_case_sensitive_resolution(self.spark)
+        return None
+
     def _create_results_array(
         self,
         df: DataFrame,
@@ -609,6 +629,7 @@ class DQEngineCore(DQEngineCoreBase):
         input_df: DataFrame | None = None,
         reference_cache: dict[tuple[str, str], DataFrame] | None = None,
         input_managers: dict[int, DQRuleManager] | None = None,
+        case_sensitive: bool | None = None,
     ) -> tuple[DataFrame, set[str]]:
         """
         Apply a list of data quality checks to a DataFrame and assemble their results into an array column.
@@ -630,6 +651,8 @@ class DQEngineCore(DQEngineCoreBase):
             input_managers: Managers of the checks that read *input_df*, keyed by check id. The metric columns of
                 their built-in aggregates must already be present in *df*. Other checks read *df*, or the result of
                 the last check that may have changed the rows.
+            case_sensitive: Optional case sensitivity of name resolution, read once per run and used to match array
+                paths against the schema.
 
         Returns:
             DataFrame with an added array column (*dest_col*) containing the results of the applied checks, and the
@@ -660,6 +683,7 @@ class DQEngineCore(DQEngineCoreBase):
                 rule_set_fingerprint=rule_set_fingerprint,
                 input_df=check_input_df,
                 reference_cache=reference_cache,
+                case_sensitive=case_sensitive,
             )
 
         current_df = df
@@ -694,21 +718,30 @@ class DQEngineCore(DQEngineCoreBase):
         )
 
         result_df = merge_info_columns(dest_info_col, result_df, info_col_names=info_col_names)
+        return self._drop_temporary_columns(result_df, original_columns, dest_col, dest_info_col), skipped_checks
 
-        # Drop temporary columns used to build check conditions, while preserving result columns.
-        columns_to_drop = [
-            col
-            for col in result_df.columns
-            if col not in original_columns
-            and col != dest_col
-            and col != dest_info_col
-            and col != self._result_column_names[ColumnArguments.ERRORS]
-            and col != self._result_column_names[ColumnArguments.WARNINGS]
-        ]
-        if columns_to_drop:
-            result_df = result_df.drop(*columns_to_drop)
+    def _drop_temporary_columns(
+        self, df: DataFrame, original_columns: set[str], dest_col: str, dest_info_col: str
+    ) -> DataFrame:
+        """Drops the temporary columns used to build check conditions, while preserving result columns.
 
-        return result_df, skipped_checks
+        Args:
+            df: DataFrame with the check results.
+            original_columns: Columns of the DataFrame before the checks were applied.
+            dest_col: Name of the result column being built.
+            dest_info_col: Name of the info column being built.
+
+        Returns:
+            The DataFrame without the temporary columns.
+        """
+        kept_columns = {
+            dest_col,
+            dest_info_col,
+            self._result_column_names[ColumnArguments.ERRORS],
+            self._result_column_names[ColumnArguments.WARNINGS],
+        }
+        columns_to_drop = [col for col in df.columns if col not in original_columns and col not in kept_columns]
+        return df.drop(*columns_to_drop) if columns_to_drop else df
 
     def _observe_metrics(
         self, df: DataFrame, checks: list[DQRule] | None = None, skipped_checks: set[str] | None = None
