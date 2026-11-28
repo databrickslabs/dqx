@@ -481,38 +481,6 @@ export const CreateRegistryRuleInMode = {
   sql: 'sql',
 } as const;
 
-/**
- * UI-facing value type
- */
-export type RuleParameterType = typeof RuleParameterType[keyof typeof RuleParameterType];
-
-
-export const RuleParameterType = {
-  number: 'number',
-  string: 'string',
-  list: 'list',
-  boolean: 'boolean',
-  regex: 'regex',
-  ref_table: 'ref_table',
-  ref_column: 'ref_column',
-} as const;
-
-/**
- * A non-column argument on a registry rule's definition.
- *
- * ``type`` drives which value-input widget the authoring UI renders;
- * ``value`` is the concrete value (or default) supplied at authoring or
- * apply time.
- */
-export interface RuleParameter {
-  /** Parameter name as it appears in the check-function signature */
-  name: string;
-  /** UI-facing value type */
-  type: RuleParameterType;
-  /** Concrete value or default */
-  value?: string | number | boolean | string[] | null;
-}
-
 export type RuleDefinitionBody = { [key: string]: unknown };
 
 /**
