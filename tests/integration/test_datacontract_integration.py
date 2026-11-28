@@ -691,6 +691,70 @@ class TestDataContractIntegration:
         assert "scale" in str(exc_info.value).lower() or "precision" in str(exc_info.value).lower()
 
 
+def test_generated_array_size_rules_apply_on_spark(ws, spark):
+    """Rules generated from array logicalTypeOptions minItems and maxItems pass valid sizes and nulls and fail invalid ones on Spark."""
+    contract = {
+        "kind": "DataContract",
+        "apiVersion": "v3.0.2",
+        "id": "test:array_sizes",
+        "name": "Array Sizes",
+        "version": "1.0.0",
+        "status": "active",
+        "schema": [
+            {
+                "name": "records",
+                "physicalType": "table",
+                "properties": [
+                    {
+                        "name": "min_only",
+                        "physicalType": "ARRAY<STRING>",
+                        "logicalType": "array",
+                        "logicalTypeOptions": {"minItems": 2},
+                    },
+                    {
+                        "name": "max_only",
+                        "physicalType": "ARRAY<STRING>",
+                        "logicalType": "array",
+                        "logicalTypeOptions": {"maxItems": 3},
+                    },
+                    {
+                        "name": "bounded",
+                        "physicalType": "ARRAY<STRING>",
+                        "logicalType": "array",
+                        "logicalTypeOptions": {"minItems": 1, "maxItems": 2},
+                    },
+                ],
+            },
+        ],
+    }
+    rules = _generate_rules_from_temp_contract(
+        ws,
+        spark,
+        contract,
+        process_text_rules=False,
+        generate_schema_validation=False,
+    )
+    test_df = spark.createDataFrame(
+        [
+            ["valid", ["a", "b"], ["x"], ["1"]],
+            ["too_few", ["a"], ["x"], []],
+            ["too_many", ["a", "b"], ["x", "y", "z", "w"], ["1", "2", "3"]],
+            ["null", None, None, None],
+        ],
+        "case: string, min_only: array<string>, max_only: array<string>, bounded: array<string>",
+    )
+
+    checked_df = DQEngine(ws, spark).apply_checks_by_metadata(test_df, rules)
+
+    flagged_by_case = {row["case"]: _flagged_names(row) for row in checked_df.select("case", "_errors").collect()}
+    assert flagged_by_case == {
+        "valid": set(),
+        "too_few": {"min_only_too_few_items", "bounded_invalid_size"},
+        "too_many": {"max_only_too_many_items", "bounded_invalid_size"},
+        "null": set(),
+    }
+
+
 class TestDataContractIntegrationErrors:
     """Integration tests for data contract error paths and invalid inputs."""
 
