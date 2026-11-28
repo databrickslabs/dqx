@@ -1,5 +1,7 @@
 from unittest.mock import create_autospec, PropertyMock
 
+import pytest
+
 from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.conf import RuntimeConfig
@@ -335,7 +337,7 @@ def _make_spark_with_conf(conf: RuntimeConfig) -> SparkSession:
     return spark
 
 
-def _make_array_path_manager(column: str, spark: SparkSession) -> DQRuleManager:
+def _make_array_path_manager(column: str, spark: SparkSession, case_sensitive: bool | None = None) -> DQRuleManager:
     df = create_autospec(DataFrame)
     type(df).schema = PropertyMock(return_value=StructType([StructField("tags", ArrayType(StringType()))]))
     return DQRuleManager(
@@ -345,6 +347,7 @@ def _make_array_path_manager(column: str, spark: SparkSession) -> DQRuleManager:
         engine_user_metadata={},
         run_time_overwrite=None,
         run_id="test-run",
+        case_sensitive=case_sensitive,
     )
 
 
@@ -367,3 +370,15 @@ def test_rule_manager_reports_raw_path_as_invalid_when_array_path_does_not_match
 
     assert manager.invalid_columns == ["TAGS[*]"]
     assert manager.skip_message == "Check evaluation skipped due to invalid check columns: ['TAGS[*]']"
+
+
+@pytest.mark.parametrize("case_sensitive, expected_invalid_columns", [(False, []), (True, ["TAGS[*]"])])
+def test_rule_manager_uses_given_case_sensitivity_without_reading_spark_config_when_case_sensitive_is_provided(
+    case_sensitive: bool, expected_invalid_columns: list[str]
+):
+    conf = create_autospec(RuntimeConfig)
+
+    manager = _make_array_path_manager("TAGS[*]", _make_spark_with_conf(conf), case_sensitive=case_sensitive)
+
+    assert manager.invalid_columns == expected_invalid_columns
+    conf.get.assert_not_called()

@@ -29,6 +29,26 @@ from databricks.labs.dqx.utils import (
 logger = logging.getLogger(__name__)
 
 
+def is_case_sensitive_resolution(spark: SparkSession) -> bool:
+    """Returns True if Spark resolves column and field names case-sensitively (*spark.sql.caseSensitive*).
+
+    Some compute (e.g. serverless) does not allow reading *spark.sql.caseSensitive*. It then falls back to Spark's
+    default, case-insensitive resolution, which is the only mode such compute supports. Reading the setting can be
+    a round trip to the server, so read it once per run and pass it to the managers.
+
+    Args:
+        spark: The Spark session.
+
+    Returns:
+        True if names are resolved case-sensitively, otherwise False.
+    """
+    try:
+        return str(spark.conf.get("spark.sql.caseSensitive", "false")).lower() == "true"
+    except AnalysisException as e:
+        logger.debug("Could not read 'spark.sql.caseSensitive'; using case-insensitive resolution", exc_info=e)
+        return False
+
+
 @dataclass(frozen=True)
 class DQRuleManager:
     """
@@ -54,6 +74,8 @@ class DQRuleManager:
         input_df: Optional untouched input DataFrame (defaults to *df*). Check columns are validated against it,
             and dataset-level checks compute their aggregates from it.
         reference_cache: Optional per-run cache of compatible reference projections.
+        case_sensitive: Optional per-run case sensitivity of name resolution, used to match array paths against
+            the schema. If None, it is read from the Spark session when needed.
     """
 
     check: DQRule
@@ -68,6 +90,7 @@ class DQRuleManager:
     rule_set_fingerprint: str | None = None
     input_df: DataFrame | None = None
     reference_cache: dict[tuple[str, str], DataFrame] | None = None
+    case_sensitive: bool | None = None
 
     @cached_property
     def user_metadata(self) -> dict[str, str]:
@@ -132,14 +155,11 @@ class DQRuleManager:
     def _is_case_sensitive(self) -> bool:
         """Returns True if Spark resolves column and field names case-sensitively.
 
-        Some compute (e.g. serverless) does not allow reading *spark.sql.caseSensitive*. It then falls back to
-        Spark's default, case-insensitive resolution, which is the only mode such compute supports.
+        Uses *case_sensitive* if given, so the setting is read once per run rather than once per rule.
         """
-        try:
-            return str(self.spark.conf.get("spark.sql.caseSensitive", "false")).lower() == "true"
-        except AnalysisException as e:
-            logger.debug("Could not read 'spark.sql.caseSensitive'; using case-insensitive resolution", exc_info=e)
-            return False
+        if self.case_sensitive is not None:
+            return self.case_sensitive
+        return is_case_sensitive_resolution(self.spark)
 
     @staticmethod
     def _display_column_name(column: str | Column) -> str:
