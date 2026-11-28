@@ -1437,7 +1437,7 @@ export const previewBatchImportRegistryRules = (
   body: PreviewBatchImportRegistryRulesIn,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<PreviewBatchImportRegistryRulesOut>> => {
-  return axios.default.post(`/api/v1/registry-rules/batch-import/preview`, body, options);
+  return axios.post(`/api/v1/registry-rules/batch-import/preview`, body, options);
 };
 
 export const useListPendingApplications = <
