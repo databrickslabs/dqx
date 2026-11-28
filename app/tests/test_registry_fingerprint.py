@@ -153,8 +153,9 @@ class TestIgnoresDescriptiveMetadataAndLifecycle:
 
 
 class TestFilterInFingerprint:
-    """Task 5: filter field must be included in the fingerprint so a
-    filter-only edit registers as a content change (modified-since-publish)."""
+    """``definition.filter`` is part of identity (aligned with ``shape_key``).
+    An applied ``row_filter`` can still override the default without changing
+    the fingerprint."""
 
     def test_filter_none_vs_set_different_fingerprints(self):
         rule_no_filter = _native_rule(
@@ -187,6 +188,15 @@ class TestFilterInFingerprint:
             )
         )
         assert compute_registry_rule_fingerprint(rule_a) != compute_registry_rule_fingerprint(rule_b)
+
+    def test_blank_and_none_filter_same_fingerprint(self):
+        rule_none = _native_rule(
+            definition=RuleDefinition(body={"function": "is_not_null", "arguments": {}}, filter=None)
+        )
+        rule_blank = _native_rule(
+            definition=RuleDefinition(body={"function": "is_not_null", "arguments": {}}, filter="  ")
+        )
+        assert compute_registry_rule_fingerprint(rule_none) == compute_registry_rule_fingerprint(rule_blank)
 
     def test_same_filter_same_fingerprint(self):
         rule_a = _native_rule(

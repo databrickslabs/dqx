@@ -41,6 +41,12 @@ export const SAMPLE_TABLES = {
   export: "samples.tpcds_sf1.date_dim",
   /** 25 rows (n_nationkey 0-24) and 5 rows (r_regionkey 0-4); approving the second must keep the first's checks. */
   approvalScope: ["samples.tpch_sf1.nation", "samples.tpch_sf1.region"],
+  /** 800k rows (ps_partkey, ps_suppkey); similar-rule import + applied tags / row_filter override. Never run. */
+  similarRulesImport: "samples.tpch.partsupp",
+  /** ~192k rows (cd_demo_sk); apply-time Variable Parameters journey. Never run. */
+  applyTimeParams: "samples.tpcds_sf1.customer_demographics",
+  /** 73k rows (t_time_sk); schedule-approval notice on an unapproved table. Never run. */
+  scheduleApprovalNotice: "samples.tpcds_sf1.time_dim",
 } as const;
 
 /**

@@ -337,6 +337,40 @@ class RegistryService:
         )
         return compute_registry_rule_fingerprint(probe)
 
+    def refresh_fingerprints(self) -> int:
+        """Rewrite stored fingerprints that no longer match the current algorithm.
+
+        Returns the count of rows updated. Also logs fingerprints that more than
+        one active rule now shares — a rewrite can collapse previously-distinct
+        rules onto the same key when the algorithm drops fields (e.g. filter).
+        """
+        refreshed = 0
+        by_fingerprint: dict[str, list[str]] = {}
+        for rule in self.list_rules():
+            fingerprint = compute_registry_rule_fingerprint(rule)
+            # Collision warnings cover active rules only (draft / pending / approved).
+            if rule.status in ("draft", "pending_approval", "approved"):
+                by_fingerprint.setdefault(fingerprint, []).append(rule.rule_id)
+            if fingerprint == rule.fingerprint:
+                continue
+            self._sql.execute(
+                f"UPDATE {self._table} SET fingerprint = '{escape_sql_string(fingerprint)}' "  # noqa: S608
+                f"WHERE rule_id = '{escape_sql_string(rule.rule_id)}'"
+            )
+            refreshed += 1
+        if refreshed:
+            logger.info("Refreshed the fingerprint of %d registry rule(s)", refreshed)
+        for fingerprint, rule_ids in by_fingerprint.items():
+            if len(rule_ids) < 2:
+                continue
+            logger.warning(
+                "Fingerprint %s is shared by %d active registry rule(s): %s",
+                fingerprint,
+                len(rule_ids),
+                ", ".join(rule_ids),
+            )
+        return refreshed
+
     def get_approved_rule_by_fingerprint(self, fingerprint: str) -> RegistryRule | None:
         """Get the first ``approved`` registry rule matching *fingerprint*.
 
@@ -563,7 +597,7 @@ class RegistryService:
             return True
         if rule.definition.model_dump(mode="json") != snapshot.definition.model_dump(mode="json"):
             return True
-        return rule.user_metadata != snapshot.user_metadata
+        return (rule.user_metadata or {}) != (snapshot.user_metadata or {})
 
     def _get(self, rule_id: str) -> RegistryRule | None:
         e_rule_id = escape_sql_string(rule_id)

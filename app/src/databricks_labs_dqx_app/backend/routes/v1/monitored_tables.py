@@ -1099,6 +1099,7 @@ def batch_record_pending_applications(
                 user_email,
                 row_filter=entry.row_filter,
                 pass_threshold=entry.pass_threshold,
+                tags=entry.tags,
             )
             recorded += 1
         except Exception as e:
