@@ -25,6 +25,9 @@ from pydantic.json_schema import WithJsonSchema
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.errors import InvalidParameterError, UnsafeSqlQueryError
+
+# Re-exported: is_sql_query_safe and quote_column_name live in sql_utils; existing callers import them from here.
+from databricks.labs.dqx.sql_utils import is_sql_query_safe, quote_column_name
 from databricks.labs.dqx.table_manager import SparkTableDataProvider
 from databricks.sdk.errors import NotFound
 
@@ -92,52 +95,6 @@ VALID_UNQUOTED_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SQL_EXPRESSION_STRUCTURE_PATTERN = re.compile(r"""[()\[\]{},;'"`*]""")
 SQL_EXPRESSION_OPERATOR_PATTERN = re.compile(r"[-+/%<>=!&|~^]\s|\s[-+/%<>=!&|~^]")
 _UNRESOLVED_PLACEHOLDER_PATTERN = re.compile(r"\{\{[^}]*\}\}")
-
-# Destructive SQL statement keywords rejected by `is_sql_query_safe`. SELECT is intentionally
-# omitted: filters may legitimately use subqueries and are authored by trusted operators.
-_FORBIDDEN_SQL_KEYWORDS = (
-    "delete",
-    "insert",
-    "update",
-    "drop",
-    "truncate",
-    "alter",
-    "create",
-    "replace",
-    "grant",
-    "revoke",
-    "merge",
-    "use",
-    "refresh",
-    "analyze",
-    "optimize",
-    "zorder",
-)
-# Precompiled once at module scope (this helper is on the LLM / rule-validation hot path).
-_FORBIDDEN_SQL_KEYWORDS_PATTERN = re.compile(rf"\b(?:{'|'.join(_FORBIDDEN_SQL_KEYWORDS)})\b")
-# Matches SQL comments (line `-- ...`, block `/* ... */`), quoted string literals, and backtick-quoted
-# identifiers. Scanned left-to-right so a comment marker inside a string literal (e.g. '-- not a comment')
-# is correctly treated as data, and a quote inside a comment is treated as part of the comment.
-# String literals recognise both doubled-quote ('') and backslash (\') escapes, matching Spark's default
-# parser, so a closing quote is not detected prematurely (e.g. 'can\'t drop' is one literal, not two).
-_SQL_COMMENT_OR_LITERAL_PATTERN = re.compile(
-    r"(?P<comment>--[^\n]*|/\*.*?\*/)"  # line or block comment
-    r"|'(?:[^'\\]|''|\\.)*'"  # single-quoted string literal ('' and \\ escapes)
-    r"|\"(?:[^\"\\]|\"\"|\\.)*\""  # double-quoted string literal ('' and \\ escapes)
-    r"|`(?:[^`]|``)*`",  # backtick-quoted identifier (with `` escapes)
-    re.DOTALL,
-)
-
-
-def _strip_literals_keep_comments(match: "re.Match[str]") -> str:
-    """Replace a quoted literal/identifier with a space, keeping comment text so its keywords are scanned."""
-    return match.group() if match.group("comment") is not None else " "
-
-
-def _strip_literals_and_comments(match: "re.Match[str]") -> str:
-    """Remove a comment entirely and replace a quoted literal/identifier with a space."""
-    return "" if match.group("comment") is not None else " "
-
 
 _SCALAR_VARIABLE_TYPES: tuple[type, ...] = (
     str,
@@ -337,24 +294,6 @@ def escape_sql_string_literal(value: str) -> str:
     return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
-def quote_column_name(name: str) -> str:
-    """
-    Wraps a column name in backticks so it can be used as a SQL identifier.
-
-    Column names containing spaces, non-ASCII characters, or other characters that require escaping
-    (e.g. "Customer Name", "Ääkkönen") are not valid bare SQL identifiers and must be back-quoted before
-    being parsed by *F.expr*.
-
-    Args:
-        name: Column name to quote.
-
-    Returns:
-        The column name wrapped in backticks with embedded backticks escaped.
-    """
-    escaped = name.replace("`", "``")
-    return f"`{escaped}`"
-
-
 def unquote_column_name(name: str) -> str:
     """
     Removes surrounding back-quotes from a column name, reversing *quote_column_name*.
@@ -432,39 +371,6 @@ def normalize_col_str(col_str: str) -> str:
     """
     max_chars = 255
     return re.sub(COLUMN_NORMALIZE_EXPRESSION, "_", col_str[:max_chars].lower()).rstrip("_")
-
-
-def is_sql_query_safe(query: str) -> bool:
-    """
-    Returns True if the query contains no destructive SQL statement keyword, otherwise False.
-
-    Quoted string literals and backtick-quoted identifiers are stripped before scanning so that a
-    forbidden keyword appearing as data (e.g. ``status = 'drop'``) or as a quoted column name
-    (e.g. `` `drop` ``) is not mistaken for a statement. Comments are checked two ways so both a
-    keyword *inside* a comment (e.g. ``/* delete */``) and a keyword *split* by a comment
-    (e.g. ``dr/**/op``) are caught. ``SELECT`` is allowed: filters may legitimately use subqueries
-    and are authored by trusted operators.
-
-    Args:
-        query: The SQL query or filter predicate to validate.
-
-    Returns:
-        True if the query is free of destructive statement keywords, False otherwise.
-    """
-    # Strip quoted literals/identifiers so keywords appearing as data are not flagged, keeping comment
-    # text so a keyword hidden inside a comment (e.g. /* delete */) is still caught. Lowercase for a
-    # case-insensitive match.
-    with_comments = _SQL_COMMENT_OR_LITERAL_PATTERN.sub(_strip_literals_keep_comments, query).lower()
-    if _FORBIDDEN_SQL_KEYWORDS_PATTERN.search(with_comments):
-        return False
-
-    # The first pass is clean. Only when a comment is present do we re-scan with comments removed, to
-    # catch a keyword split by an inline comment (e.g. dr/**/op). This second pass is skipped for the
-    # common comment-free query (this helper is on the LLM / rule-validation hot path).
-    if "--" not in with_comments and "/*" not in with_comments:
-        return True
-    without_comments = _SQL_COMMENT_OR_LITERAL_PATTERN.sub(_strip_literals_and_comments, query).lower()
-    return not _FORBIDDEN_SQL_KEYWORDS_PATTERN.search(without_comments)
 
 
 def safe_filter_expr(filter_expr: str | None) -> Column:

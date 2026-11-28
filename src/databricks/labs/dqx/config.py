@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from databricks.labs.dqx.checks_serializer import SerializerFactory
 from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
+from databricks.labs.dqx.sql_utils import TABLE_NAME_PART
 from databricks.labs.dqx.utils import VariableValue
 
 __all__ = [
@@ -401,10 +402,8 @@ class WorkspaceConfig:
 
 # Matches a two- or three-part table identifier (optional catalog), each part a bare or
 # backtick-quoted name: e.g. catalog.schema.table, schema.table, cat.sch.`weird.name`.
-# Databricks permits leading digits in unquoted identifiers (e.g. `1abc` is a valid table name;
-# verified against a live workspace), so a bare part is [a-zA-Z0-9_]+; special characters must be
-# backtick-quoted.
-_IDENT = r"(?:`[^`]+`|[a-zA-Z0-9_]+)"
+# The part grammar is shared with *quote_table_name* (see *TABLE_NAME_PART*).
+_IDENT = TABLE_NAME_PART
 TABLE_PATTERN = re.compile(rf"^(?:{_IDENT}\.)?{_IDENT}\.{_IDENT}$")
 # A three-part table identifier only (catalog.schema.table), i.e. a namespace resolvable through the
 # Unity Catalog tables API. Unlike TABLE_PATTERN, the catalog part is required.

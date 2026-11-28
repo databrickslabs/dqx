@@ -210,6 +210,17 @@ def test_ensure_versioning_columns_adds_only_missing_columns():
     assert "rule_fingerprint " not in altered_columns
 
 
+def test_ensure_columns_quotes_added_column_names():
+    """Columns added via ALTER TABLE are backtick-quoted, like the table name."""
+    handler, config, spark = _make_handler_with_existing_table(
+        schema_fields=[_MockField(col) for col in _VERSIONING_COLUMNS]
+    )
+
+    handler.save(_SIMPLE_CHECK, config)
+
+    spark.sql.assert_called_once_with("ALTER TABLE `catalog`.`schema`.`table` ADD COLUMN `message_expr` STRING")
+
+
 def test_save_in_append_mode_with_none_config_fingerprint_writes_to_new_table():
     """config.rule_set_fingerprint=None (the default) does not suppress save() when the table is new.
 

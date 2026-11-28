@@ -6,6 +6,7 @@ from typing import Any, Protocol
 
 import dspy  # type: ignore
 
+from databricks.labs.dqx.sql_utils import quote_column_name, quote_table_name
 from databricks.labs.dqx.table_manager import TableManager
 
 logger = logging.getLogger(__name__)
@@ -169,13 +170,14 @@ class DuplicateValidator:
         Returns:
             Tuple of (has_duplicates, duplicate_count).
         """
-        pk_cols_str = ", ".join([f"`{col}`" for col in pk_columns])
+        pk_cols_str = ", ".join(quote_column_name(col) for col in pk_columns)
+        quoted_table = quote_table_name(table)
         logger.debug(f"🔍 Checking for duplicates in {table} using columns: {pk_cols_str}")
 
         # Treats nulls as NOT distinct (NULL and NULL is considered equal)
         duplicate_query = f"""
         SELECT {pk_cols_str}, COUNT(*) as duplicate_count
-        FROM {table}
+        FROM {quoted_table}
         GROUP BY {pk_cols_str}
         HAVING COUNT(*) > 1
         """

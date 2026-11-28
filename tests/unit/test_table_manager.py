@@ -1,9 +1,15 @@
-import pandas as pd
+from unittest.mock import create_autospec
 
+import pandas as pd
+import pytest
+from pyspark.sql import SparkSession
+
+from databricks.labs.dqx.errors import InvalidParameterError, UnsafeSqlQueryError
 from databricks.labs.dqx.table_manager import (
     ColumnDefinitionExtractor,
     ColumnStatisticsFormatter,
     PropertyMetadataFormatter,
+    SparkTableDataProvider,
     TableDefinitionBuilder,
     TableManager,
 )
@@ -114,3 +120,72 @@ def test_table_manager_metadata_handles_exceptions():
 
     manager = TableManager(repository=repo)
     assert manager.get_table_metadata_info("catalog.schema.table") == "Limited metadata available"
+
+
+@pytest.mark.parametrize(
+    "method, statement",
+    [
+        ("get_table_columns", "DESCRIBE TABLE EXTENDED"),
+        ("get_existing_primary_key", "SHOW TBLPROPERTIES"),
+        ("get_table_properties", "SHOW TBLPROPERTIES"),
+        ("get_column_statistics", "DESCRIBE TABLE EXTENDED"),
+    ],
+)
+def test_spark_table_data_provider_quotes_table_name(method: str, statement: str):
+    spark = create_autospec(SparkSession)
+    provider = SparkTableDataProvider(spark)
+
+    getattr(provider, method)("catalog.schema.table")
+
+    spark.sql.assert_called_once_with(f"{statement} `catalog`.`schema`.`table`")
+
+
+@pytest.mark.parametrize(
+    "method", ["get_table_columns", "get_existing_primary_key", "get_table_properties", "get_column_statistics"]
+)
+def test_spark_table_data_provider_rejects_injected_table_name(method: str):
+    spark = create_autospec(SparkSession)
+    provider = SparkTableDataProvider(spark)
+
+    with pytest.raises(InvalidParameterError, match="Invalid table or view name"):
+        getattr(provider, method)("catalog.schema.table; DROP TABLE catalog.schema.other")
+
+    spark.sql.assert_not_called()
+
+
+def test_table_manager_run_sql_rejects_destructive_query():
+    spark = create_autospec(SparkSession)
+    manager = TableManager(spark=spark)
+
+    with pytest.raises(UnsafeSqlQueryError, match="Unsafe SQL query"):
+        manager.run_sql("DROP TABLE catalog.schema.table")
+
+    spark.sql.assert_not_called()
+
+
+def test_table_manager_run_sql_executes_safe_query():
+    spark = create_autospec(SparkSession)
+    manager = TableManager(spark=spark)
+
+    manager.run_sql("SELECT `id`, COUNT(*) FROM `catalog`.`update`.`table` GROUP BY `id`")
+
+    spark.sql.assert_called_once_with("SELECT `id`, COUNT(*) FROM `catalog`.`update`.`table` GROUP BY `id`")
+
+
+def test_spark_table_data_provider_quotes_table_name_for_column_names():
+    spark = create_autospec(SparkSession)
+    provider = SparkTableDataProvider(spark)
+
+    provider.get_table_column_names("catalog.schema.table")
+
+    spark.table.assert_called_once_with("`catalog`.`schema`.`table`")
+
+
+def test_spark_table_data_provider_rejects_injected_table_name_for_column_names():
+    spark = create_autospec(SparkSession)
+    provider = SparkTableDataProvider(spark)
+
+    with pytest.raises(InvalidParameterError, match="Invalid table or view name"):
+        provider.get_table_column_names("catalog.schema.table; DROP TABLE catalog.schema.other")
+
+    spark.table.assert_not_called()
