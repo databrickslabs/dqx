@@ -15,6 +15,7 @@ export const RESERVED_RULE_METADATA_KEYS: ReadonlySet<string> = new Set([
   "severity",
   "slot_tags",
   "pass_threshold",
+  "overridable_parameters",
 ]);
 
 /** System keys stored in an applied rule's `user_metadata` that are not user tags. */

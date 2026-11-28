@@ -1,0 +1,458 @@
+"""Apply-time parameter validation, overlay, and leftover-placeholder guards."""
+
+from unittest.mock import create_autospec
+
+import pytest
+
+from databricks_labs_dqx_app.backend.apply_time_params import (
+    InvalidParameterValueError,
+    UnboundParameterError,
+    assert_no_placeholders,
+    coerce_parameter_value,
+    is_sql_param_placeholder_name,
+    mapping_group_key,
+    overlay_parameters,
+    substitute_param_placeholders,
+    validate_applied_parameter_values,
+    validate_group_parameter_values,
+)
+from databricks_labs_dqx_app.backend.registry_models import RuleParameter
+
+
+def _param(name: str, type_: str, value=None) -> RuleParameter:
+    return RuleParameter(name=name, type=type_, value=value)
+
+
+class TestCoerceParameterValue:
+    def test_max_length_requires_positive_int(self):
+        param = _param("column_max_length", "number")
+        assert coerce_parameter_value(param, "32") == 32
+        with pytest.raises(InvalidParameterValueError, match="positive whole number"):
+            coerce_parameter_value(param, 0)
+        with pytest.raises(InvalidParameterValueError, match="whole number"):
+            coerce_parameter_value(param, "1.5")
+        with pytest.raises(InvalidParameterValueError, match="required"):
+            coerce_parameter_value(param, "")
+        with pytest.raises(InvalidParameterValueError, match="required"):
+            coerce_parameter_value(param, "{{column_max_length}}")
+
+    def test_limit_accepts_zero_negative_and_decimal_values(self):
+        param = _param("limit", "number")
+        assert coerce_parameter_value(param, 0) == 0
+        assert coerce_parameter_value(param, "-10.5") == -10.5
+        assert coerce_parameter_value(_param("limit", "number", 12), 12) == 12
+
+    def test_min_length_may_be_zero_but_max_length_may_not(self):
+        assert coerce_parameter_value(_param("min_length", "number"), 0) == 0
+        with pytest.raises(InvalidParameterValueError, match="zero or a positive"):
+            coerce_parameter_value(_param("min_length", "number"), -1)
+        with pytest.raises(InvalidParameterValueError, match="positive whole number"):
+            coerce_parameter_value(_param("max_length", "number"), 0)
+
+    def test_length_names_match_whole_tokens_only(self):
+        assert coerce_parameter_value(_param("max_length_hint", "number"), "7") == 7
+        # Not a length parameter, so no integer / positivity requirement.
+        assert coerce_parameter_value(_param("maximum_lengthy", "number"), "1.5") == 1.5
+
+    def test_only_percent_parameters_are_capped_to_0_100(self):
+        assert coerce_parameter_value(_param("rate_per_sec", "number"), 500) == 500
+        assert coerce_parameter_value(_param("generate_count", "number"), 500) == 500
+        assert coerce_parameter_value(_param("max_null_pct", "number"), 99.5) == 99.5
+        with pytest.raises(InvalidParameterValueError, match="between 0 and 100"):
+            coerce_parameter_value(_param("max_null_pct", "number"), 150)
+
+    def test_range_min_not_greater_than_max(self):
+        params = [_param("min_limit", "number"), _param("max_limit", "number")]
+        validate_group_parameter_values(params, {"min_limit": 1, "max_limit": 10}, require_all=True)
+        with pytest.raises(InvalidParameterValueError, match="must not be greater"):
+            validate_group_parameter_values(params, {"min_limit": 10, "max_limit": 1}, require_all=True)
+
+
+class TestSlotlessRuleParameterValues:
+    def test_slotless_rule_keeps_values_stored_under_the_empty_group(self):
+        params = [_param("threshold", "integer")]
+        stored = {mapping_group_key({}): {"threshold": "5"}}
+        out = validate_applied_parameter_values(params, [{}], stored, bind_all=True, slots=[])
+        assert out == {mapping_group_key({}): {"threshold": 5}}
+
+    def test_slotless_rule_without_a_value_is_rejected(self):
+        with pytest.raises(InvalidParameterValueError, match="threshold is required"):
+            validate_applied_parameter_values([_param("threshold", "integer")], [{}], {}, bind_all=True, slots=[])
+
+    def test_staged_empty_group_of_a_slotted_rule_is_still_skipped(self):
+        from databricks_labs_dqx_app.backend.registry_models import RuleSlot
+
+        params = [_param("threshold", "integer")]
+        slots = [RuleSlot(name="column", family="numeric")]
+        assert validate_applied_parameter_values(params, [{}], {}, bind_all=True, slots=slots) == {}
+
+
+class TestSqlPlaceholderClassification:
+    def test_column_max_length_is_a_parameter_not_a_slot(self):
+        assert is_sql_param_placeholder_name("column_max_length") is True
+        assert is_sql_param_placeholder_name("limit") is True
+        assert is_sql_param_placeholder_name("threshold") is True
+        assert is_sql_param_placeholder_name("column") is False
+        assert is_sql_param_placeholder_name("order_amount") is False
+
+    def test_lookalike_names_stay_column_slots(self):
+        for name in ("pattern_id", "is_allowed", "exchange_rate", "generate_count", "rate_per_sec", "launch_date"):
+            assert is_sql_param_placeholder_name(name) is False, name
+        for name in ("allowed", "allowed_values", "date_pattern", "allowed_scale", "min_value", "Threshold"):
+            assert is_sql_param_placeholder_name(name) is True, name
+
+    def test_inferred_types(self):
+        from databricks_labs_dqx_app.backend.registry_models import infer_sql_param_type
+
+        assert infer_sql_param_type("column_max_length") == "integer"
+        assert infer_sql_param_type("allowed_scale") == "integer"
+        assert infer_sql_param_type("limit") == "decimal"
+        assert infer_sql_param_type("threshold") == "decimal"
+        assert infer_sql_param_type("max_value") == "decimal"
+        assert infer_sql_param_type("reference_date") == "date"
+        assert infer_sql_param_type("allowed") == "list"
+        assert infer_sql_param_type("pattern") == "string"
+
+
+class TestOverlayAndSubstitute:
+    def test_overlay_prefers_apply_time_value(self):
+        params = [_param("limit", "number", "{{column_max_length}}")]
+        overlaid = overlay_parameters(params, {"limit": 40})
+        assert overlaid[0].value == 40
+
+    def test_overlay_ignores_apply_time_value_when_fixed(self):
+        params = [_param("limit", "number", 12)]
+        overlaid = overlay_parameters(params, {"limit": 40}, overridable=set())
+        assert overlaid[0].value == 12
+        unlocked = overlay_parameters(params, {"limit": 40}, overridable={"limit"})
+        assert unlocked[0].value == 40
+
+    def test_empty_param_is_overridable_without_explicit_metadata(self):
+        from databricks_labs_dqx_app.backend.registry_models import get_overridable_parameters
+
+        params = [_param("limit", "number", None), _param("scale", "number", 2)]
+        assert get_overridable_parameters({}, params) == ["limit"]
+        overlaid = overlay_parameters(
+            params, {"limit": 40, "scale": 9}, overridable=set(get_overridable_parameters({}, params))
+        )
+        assert overlaid[0].value == 40
+        assert overlaid[1].value == 2
+
+    def test_substitute_replaces_whole_placeholder_with_number(self):
+        assert substitute_param_placeholders("{{column_max_length}}", {"column_max_length": 12}) == 12
+        assert (
+            substitute_param_placeholders("length(col) <= {{column_max_length}}", {"column_max_length": 12})
+            == "length(col) <= 12"
+        )
+
+    def test_leftover_placeholder_fails_closed(self):
+        with pytest.raises(UnboundParameterError, match="column_max_length"):
+            assert_no_placeholders({"limit": "{{column_max_length}}"})
+        assert_no_placeholders({"query": "SELECT * FROM {{input_view}}"})
+
+    def test_per_column_values_are_keyed_by_mapping(self):
+        params = [_param("limit", "number")]
+        stored = {
+            mapping_group_key({"column": "email"}): {"limit": 50},
+            mapping_group_key({"column": "name"}): {"limit": 100},
+        }
+        out = validate_applied_parameter_values(params, [{"column": "email"}, {"column": "name"}], stored)
+        assert out[mapping_group_key({"column": "email"})]["limit"] == 50
+        assert out[mapping_group_key({"column": "name"})]["limit"] == 100
+
+    def test_mapping_group_key_keeps_non_ascii(self):
+        assert mapping_group_key({"column": "café"}) == '{"column":"café"}'
+
+
+_LEGACY_SCALE_DEFINITION = {
+    "body": {"predicate": "length(split(CAST({{column}} AS STRING), '[.]')[1]) > {{allowed_scale}}"},
+    "slots": [
+        {"name": "column", "family": "any", "position": 0, "cardinality": "one", "arg_key": None},
+        {"name": "allowed_scale", "family": "any", "position": 1, "cardinality": "one", "arg_key": None},
+    ],
+    "parameters": [],
+}
+
+
+class TestLegacySqlParameterSlots:
+    def test_value_named_sql_slot_is_promoted_to_a_parameter(self):
+        from databricks_labs_dqx_app.backend.registry_models import RuleDefinition
+
+        from databricks_labs_dqx_app.backend.registry_models import promote_sql_parameter_slots
+
+        stored = RuleDefinition.model_validate(_LEGACY_SCALE_DEFINITION)
+        assert [s.name for s in stored.slots] == ["column", "allowed_scale"]
+        definition = promote_sql_parameter_slots(stored)
+        assert [s.name for s in definition.slots] == ["column"]
+        assert [(p.name, p.type, p.value) for p in definition.parameters] == [("allowed_scale", "integer", None)]
+
+    def test_declared_parameters_keep_slots_as_written(self):
+        from databricks_labs_dqx_app.backend.registry_models import RuleDefinition
+
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {"predicate": "{{pattern_id}} > {{threshold}}"},
+                "slots": [{"name": "pattern_id", "family": "numeric", "position": 0}],
+                "parameters": [{"name": "threshold", "type": "decimal"}],
+            }
+        )
+        assert [s.name for s in definition.slots] == ["pattern_id"]
+        assert [p.name for p in definition.parameters] == ["threshold"]
+
+    def test_native_slots_are_left_alone(self):
+        from databricks_labs_dqx_app.backend.registry_models import RuleDefinition
+
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {"function": "is_in_list", "arguments": {"column": "{{allowed}}"}},
+                "slots": [{"name": "allowed", "family": "any", "position": 0, "cardinality": "one"}],
+            }
+        )
+        assert [s.name for s in definition.slots] == ["allowed"]
+        assert definition.parameters == []
+
+    def test_stale_mapping_key_is_dropped_and_values_rekeyed(self):
+        from databricks_labs_dqx_app.backend.apply_time_params import prune_parameter_mapping
+        from databricks_labs_dqx_app.backend.registry_models import RuleDefinition, promote_sql_parameter_slots
+
+        definition = promote_sql_parameter_slots(RuleDefinition.model_validate(_LEGACY_SCALE_DEFINITION))
+        legacy_group = {"column": "amount", "allowed_scale": "review"}
+        mapping, stored = prune_parameter_mapping(
+            [legacy_group],
+            definition.parameters,
+            definition.slots,
+            {mapping_group_key(legacy_group): {"allowed_scale": "2"}},
+        )
+        assert mapping == [{"column": "amount"}]
+        assert stored == {mapping_group_key({"column": "amount"}): {"allowed_scale": "2"}}
+        validated = validate_applied_parameter_values(definition.parameters, mapping, stored)
+        assert validated[mapping_group_key({"column": "amount"})] == {"allowed_scale": 2}
+
+    def test_legacy_sql_rule_renders_with_apply_time_scale(self):
+        from databricks_labs_dqx_app.backend.registry_models import (
+            RuleDefinition,
+            RuleVersion,
+            promote_sql_parameter_slots,
+        )
+        from databricks_labs_dqx_app.backend.services.materializer import render_check
+
+        definition = promote_sql_parameter_slots(RuleDefinition.model_validate(_LEGACY_SCALE_DEFINITION))
+        version = RuleVersion(
+            rule_id="r1",
+            version=1,
+            definition=definition,
+            user_metadata={"overridable_parameters": ["allowed_scale"]},
+        )
+        check, _ = render_check(
+            mode="sql",
+            version=version,
+            group={"column": "amount"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+            apply_parameter_values={"allowed_scale": 2},
+        )
+        rendered = str(check)
+        assert "{{" not in rendered
+        assert "> 2" in rendered
+        assert "amount" in rendered
+        assert set(check["check"]["arguments"]) == {"expression", "negate", "columns"}
+
+
+def _app_settings_stub():
+    from databricks_labs_dqx_app.backend.services.app_settings_service import AppSettingsService
+
+    mock = create_autospec(AppSettingsService, instance=True)
+    mock.get_label_definitions.return_value = []
+    mock.get_pass_threshold_enabled.return_value = False
+    mock.get_default_pass_threshold.return_value = 70
+    return mock
+
+
+class TestRenderCheckApplyTimeParams:
+    def test_native_limit_placeholder_is_replaced_per_column(self):
+        from databricks_labs_dqx_app.backend.registry_models import RuleDefinition, RuleVersion
+        from databricks_labs_dqx_app.backend.services.materializer import render_check
+
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {
+                    "function": "is_not_greater_than",
+                    "arguments": {"column": "{{column}}", "limit": "{{column_max_length}}"},
+                },
+                "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one"}],
+                "parameters": [{"name": "limit", "type": "number", "value": "{{column_max_length}}"}],
+            }
+        )
+        version = RuleVersion(
+            rule_id="r1",
+            version=1,
+            definition=definition,
+            user_metadata={"overridable_parameters": ["limit"]},
+        )
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "email"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+            apply_parameter_values={"limit": 40},
+        )
+        assert check["check"]["arguments"] == {"column": "email", "limit": 40}
+
+    def test_native_param_placeholder_is_replaced_in_the_argument_that_holds_it(self):
+        from databricks_labs_dqx_app.backend.registry_models import RuleDefinition, RuleVersion
+        from databricks_labs_dqx_app.backend.services.materializer import render_check
+
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {
+                    "function": "regex_match",
+                    "arguments": {"column": "{{column}}", "regex": "{{pattern}}"},
+                },
+                "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one"}],
+                "parameters": [{"name": "pattern", "type": "string"}],
+            }
+        )
+        version = RuleVersion(
+            rule_id="r1", version=1, definition=definition, user_metadata={"overridable_parameters": ["pattern"]}
+        )
+        check, _ = render_check(
+            mode="dqx_native",
+            version=version,
+            group={"column": "email"},
+            effective_severity="Medium",
+            per_application_tags={},
+            registry_rule_id="r1",
+            registry_version=1,
+            applied_rule_id="ar1",
+            app_settings=_app_settings_stub(),
+            apply_parameter_values={"pattern": "^a.*"},
+        )
+        # Substituted where the author wrote the token; no stray ``pattern`` argument is added.
+        assert check["check"]["arguments"] == {"column": "email", "regex": "^a.*"}
+
+    def test_unbound_placeholder_never_reaches_the_check(self):
+        from databricks_labs_dqx_app.backend.registry_models import RuleDefinition, RuleVersion
+        from databricks_labs_dqx_app.backend.services.materializer import render_check
+
+        definition = RuleDefinition.model_validate(
+            {
+                "body": {
+                    "function": "is_not_greater_than",
+                    "arguments": {"column": "{{column}}", "limit": "{{column_max_length}}"},
+                },
+                "slots": [{"name": "column", "family": "text", "position": 0, "cardinality": "one"}],
+                "parameters": [{"name": "limit", "type": "number", "value": "{{column_max_length}}"}],
+            }
+        )
+        version = RuleVersion(rule_id="r1", version=1, definition=definition, user_metadata={})
+        with pytest.raises(UnboundParameterError, match="limit"):
+            render_check(
+                mode="dqx_native",
+                version=version,
+                group={"column": "email"},
+                effective_severity="Medium",
+                per_application_tags={},
+                registry_rule_id="r1",
+                registry_version=1,
+                applied_rule_id="ar1",
+                app_settings=_app_settings_stub(),
+            )
+
+
+class TestTypedParameters:
+    def test_integer_decimal_and_date_coercion(self):
+        assert coerce_parameter_value(_param("offset", "integer"), "-3") == -3
+        with pytest.raises(InvalidParameterValueError, match="whole number"):
+            coerce_parameter_value(_param("offset", "integer"), "2.5")
+        assert coerce_parameter_value(_param("threshold", "decimal"), "0.25") == 0.25
+        with pytest.raises(InvalidParameterValueError, match="must be a number"):
+            coerce_parameter_value(_param("threshold", "decimal"), "abc")
+        assert coerce_parameter_value(_param("launch_date", "date"), "2026-03-01") == "2026-03-01"
+        with pytest.raises(InvalidParameterValueError, match="YYYY-MM-DD"):
+            coerce_parameter_value(_param("launch_date", "date"), "01/03/2026")
+
+    def test_sql_rules_require_every_parameter(self):
+        params = [_param("status", "string")]
+        assert validate_group_parameter_values(params, {}, require_all=True) == {}
+        with pytest.raises(InvalidParameterValueError, match="status is required"):
+            validate_group_parameter_values(params, {}, require_all=True, bind_all=True)
+
+    def test_declarations_reject_collisions_and_bad_names(self):
+        from databricks_labs_dqx_app.backend.apply_time_params import validate_parameter_declarations
+        from databricks_labs_dqx_app.backend.registry_models import RuleSlot
+
+        column = RuleSlot(name="amount", family="numeric")
+        validate_parameter_declarations([_param("threshold", "decimal")], [column])
+        with pytest.raises(ValueError, match="both a column and a parameter"):
+            validate_parameter_declarations([_param("amount", "decimal")], [column])
+        with pytest.raises(ValueError, match="more than once"):
+            validate_parameter_declarations([_param("x", "integer"), _param("x", "date")], [])
+        with pytest.raises(ValueError, match="must start with a letter"):
+            validate_parameter_declarations([_param("1x", "integer")], [])
+        with pytest.raises(ValueError, match="reserved"):
+            validate_parameter_declarations([_param("input_view", "string")], [])
+
+
+class TestSqlParameterSubstitution:
+    def _sub(self, text: str, *params: RuleParameter) -> str:
+        from databricks_labs_dqx_app.backend.apply_time_params import substitute_sql_parameters
+
+        return substitute_sql_parameters(text, list(params))
+
+    def test_numbers_are_bare(self):
+        assert self._sub("x > {{t}}", _param("t", "decimal", 0.5)) == "x > 0.5"
+        assert self._sub("x > {{n}}", _param("n", "integer", 3)) == "x > 3"
+
+    def test_strings_dates_and_lists_become_literals(self):
+        assert self._sub("s = {{v}}", _param("v", "string", "it's")) == "s = 'it''s'"
+        assert self._sub("d >= {{d}}", _param("d", "date", "2026-03-01")) == "d >= DATE'2026-03-01'"
+        assert self._sub("s IN ({{a}})", _param("a", "list", ["A", "B"])) == "s IN ('A', 'B')"
+        assert self._sub("b = {{f}}", _param("f", "boolean", True)) == "b = TRUE"
+
+    def test_author_quoted_tokens_get_escaped_content_only(self):
+        # Backslashes are doubled so Spark's string-literal parser reads the regex back verbatim.
+        assert self._sub("s rlike '{{r}}'", _param("r", "regex", "^\\d+$")) == "s rlike '^\\\\d+$'"
+        assert self._sub("d >= '{{d}}'", _param("d", "date", "2026-03-01")) == "d >= '2026-03-01'"
+
+    def test_unbound_parameters_are_left_for_the_leftover_guard(self):
+        assert self._sub("x > {{t}}", _param("t", "decimal")) == "x > {{t}}"
+
+    def test_trailing_backslash_cannot_break_out_of_the_literal(self):
+        param = _param("v", "string", "a\\")
+        assert self._sub("s = {{v}}", param) == "s = 'a\\\\'"
+        assert self._sub("s = '{{v}}'", param) == "s = 'a\\\\'"
+        assert self._sub("s = '{{v}}' OR 1 = 1", _param("v", "string", "x' OR '1'='1")) == (
+            "s = 'x'' OR ''1''=''1' OR 1 = 1"
+        )
+
+    def test_token_inside_a_longer_literal_is_escaped(self):
+        assert self._sub("s rlike '^{{p}}.*'", _param("p", "string", "a'b")) == "s rlike '^a''b.*'"
+        assert self._sub("s LIKE '{{p}}%' AND t = {{q}}", _param("p", "string", "x"), _param("q", "integer", 2)) == (
+            "s LIKE 'x%' AND t = 2"
+        )
+
+    def test_quoted_list_token_expands_to_separately_quoted_items(self):
+        values = _param("a", "list", ["A", "it's"])
+        assert self._sub("s IN ('{{a}}')", values) == "s IN ('A', 'it''s')"
+        assert self._sub("s IN ('x', '{{a}}')", values) == "s IN ('x', 'A', 'it''s')"
+        assert self._sub("s = 'pre-{{a}}'", values) == "s = 'pre-A, it''s'"
+
+    def test_quote_state_ignores_apostrophes_in_comments_and_other_literals(self):
+        text = "-- don't\n/* it's */ s = \"it's\" AND t = {{v}}"
+        assert self._sub(text, _param("v", "string", "x")) == "-- don't\n/* it's */ s = \"it's\" AND t = 'x'"
+
+    def test_tokens_in_double_quotes_or_backticks_are_rejected(self):
+        with pytest.raises(InvalidParameterValueError, match="double-quoted"):
+            self._sub('s = "{{v}}"', _param("v", "string", "x"))
+        with pytest.raises(InvalidParameterValueError, match="backticked"):
+            self._sub("SELECT `{{v}}`", _param("v", "string", "x"))
+        assert self._sub('s = "{{other}}"', _param("v", "string", "x")) == 's = "{{other}}"'

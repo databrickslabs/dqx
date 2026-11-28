@@ -333,6 +333,11 @@ export interface AnomalyConfig {
  */
 export type AppliedRuleOutColumnPassThresholds = {[key: string]: number};
 
+/**
+ * Per-mapping-group apply-time parameter values, keyed by mappingGroupKey JSON.
+ */
+export type AppliedRuleOutParameterValues = {[key: string]: { [key: string]: unknown }};
+
 export type AppliedRuleOutColumnMappingItem = {[key: string]: string};
 
 export type AppliedRuleOutUserMetadata = { [key: string]: unknown };
@@ -352,6 +357,8 @@ export interface AppliedRuleOut {
   pass_threshold?: number | null;
   /** Per-column minimum-pass-rate overrides ({column: pct 0-100}); read from user_metadata. */
   column_pass_thresholds?: AppliedRuleOutColumnPassThresholds;
+  /** Per-mapping-group apply-time parameter values, keyed by mappingGroupKey JSON. */
+  parameter_values?: AppliedRuleOutParameterValues;
   column_mapping?: AppliedRuleOutColumnMappingItem[];
   user_metadata?: AppliedRuleOutUserMetadata;
   mapping_hash?: string | null;
@@ -482,6 +489,9 @@ export type RuleParameterType = typeof RuleParameterType[keyof typeof RuleParame
 
 export const RuleParameterType = {
   number: 'number',
+  integer: 'integer',
+  decimal: 'decimal',
+  date: 'date',
   string: 'string',
   list: 'list',
   boolean: 'boolean',
@@ -1662,6 +1672,11 @@ export type DesiredAppliedRuleInTags = { [key: string]: unknown };
 export type DesiredAppliedRuleInColumnPassThresholds = {[key: string]: number} | null;
 
 /**
+ * Per-mapping-group apply-time parameter values, keyed by mappingGroupKey JSON.
+ */
+export type DesiredAppliedRuleInParameterValues = {[key: string]: { [key: string]: unknown }} | null;
+
+/**
  * One entry in the full desired set of applications for ``saveAppliedRules``.
  */
 export interface DesiredAppliedRuleIn {
@@ -1681,6 +1696,8 @@ export interface DesiredAppliedRuleIn {
   tags?: DesiredAppliedRuleInTags;
   /** Per-column minimum-pass-rate overrides ({column: pct 0-100}); merged into user_metadata. */
   column_pass_thresholds?: DesiredAppliedRuleInColumnPassThresholds;
+  /** Per-mapping-group apply-time parameter values, keyed by mappingGroupKey JSON. */
+  parameter_values?: DesiredAppliedRuleInParameterValues;
 }
 
 /**
@@ -2267,6 +2284,11 @@ export interface HomeStatsOut {
  */
 export type ImplementedRuleOutColumnPassThresholds = {[key: string]: number};
 
+/**
+ * Per-mapping-group apply-time parameter values, keyed by mappingGroupKey JSON.
+ */
+export type ImplementedRuleOutParameterValues = {[key: string]: { [key: string]: unknown }};
+
 export type ImplementedRuleOutColumnMappingItem = {[key: string]: string};
 
 export type ImplementedRuleOutUserMetadata = { [key: string]: unknown };
@@ -2286,6 +2308,8 @@ export interface ImplementedRuleOut {
   pass_threshold?: number | null;
   /** Per-column minimum-pass-rate overrides ({column: pct 0-100}); read from user_metadata. */
   column_pass_thresholds?: ImplementedRuleOutColumnPassThresholds;
+  /** Per-mapping-group apply-time parameter values, keyed by mappingGroupKey JSON. */
+  parameter_values?: ImplementedRuleOutParameterValues;
   column_mapping?: ImplementedRuleOutColumnMappingItem[];
   user_metadata?: ImplementedRuleOutUserMetadata;
   mapping_hash?: string | null;

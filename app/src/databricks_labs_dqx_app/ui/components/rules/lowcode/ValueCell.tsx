@@ -9,7 +9,10 @@ import { Button } from "@/components/ui/button";
 import { Plus, X } from "lucide-react";
 import { valueCellShape, operatorAllowsColumnRef, VALIDITY_TYPES, type Family } from "@/lib/lowcodeOperators";
 import type { LowcodeColumnRef } from "@/lib/lowcodeCompile";
-import { isColumnRef, type ColumnRefValue } from "@/lib/lowcodeAst";
+import { isColumnRef, isParamRef, type ColumnRefValue, type ParamRefValue } from "@/lib/lowcodeAst";
+import type { RuleParameter } from "@/lib/api";
+import { PARAM_PLACEHOLDER_CLASS } from "@/lib/apply-time-params";
+import { cn } from "@/lib/utils";
 
 type Props = {
   operator: string;
@@ -18,7 +21,31 @@ type Props = {
   onChange: (next: unknown) => void;
   /** Declared columns available to reference (item 42). */
   declaredColumns?: LowcodeColumnRef[];
+  /** Declared Variable Parameters available to reference. Offered for every
+   *  operator (they compile to a literal token); list parameters only in
+   *  `in` / `not in` lists, where they expand to several values. */
+  declaredParameters?: Pick<RuleParameter, "name" | "type">[];
 };
+
+type ParamOption = Pick<RuleParameter, "name" | "type">;
+
+/** Removable chip for a parameter reference, coloured like Variable Parameters. */
+function ParamChip({ name, onRemove }: { name: string; onRemove: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <Badge variant="secondary" className="h-8 gap-1 rounded-md px-2 text-xs font-normal">
+      <span className={cn(PARAM_PLACEHOLDER_CLASS, "truncate")}>{`{{${name}}}`}</span>
+      <button
+        type="button"
+        aria-label={t("rulesRegistry.lowcodeValueClearColumn")}
+        className="opacity-60 hover:opacity-100"
+        onClick={onRemove}
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </Badge>
+  );
+}
 
 const UNIT_OPTIONS = ["minutes", "hours", "days", "weeks", "months", "years"];
 
@@ -50,6 +77,7 @@ function ColumnAwareInput({
   onChange,
   family,
   declaredColumns,
+  declaredParameters = [],
   type = "text",
   placeholder,
   allowColumnRef = true,
@@ -58,6 +86,7 @@ function ColumnAwareInput({
   onChange: (next: unknown) => void;
   family: Family;
   declaredColumns: LowcodeColumnRef[];
+  declaredParameters?: ParamOption[];
   type?: "text" | "number" | "date";
   placeholder?: string;
   allowColumnRef?: boolean;
@@ -70,6 +99,13 @@ function ColumnAwareInput({
   const candidates = declaredColumns.filter(
     (c) => family === "ANY" || c.family === "ANY" || c.family === family,
   );
+  // A single value box can't hold a list parameter (it would expand to
+  // several values).
+  const paramCandidates = declaredParameters.filter((p) => p.type !== "list" && p.type !== "ref_column");
+
+  if (isParamRef(value)) {
+    return <ParamChip name={(value as ParamRefValue).$param} onRemove={() => onChange("")} />;
+  }
 
   if (allowColumnRef && isColumnRef(value)) {
     return (
@@ -94,7 +130,7 @@ function ColumnAwareInput({
   // prior operator), treat the value as a plain literal string.
   const text = isColumnRef(value) ? "" : value == null ? "" : String(value);
 
-  if (!allowColumnRef) {
+  if (!allowColumnRef && paramCandidates.length === 0) {
     // Plain literal input — no Popover, no `{` interception. Byte-identical to
     // the pre-item-42 input for operators the compiler treats as literal-only.
     return (
@@ -142,21 +178,30 @@ function ColumnAwareInput({
           <CommandInput placeholder={t("rulesRegistry.lowcodeGroupBySearch")} />
           <CommandList>
             <CommandEmpty>{t("rulesRegistry.lowcodeValueNoColumns")}</CommandEmpty>
-            <CommandGroup heading={t("rulesRegistry.lowcodeValueColumnsHeader")}>
-              {candidates.map((c) => (
-                <CommandItem
-                  key={c.name}
-                  value={c.name}
-                  className="font-mono text-xs"
-                  onSelect={() => {
-                    onChange({ $col: c.name });
-                    setOpen(false);
-                  }}
-                >
-                  {c.name.includes(".") ? c.name : `{{${c.name}}}`}
-                </CommandItem>
-              ))}
-            </CommandGroup>
+            {allowColumnRef && (
+              <CommandGroup heading={t("rulesRegistry.lowcodeValueColumnsHeader")}>
+                {candidates.map((c) => (
+                  <CommandItem
+                    key={c.name}
+                    value={c.name}
+                    className="font-mono text-xs"
+                    onSelect={() => {
+                      onChange({ $col: c.name });
+                      setOpen(false);
+                    }}
+                  >
+                    {c.name.includes(".") ? c.name : `{{${c.name}}}`}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+            <ParamGroup
+              params={paramCandidates}
+              onPick={(name) => {
+                onChange({ $param: name });
+                setOpen(false);
+              }}
+            />
           </CommandList>
         </Command>
       </PopoverContent>
@@ -164,9 +209,29 @@ function ColumnAwareInput({
   );
 }
 
+/** "Parameters" section of a value picker; renders nothing when there are none. */
+function ParamGroup({ params, onPick }: { params: ParamOption[]; onPick: (name: string) => void }) {
+  const { t } = useTranslation();
+  if (params.length === 0) return null;
+  return (
+    <CommandGroup heading={t("rulesRegistry.lowcodeValueParametersHeader")}>
+      {params.map((p) => (
+        <CommandItem
+          key={p.name}
+          value={`{{${p.name}}}`}
+          className={cn(PARAM_PLACEHOLDER_CLASS, "text-xs")}
+          onSelect={() => onPick(p.name)}
+        >
+          {`{{${p.name}}}`}
+        </CommandItem>
+      ))}
+    </CommandGroup>
+  );
+}
+
 // Ported 1:1 from dqlake's ValueCell — the operator+family determine the
 // value-input shape (single/double/chip/interval/type-picker/none).
-export function ValueCell({ operator, family, value, onChange, declaredColumns }: Props) {
+export function ValueCell({ operator, family, value, onChange, declaredColumns, declaredParameters }: Props) {
   const { t } = useTranslation();
   const shape = valueCellShape(operator, family);
   const colRefAllowed = operatorAllowsColumnRef(operator);
@@ -184,6 +249,7 @@ export function ValueCell({ operator, family, value, onChange, declaredColumns }
         onChange={onChange}
         family={family}
         declaredColumns={declaredColumns ?? []}
+        declaredParameters={declaredParameters}
         type={shape.type}
         allowColumnRef={colRefAllowed}
       />
@@ -204,6 +270,7 @@ export function ValueCell({ operator, family, value, onChange, declaredColumns }
           onChange={(v) => update(0, v)}
           family={family}
           declaredColumns={declaredColumns ?? []}
+          declaredParameters={declaredParameters}
           placeholder={t("rulesRegistry.lowcodeMinPlaceholder")}
           allowColumnRef={colRefAllowed}
         />
@@ -213,6 +280,7 @@ export function ValueCell({ operator, family, value, onChange, declaredColumns }
           onChange={(v) => update(1, v)}
           family={family}
           declaredColumns={declaredColumns ?? []}
+          declaredParameters={declaredParameters}
           placeholder={t("rulesRegistry.lowcodeMaxPlaceholder")}
           allowColumnRef={colRefAllowed}
         />
@@ -227,6 +295,7 @@ export function ValueCell({ operator, family, value, onChange, declaredColumns }
         onChange={onChange}
         family={family}
         declaredColumns={declaredColumns ?? []}
+        declaredParameters={declaredParameters}
         allowColumnRef={colRefAllowed}
       />
     );
@@ -284,12 +353,14 @@ function ChipInput({
   onChange,
   family,
   declaredColumns,
+  declaredParameters = [],
   allowColumnRef = true,
 }: {
   value: unknown;
   onChange: (v: unknown) => void;
   family: Family;
   declaredColumns: LowcodeColumnRef[];
+  declaredParameters?: ParamOption[];
   allowColumnRef?: boolean;
 }) {
   const { t } = useTranslation();
@@ -301,7 +372,10 @@ function ChipInput({
   // keeps ChipInput's literal comma-entry behaviour untouched.
   const entries = Array.isArray(value) ? (value as unknown[]) : [];
   const columnRefs = entries.filter(isColumnRef) as ColumnRefValue[];
-  const literals = entries.filter((v) => !isColumnRef(v));
+  // Parameter refs (list parameters expand to several values) chip the same way.
+  const paramRefs = entries.filter(isParamRef) as ParamRefValue[];
+  const isRef = (v: unknown) => isColumnRef(v) || isParamRef(v);
+  const literals = entries.filter((v) => !isRef(v));
 
   // Local buffer lets the user type commas / trailing whitespace freely; we
   // only commit the parsed array on blur, so the visible text reflects
@@ -317,7 +391,7 @@ function ChipInput({
     // stay exhaustive on the committed `value` and focus — no derived array in
     // the closure — without refiring on every keystroke.
     const next = (Array.isArray(value) ? (value as unknown[]) : [])
-      .filter((v) => !isColumnRef(v))
+      .filter((v) => !isColumnRef(v) && !isParamRef(v))
       .join(", ");
     setText((prev) => (prev === next ? prev : next));
   }, [value, focused]);
@@ -333,8 +407,8 @@ function ChipInput({
       .split(",")
       .map((p) => p.trim())
       .filter(Boolean);
-    // Preserve existing column-ref entries; literals reflect the text buffer.
-    onChange([...parts, ...columnRefs]);
+    // Preserve existing column/parameter refs; literals reflect the text buffer.
+    onChange([...parts, ...columnRefs, ...paramRefs]);
   };
 
   const addColumn = (name: string) => {
@@ -350,7 +424,7 @@ function ChipInput({
       .split(",")
       .map((p) => p.trim())
       .filter(Boolean);
-    onChange([...parts, ...columnRefs, { $col: name }]);
+    onChange([...parts, ...columnRefs, { $col: name }, ...paramRefs]);
     setPickerOpen(false);
   };
 
@@ -359,8 +433,22 @@ function ChipInput({
       .split(",")
       .map((p) => p.trim())
       .filter(Boolean);
-    onChange([...parts, ...columnRefs.filter((c) => c.$col !== name)]);
+    onChange([...parts, ...columnRefs.filter((c) => c.$col !== name), ...paramRefs]);
   };
+
+  const unusedParams = declaredParameters.filter((p) => !paramRefs.some((r) => r.$param === p.name));
+  const textParts = () =>
+    text
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
+  const addParam = (name: string) => {
+    if (!paramRefs.some((r) => r.$param === name)) onChange([...textParts(), ...columnRefs, ...paramRefs, { $param: name }]);
+    setPickerOpen(false);
+  };
+  const removeParam = (name: string) =>
+    onChange([...textParts(), ...columnRefs, ...paramRefs.filter((r) => r.$param !== name)]);
+  const showPicker = allowColumnRef || declaredParameters.length > 0;
 
   return (
     <div className="flex w-full min-w-0 flex-wrap items-center gap-1">
@@ -381,6 +469,9 @@ function ChipInput({
           </button>
         </Badge>
       ))}
+      {paramRefs.map((r) => (
+        <ParamChip key={r.$param} name={r.$param} onRemove={() => removeParam(r.$param)} />
+      ))}
       <Input
         value={text}
         onChange={(e) => setText(e.target.value)}
@@ -392,7 +483,7 @@ function ChipInput({
         placeholder={t("rulesRegistry.lowcodeChipPlaceholder")}
         className={VALUE_INPUT_CLASS}
       />
-      {allowColumnRef && <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+      {showPicker && <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
         <PopoverTrigger asChild>
           <Button
             type="button"
@@ -401,7 +492,11 @@ function ChipInput({
             className="h-8 shrink-0 gap-1 px-2 text-xs text-muted-foreground"
           >
             <Plus className="h-3 w-3" />
-            {t("rulesRegistry.lowcodeValueColumnsHeader")}
+            {!allowColumnRef
+              ? t("rulesRegistry.lowcodeValueParametersHeader")
+              : declaredParameters.length > 0
+                ? t("rulesRegistry.lowcodeValueColumnsAndParameters")
+                : t("rulesRegistry.lowcodeValueColumnsHeader")}
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-56 p-0" align="start">
@@ -409,18 +504,21 @@ function ChipInput({
             <CommandInput placeholder={t("rulesRegistry.lowcodeGroupBySearch")} />
             <CommandList>
               <CommandEmpty>{t("rulesRegistry.lowcodeValueNoColumns")}</CommandEmpty>
-              <CommandGroup heading={t("rulesRegistry.lowcodeValueColumnsHeader")}>
-                {candidates.map((c) => (
-                  <CommandItem
-                    key={c.name}
-                    value={c.name}
-                    className="font-mono text-xs"
-                    onSelect={() => addColumn(c.name)}
-                  >
-                    {c.name.includes(".") ? c.name : `{{${c.name}}}`}
-                  </CommandItem>
-                ))}
-              </CommandGroup>
+              {allowColumnRef && (
+                <CommandGroup heading={t("rulesRegistry.lowcodeValueColumnsHeader")}>
+                  {candidates.map((c) => (
+                    <CommandItem
+                      key={c.name}
+                      value={c.name}
+                      className="font-mono text-xs"
+                      onSelect={() => addColumn(c.name)}
+                    >
+                      {c.name.includes(".") ? c.name : `{{${c.name}}}`}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              )}
+              <ParamGroup params={unusedParams} onPick={addParam} />
             </CommandList>
           </Command>
         </PopoverContent>

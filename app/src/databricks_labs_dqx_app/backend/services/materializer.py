@@ -63,6 +63,19 @@ from databricks.labs.dqx.errors import UnsafeSqlQueryError
 from databricks.labs.dqx.rule import compute_rule_fingerprint
 from databricks.labs.dqx.utils import is_sql_query_safe
 
+from databricks_labs_dqx_app.backend.apply_time_params import (
+    UnboundParameterError,
+    assert_no_placeholders,
+    binds_every_parameter,
+    drop_parameter_keys,
+    is_unbound_parameter_value,
+    leftover_placeholders,
+    must_bind_parameter,
+    overlay_parameters,
+    parameter_values_for_group,
+    substitute_param_placeholders,
+    substitute_sql_parameters,
+)
 from databricks_labs_dqx_app.backend.registry_models import (
     RESERVED_DIMENSION_KEY,
     RESERVED_MAPPED_COLUMNS_KEY,
@@ -75,6 +88,7 @@ from databricks_labs_dqx_app.backend.registry_models import (
     RuleSlot,
     RuleVersion,
     get_applied_column_pass_thresholds,
+    get_overridable_parameters,
     get_rule_dimension,
     get_rule_name,
     get_rule_pass_threshold,
@@ -177,9 +191,16 @@ def _substitute_arguments(
     for slot in slots:
         if slot.name not in group:
             raise ValueError(f"Mapping group is missing slot '{slot.name}'")
-    for param in parameters:
-        if param.value is not None:
-            arguments[param.name] = param.value
+    bound_values = {param.name: param.value for param in parameters if param.value is not None}
+    # A ``{{param}}`` token inside an argument value (e.g. ``regex: "{{pattern}}"``) is replaced in
+    # place — the same substitution the Test rule panel applies — so the check receives the value
+    # under the argument key the author wrote. Only a parameter that no argument references is
+    # passed through by name (legacy: the parameter name IS the DQX argument name).
+    referenced = set(leftover_placeholders(arguments))
+    arguments = {key: substitute_param_placeholders(value, bound_values) for key, value in arguments.items()}
+    for name, value in bound_values.items():
+        if name not in referenced:
+            arguments[name] = value
 
     # Strip filter-only columns from list-typed argument values (§B3).
     filter_only = _filter_only_slot_names(slots, definition_filter)
@@ -288,6 +309,7 @@ def render_check(
     app_settings: AppSettingsService,
     row_filter: str | None = None,
     pass_threshold: int | None = None,
+    apply_parameter_values: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Render one materialized ``dq_resolved_rules.check`` dict for one mapping group.
 
@@ -311,6 +333,22 @@ def render_check(
     definition = version.definition
     body = definition.body
     is_tableless = False
+    parameters = overlay_parameters(
+        definition.parameters,
+        apply_parameter_values,
+        set(get_overridable_parameters(version.user_metadata, definition.parameters)),
+    )
+    unbound = [
+        param.name
+        for param in parameters
+        if is_unbound_parameter_value(param.value) and must_bind_parameter(param, bind_all=binds_every_parameter(mode))
+    ]
+    if unbound:
+        raise UnboundParameterError(
+            "Unresolved parameter placeholder(s): "
+            + ", ".join(f"{{{{{name}}}}}" for name in unbound)
+            + ". Enter a value for each parameter before publishing."
+        )
 
     if mode == "dqx_native":
         function = str(body.get("function", ""))
@@ -318,7 +356,7 @@ def render_check(
             dict(body.get("arguments", {})),
             group,
             definition.slots,
-            definition.parameters,
+            parameters,
             definition_filter=definition.filter,
         )
         # A native check that accepts a ``negate`` argument surfaces it in the
@@ -335,6 +373,7 @@ def render_check(
         negate = version.polarity == "fail"
         if sql_check_function(body) == "sql_query":
             query = _substitute_text(str(body.get("sql_query", "")), group, definition.slots)
+            query = substitute_sql_parameters(query, parameters)
             # Comments (e.g. a leading `-- explanation` block, item 6) are inert
             # at runtime; strip them before the keyword scan so their prose can't
             # trip it. The stored `query` keeps its comments for round-trip.
@@ -353,13 +392,11 @@ def render_check(
                 arguments["merge_columns"] = [
                     _substitute_text(str(col), group, definition.slots) for col in merge_columns
                 ]
-            for param in definition.parameters:
-                if param.value is not None:
-                    arguments[param.name] = param.value
             check_inner = {"function": "sql_query", "arguments": arguments}
             is_tableless = not definition.slots
         else:
             expression = _substitute_text(str(body.get("predicate", "")), group, definition.slots)
+            expression = substitute_sql_parameters(expression, parameters)
             # Comments (e.g. a leading `-- explanation` block, item 6) are inert
             # at runtime — Spark's F.expr lexer skips `--` lines — so strip them
             # before the keyword scan. The stored `expression` keeps its comments
@@ -375,9 +412,6 @@ def render_check(
             mapped_columns = _mapped_columns(group, definition.slots)
             if mapped_columns:
                 arguments["columns"] = mapped_columns
-            for param in definition.parameters:
-                if param.value is not None:
-                    arguments[param.name] = param.value
             check_inner = {"function": "sql_expression", "arguments": arguments}
     else:
         raise ValueError(f"Unsupported rule mode: {mode}")
@@ -448,6 +482,7 @@ def render_check(
     mapped_columns = _mapped_columns(group, version.definition.slots)
     if mapped_columns:
         check_dict["user_metadata"][RESERVED_MAPPED_COLUMNS_KEY] = json.dumps(mapped_columns)
+    assert_no_placeholders(check_inner)
     return check_dict, is_tableless
 
 
@@ -642,8 +677,10 @@ class Materializer:
         # Genie groupings (COALESCE(registry_rule_id, check_name)) are unaffected.
         multi_column = len(applied.column_mapping) > 1
         rendered: list[tuple[str, str, dict[str, Any]]] = []
-        for idx, group in enumerate(applied.column_mapping):
+        definition = version_snapshot.definition
+        for idx, raw_group in enumerate(applied.column_mapping):
             row_id = f"{applied_id}-{idx}"
+            group = drop_parameter_keys(raw_group, definition.parameters, definition.slots)
             try:
                 check, is_tableless = render_check(
                     mode=rendered_mode,
@@ -657,8 +694,9 @@ class Materializer:
                     app_settings=self._app_settings,
                     row_filter=applied.row_filter,
                     pass_threshold=applied.pass_threshold,
+                    apply_parameter_values=parameter_values_for_group(applied.user_metadata, group),
                 )
-            except (ValueError, UnsafeSqlQueryError):
+            except (ValueError, UnsafeSqlQueryError):  # UnboundParameterError is a ValueError
                 logger.warning("Failed to render applied rule %s group %d", applied.id, idx, exc_info=True)
                 continue
             if multi_column:
@@ -715,8 +753,20 @@ class Materializer:
             )
             expected_ids.add(row_id)
 
-        self._delete_stale_groups(applied.id, expected_ids)
-        return expected_ids
+        # A group that failed to render (e.g. a parameter value is now required but was never
+        # stored) must not take its previously materialized row down with it: keep serving the
+        # last good check until the value is supplied. Only groups that no longer exist in the
+        # mapping are stale.
+        failed_ids = {f"{applied.id}-{idx}" for idx in range(len(applied.column_mapping))} - expected_ids
+        kept_ids = failed_ids & self._existing_group_ids(applied.id) if failed_ids else set()
+        if kept_ids:
+            logger.warning(
+                "Keeping %d previously materialized row(s) for applied rule %s whose group failed to render",
+                len(kept_ids),
+                applied.id,
+            )
+        self._delete_stale_groups(applied.id, expected_ids | kept_ids)
+        return expected_ids | kept_ids
 
     def _resolve_table_fqn(
         self, table_fqn: str, is_tableless: bool, registry_rule: RegistryRule, version: RuleVersion
