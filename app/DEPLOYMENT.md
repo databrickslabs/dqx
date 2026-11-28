@@ -162,7 +162,7 @@ Before you start, confirm you have **all** of the items below. The single most c
 - **Databricks CLI** v1.4.0+ installed and authenticated against your workspace (`databricks auth login -p <profile>`). `make app-deploy` enforces this via a preflight `app-check-cli` step (`databricks --version`) and aborts before building if the CLI is older. v1.4.0 is required because the `postgres_projects` / `postgres_roles` resources (used to provision Lakebase and the app SP's Postgres role) are only accepted by CLI ≥ 1.4.0; `lifecycle.prevent_destroy` itself needs only v0.268+.
 - **Git** to check out a Studio release tag. The prebuilt DAB release target needs no local `make`, uv, Node.js, yarn, or bun.
 
-Building from source requires **`make`** on macOS/Linux or the experimental PowerShell helper on Windows, plus **uv**, **Node.js 18+**, **yarn**, and **bun**. See [DEVELOPMENT.md → Prerequisites](DEVELOPMENT.md#prerequisites).
+Building from source requires **`make`** on macOS/Linux or the experimental PowerShell helper on Windows, plus **uv**, **Node.js 22.18+**, **yarn**, and **bun**. See [DEVELOPMENT.md → Prerequisites](DEVELOPMENT.md#prerequisites).
 
 ### Required permissions
 
@@ -389,7 +389,7 @@ On Windows, run the experimental PowerShell helper from the repository root:
 .\make.ps1 app-deploy -Profile <your-profile> -Target <your-target>
 ```
 
-The script requires `uv`, Node.js 18+, yarn classic v1, and Databricks CLI v1.4.0+ on `PATH`. It builds the app, deploys the bundle, and starts it. Pass `-Force` to overwrite remote bundle edits, `-AppName` to set the bundle's `app_name` variable (the deployed app name), or `-BundleVars 'catalog_name=foo','other_name=value'` to forward bundle variables. The `bundle run` resource key remains `dqx-studio`.
+The script requires `uv`, Node.js 22.18+, yarn classic v1, and Databricks CLI v1.4.0+ on `PATH`. It builds the app, deploys the bundle, and starts it. Pass `-Force` to overwrite remote bundle edits, `-AppName` to set the bundle's `app_name` variable (the deployed app name), or `-BundleVars 'catalog_name=foo','other_name=value'` to forward bundle variables. The `bundle run` resource key remains `dqx-studio`.
 
 `make app-deploy` runs the following steps automatically:
 1. `make app-build` — builds the frontend and wheels.

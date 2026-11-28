@@ -40,6 +40,11 @@ import {
   STICKY_ACTIONS_HEAD_CLASS,
   STICKY_ACTIONS_CELL_CLASS,
   ACTIONS_COL_WIDTH,
+  ACTIONS_COLUMN_KEY,
+  ACTIONS_COLUMN_LAYOUT,
+  splitActionsColumn,
+  type ActionsColumnKey,
+  ACTIONS_ROW_MIN_HEIGHT_CLASS,
 } from "@/components/data-table/sticky-actions";
 import type { SortColumnConfig, SortDirection, SortValue } from "@/components/data-table/sort";
 import type { MonitoredTableSummaryOut } from "@/lib/api";
@@ -497,11 +502,17 @@ export function getMonitoredTablesSortConfig(key: MonitoredTablesSortKey): SortC
   return { dir: def.defaultSortDir ?? "asc", nullsFirst: def.nullsFirst ?? false };
 }
 
+/** Saved-view column layout keys: the data columns plus the Actions column. */
+export type MonitoredTablesLayoutKey = ColumnKey | ActionsColumnKey;
+
 /** Column defaults of the Tables overview, for its saved-view definitions. */
 export const MONITORED_TABLES_COLUMN_LAYOUT: {
-  defaultOrder: readonly ColumnKey[];
-  columns: Record<ColumnKey, ColumnLayoutDef>;
-} = { defaultOrder: DEFAULT_ORDER, columns: COLUMNS };
+  defaultOrder: readonly MonitoredTablesLayoutKey[];
+  columns: Record<MonitoredTablesLayoutKey, ColumnLayoutDef>;
+} = {
+  defaultOrder: [...DEFAULT_ORDER, ACTIONS_COLUMN_KEY],
+  columns: { ...COLUMNS, [ACTIONS_COLUMN_KEY]: ACTIONS_COLUMN_LAYOUT },
+};
 
 /** Selection state for bulk operations — mirrors `RulesTableSelection` from
  *  `RulesTable.tsx`. The id field is `binding_id`. */
@@ -529,7 +540,7 @@ export interface MonitoredTablesTableProps<F extends string = string> {
   /** Label-definition colors for dimension / severity badge cells. */
   labelDefinitions?: LabelColorDefinition[];
   /** Column order/visibility/widths — the saved view's column layout (see `useSavedViews`). */
-  columnLayout: SavedViewsColumnLayout<MonitoredTablesColumnKey>;
+  columnLayout: SavedViewsColumnLayout<MonitoredTablesLayoutKey>;
   /** Filters view of the Edit View menu. */
   filterLayout?: SortableToggleListConfig<F>;
   /** Saved Views page of the Edit View menu. */
@@ -591,9 +602,16 @@ export function MonitoredTablesTable<F extends string = string>({
   const someSelected = showSelection && selection!.selectedIds.size > 0 && !allSelected;
   const anySelected = showSelection && selection!.selectedIds.size > 0;
 
-  const { colOrder, colWidths, visibleKeys, toggleColumn, handleDragEnd, sensors, onResizeStart } = columnLayout;
+  const { colWidths, toggleColumn, handleDragEnd, sensors, onResizeStart } = columnLayout;
+  // Actions is rendered separately from the data columns (always last), so it
+  // is split out of the layout here and listed as a pinned trailing menu entry.
+  const {
+    order: colOrder,
+    visibleKeys,
+    actionsVisible,
+  } = splitActionsColumn(columnLayout.colOrder, columnLayout.visibleKeys);
 
-  const hasActions = !!renderActions;
+  const hasActions = !!renderActions && actionsVisible;
   const showAppliedRules = visibleKeys.includes("appliedRules");
 
   function handleHeaderClick(key: ColumnKey) {
@@ -614,6 +632,15 @@ export function MonitoredTablesTable<F extends string = string>({
           <EditColumnsDropdown
             order={colOrder}
             labelOf={(key) => t(COLUMNS[key].labelKey)}
+            pinnedLast={
+              renderActions
+                ? {
+                    label: t("monitoredTables.colActions"),
+                    checked: actionsVisible,
+                    onToggle: () => toggleColumn(ACTIONS_COLUMN_KEY),
+                  }
+                : undefined
+            }
             toggleableOf={(key) => COLUMNS[key].toggleable}
             isChecked={(key) => visibleKeys.includes(key)}
             onToggle={toggleColumn}
@@ -768,8 +795,8 @@ export function MonitoredTablesTable<F extends string = string>({
                         // vertically centered in the row.
                         className="overflow-hidden px-2 py-0 align-middle"
                       >
-                        <CollapsibleCellContent phase={rowPhase} className="py-2">
-                          {COLUMNS[k].renderCell(r, ctx)}
+                        <CollapsibleCellContent phase={rowPhase} className={cn("py-2", ACTIONS_ROW_MIN_HEIGHT_CLASS)}>
+                          <div>{COLUMNS[k].renderCell(r, ctx)}</div>
                         </CollapsibleCellContent>
                       </TableCell>
                     );
