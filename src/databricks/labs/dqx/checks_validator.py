@@ -15,8 +15,15 @@ from pydantic import (
 )
 from pydantic_core import ErrorDetails, SchemaError
 
+from databricks.labs.dqx.array_path import (
+    ArrayPath,
+    has_array_wildcard,
+    is_array_path_supported,
+    unsupported_array_path_message,
+)
 from databricks.labs.dqx.checks_resolver import resolve_check_function
-from databricks.labs.dqx.rule import Criticality
+from databricks.labs.dqx.errors import InvalidCheckError
+from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY, Criticality
 
 logger = logging.getLogger(__name__)
 
@@ -220,8 +227,39 @@ class CheckSpec(BaseModel):
                 else:
                     effective_arguments["column"] = col_or_cols
                 errors.extend(self._validate_func_args(effective_arguments, func, check, func_parameters))
+                errors.extend(self._array_path_errors(effective_arguments, func, check, func_parameters))
             return errors
-        return self._validate_func_args(effective_arguments, func, check, func_parameters)
+        errors = self._validate_func_args(effective_arguments, func, check, func_parameters)
+        return errors + self._array_path_errors(effective_arguments, func, check, func_parameters)
+
+    def _array_path_errors(self, arguments: dict, func: Callable, check: dict, func_parameters: Any) -> list[str]:
+        """Validate the array path in the *column* argument, the same way the rule does when it is built.
+
+        Only row-level checks taking a *column* parameter apply checks to array elements. The path is parsed, and
+        the check function must support array paths. Whether the path matches the data is checked when the
+        checks are applied.
+
+        Args:
+            arguments: The effective check arguments.
+            func: The resolved check function.
+            check: The original check dict, included in messages for context.
+            func_parameters: The parameters of the check function.
+
+        Returns:
+            A list of error messages (empty if *column* is not an array path or the path is valid).
+        """
+        column = arguments.get("column")
+        if not isinstance(column, str) or not has_array_wildcard(column) or "column" not in func_parameters:
+            return []
+        if CHECK_FUNC_REGISTRY.get(self.check.function) == "dataset":
+            return []
+        try:
+            ArrayPath.parse(column)
+        except InvalidCheckError as exc:
+            return [f"{exc} Check details: {check}"]
+        if not is_array_path_supported(func):
+            return [f"{unsupported_array_path_message(func, column)} Check details: {check}"]
+        return []
 
     @staticmethod
     def _validate_func_args(arguments: dict, func: Callable, check: dict, func_parameters: Any) -> list[str]:

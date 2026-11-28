@@ -2190,15 +2190,16 @@ DQRowRule(
 
 * A path is a list of names joined by `.`. Each name can be followed by one or more `[*]`, for example `tags[*]`, `users[*].email`, `payload.items[*].sku` or `matrix[*][*]` (array of arrays).
 * Names that need escaping are back-quoted, for example ``orders[*].`line items`[*].sku``.
-* `[*]` is only recognized outside back-quoted names and quoted SQL strings, so a column named `` `my_col[*]` `` or an expression such as `regexp_replace(name, '[*]', '')` behaves as before.
+* `[*]` is only recognized outside back-quoted names and quoted SQL strings, so a column named `` `my_col[*]` `` or an expression such as `regexp_replace(name, '[*]', '')` behaves as before. A `'` or `"` starts a quoted SQL string only when it does not follow a letter, digit or underscore; inside a name, as in `root.o'brien[*]`, it is part of the name.
 * Up to 20 array levels (`[*]`) are supported. Struct fields do not count towards the limit.
-* Malformed paths raise `InvalidCheckError` when the rule is built: an empty segment (`users[*]..date`), a path starting with `[*]`, brackets other than `[*]` (for example `[0]`), or an unclosed `[`.
+* Malformed paths raise `InvalidCheckError` when the rule is built, and are reported by `validate_checks`: an empty segment (`users[*]..date`), a path starting with `[*]`, brackets other than `[*]` inside a path that has `[*]` (for example `arr[0].x[*]`), or an unclosed `[` (for example `arr[*`). On its own, `arr[0]` is plain Spark element access, as before.
 * Paths are checked against the DataFrame schema when the checks are applied. Every `[*]` must reach an array and every field must reach a struct; maps are not traversed. If the path does not match (for example a missing field, `[*]` on a non-array column, or a left-out `[*]` such as `users.events[*].date` on an array of structs), the check is skipped with the message `Check evaluation skipped due to invalid check columns: [...]`.
 
 **Nulls and empty arrays**
 
 * A null or empty array anywhere along the path produces no values to check, so the row passes, even for checks like `is_not_null`. To require arrays to be present and non-empty, add a separate `is_not_null_and_not_empty_array` rule, which also accepts paths (for example `users[*].events`).
 * Null values, including the value of a null struct element inside an array, are passed to the check as usual. For example, `is_valid_date` lets them pass, while `is_not_null` fails them.
+* A null struct element followed by another `[*]` produces no values, in the same way as a null or empty array: a null user has no events to check. For example, with `users = [null]`, `is_not_null` fails on `users[*].name` but passes on `users[*].events[*].date`.
 
 **Results**
 
@@ -2208,14 +2209,15 @@ The row count does not change, and the result schema is the same as for other ch
 Array elements in Column 'users[*].events[*].payload.event_date' failed check 'is_valid_date'. 2 failing values, 2 distinct (showing first 2): '15/01/2024', 'not-a-date'
 ```
 
-Values are cast to string, and a null value is shown as `null`. Rule-level `filter` and `message_expr` apply to the whole row, as for other checks.
+Values are cast to string, so values of any type (including maps and variants) can be shown, and distinct values are counted on their string form. Each shown value is truncated to 100 characters (marked with `…`), and backslashes, single quotes and control characters are escaped (for example `\'`, `\n` or `\u0001`), so each value is unambiguous and the message stays on one line. A null value is shown as `null`. Rule-level `filter` and `message_expr` apply to the whole row, as for other checks.
 
 If no name is given, it is generated from the path and the check in the usual way, so `tags[*]` and `tags` get the same default name for the same check. Name the rules when you use both.
 
 <Admonition type="warning" title="Checks that cannot be applied to array elements">
 The check is evaluated inside Spark higher-order functions (`transform` and `filter`), which only support built-in Spark column functions.
 The geospatial checks, `does_not_contain_pii`, `is_valid_ipv6_address`, `is_ipv6_address_in_cidr`, `is_valid_json`, `has_json_keys` and `has_valid_json_schema` raise `InvalidCheckError` when used with a `[*]` path.
-Custom checks built from Spark column functions are supported. Custom checks that use Python or pandas UDFs are **not** supported and fail when the data is processed.
+Custom checks built from Spark column functions are supported. A check used with `[*]` receives each element as a `Column`, not a column name, so custom checks must accept a `Column`, for example by using `get_normalized_column_and_expr` as in the [custom check example](#using-python-function); otherwise `InvalidCheckError` is raised when the rule is built.
+Custom checks that use Python or pandas UDFs may fail on some runtimes with `UNSUPPORTED_FEATURE.LAMBDA_FUNCTION_WITH_PYTHON_UDF`; use Spark column functions for checks applied to array elements.
 Array paths are only supported for row-level checks that take a single `column`; dataset-level checks, checks that take `columns`, and `sql_expression` are not affected.
 </Admonition>
 
@@ -4253,13 +4255,16 @@ You should make sure to handle edge cases as part of your custom check (e.g. pro
     ```python
     import pyspark.sql.functions as F
     from pyspark.sql import Column
-    from databricks.labs.dqx.check_funcs import make_condition
+    from databricks.labs.dqx.check_funcs import get_normalized_column_and_expr, make_condition
     from databricks.labs.dqx.rule import register_rule
 
     @register_rule("row")
-    def not_ends_with(column: str, suffix: str) -> Column:
-      col_expr = F.col(column)
-      return make_condition(col_expr.endswith(suffix), f"Column {column} ends with {suffix}", f"{column}_ends_with_{suffix}")
+    def not_ends_with(column: str | Column, suffix: str) -> Column:
+      # accepts a column name or a Column, so the check also works with array paths such as "tags[*]"
+      col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+      return make_condition(
+        col_expr.endswith(suffix), f"Column {col_expr_str} ends with {suffix}", f"{col_str_norm}_ends_with_{suffix}"
+      )
     ```
   </TabItem>
 </Tabs>

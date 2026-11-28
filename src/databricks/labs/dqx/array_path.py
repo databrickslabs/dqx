@@ -21,15 +21,18 @@ from databricks.labs.dqx.utils import quote_column_name
 __all__ = [
     "ARRAY_WILDCARD",
     "MAX_ARRAY_DEPTH",
+    "MAX_FAILING_VALUE_LENGTH",
     "MAX_FAILING_VALUES_SHOWN",
     "ArrayPath",
     "has_array_wildcard",
     "is_array_path_supported",
+    "unsupported_array_path_message",
 ]
 
 ARRAY_WILDCARD = "[*]"
 MAX_ARRAY_DEPTH = 20
 MAX_FAILING_VALUES_SHOWN = 10
+MAX_FAILING_VALUE_LENGTH = 100
 
 # Built-in checks that cannot run inside Spark's transform / filter: they use Python or pandas UDFs,
 # build SQL text from the column name, or look the column up by name.
@@ -45,16 +48,24 @@ _UNSUPPORTED_CHECK_FUNCS = frozenset(
 )
 _UNSUPPORTED_CHECK_MODULES = frozenset({"databricks.labs.dqx.geo.check_funcs"})
 
-_QUOTE_CHARS = "`'\""
+_STRING_QUOTE_CHARS = "'\""
 _BACK_QUOTE = "`"
+# An unclosed "[*" is still treated as an array path, so the parser reports it instead of it being skipped.
+_WILDCARD_PREFIX = "[*"
+# Control characters other than these are shown as \uXXXX escapes.
+_NAMED_CONTROL_CHAR_ESCAPES = {"\n": "n", "\r": "r", "\t": "t"}
+_TRUNCATION_MARKER = "\u2026"
 
 
 def has_array_wildcard(column: str) -> bool:
-    """Returns True if *column* contains "[*]" outside back-quoted names and quoted SQL strings.
+    """Returns True if *column* contains "[*" outside back-quoted names and quoted SQL strings.
 
-    The string is scanned left to right. Quoted sections are skipped following Spark's rules: a doubled quote
-    is an escaped quote, and inside single- or double-quoted strings a backslash escapes the next character.
-    An unclosed quote runs to the end of the string.
+    The string is scanned left to right with the same quoting rules as the path parser: back-quotes quote names.
+    A single or double quote starts a quoted SQL string only when it does not follow a name character (a letter,
+    digit or underscore), so a quote inside a bare name such as "o'brien" is part of the name, as it is for the
+    parser. Quoted sections are skipped following Spark's rules: a doubled quote is an escaped quote, and inside
+    single- or double-quoted strings a backslash escapes the next character. An unclosed quote runs to the end
+    of the string. An unclosed "[*" counts as an array path, so the parser reports it as malformed.
 
     Args:
         column: Column reference provided as a string.
@@ -64,9 +75,9 @@ def has_array_wildcard(column: str) -> bool:
     """
     position = 0
     while position < len(column):
-        if column[position] in _QUOTE_CHARS:
+        if _starts_quoted_section(column, position):
             position = _skip_quoted_section(column, position)
-        elif column.startswith(ARRAY_WILDCARD, position):
+        elif column.startswith(_WILDCARD_PREFIX, position):
             return True
         else:
             position += 1
@@ -88,6 +99,20 @@ def is_array_path_supported(check_func: Callable) -> bool:
     module = getattr(check_func, "__module__", "")
     name = getattr(check_func, "__name__", "")
     return module not in _UNSUPPORTED_CHECK_MODULES and (module, name) not in _UNSUPPORTED_CHECK_FUNCS
+
+
+def unsupported_array_path_message(check_func: Callable, column: str) -> str:
+    """Returns the error message for a check function that cannot be applied to the array path *column*.
+
+    Args:
+        check_func: The check function.
+        column: The array path.
+
+    Returns:
+        The error message.
+    """
+    name = getattr(check_func, "__name__", repr(check_func))
+    return f"Check function '{name}' does not support array paths with '[*]': '{column}'."
 
 
 @dataclass(frozen=True)
@@ -190,7 +215,11 @@ class ArrayPath:
         return F.element_at(F.transform(F.array(failing), message_if_any_failed), 1).alias(alias)
 
     def _build_message(self, failing_values: Column, function_name: str) -> Column:
-        """Builds the message from the failing values: their count, distinct count and the first distinct ones."""
+        """Builds the message from the failing values: their count, distinct count and the first distinct ones.
+
+        Values are cast to string before taking the distinct ones, because maps, variants and structs holding a
+        map cannot be compared. Only the values shown are escaped and truncated.
+        """
 
         def message_from_distinct_values(distinct_values: Column) -> Column:
             shown_values = F.slice(distinct_values, 1, MAX_FAILING_VALUES_SHOWN)
@@ -205,14 +234,52 @@ class ArrayPath:
                 F.array_join(F.transform(shown_values, _format_value), ", "),
             )
 
+        distinct_values = F.array_distinct(F.transform(failing_values, lambda value: value.cast("string")))
         # Bind the distinct values to a single lambda variable so they are computed once for both the count and
         # the values shown.
-        return F.element_at(F.transform(F.array(F.array_distinct(failing_values)), message_from_distinct_values), 1)
+        return F.element_at(F.transform(F.array(distinct_values), message_from_distinct_values), 1)
 
 
 def _format_value(value: Column) -> Column:
-    """Formats a failing value for the message: quoted string form, or null without quotes."""
-    return F.when(value.isNull(), F.lit("null")).otherwise(F.concat(F.lit("'"), value.cast("string"), F.lit("'")))
+    """Formats a failing value (already cast to string) for the message.
+
+    Values longer than 100 characters are truncated and marked with an ellipsis. Backslashes, single quotes and
+    control characters are then escaped, and the value is put in single quotes, so the message is unambiguous
+    and one line. A null value is shown as null without quotes.
+    """
+    truncated = F.when(
+        F.length(value) > MAX_FAILING_VALUE_LENGTH,
+        F.concat(F.substring(value, 1, MAX_FAILING_VALUE_LENGTH), F.lit(_TRUNCATION_MARKER)),
+    ).otherwise(value)
+    return F.when(value.isNull(), F.lit("null")).otherwise(F.concat(F.lit("'"), _escape(truncated), F.lit("'")))
+
+
+def _escape(value: Column) -> Column:
+    """Escapes backslashes, single quotes and control characters with a backslash.
+
+    Patterns and replacements are Java regular expression syntax: in a replacement, a backslash must be doubled.
+    """
+    escaped = F.regexp_replace(value, r"\\", r"\\\\")
+    escaped = F.regexp_replace(escaped, "'", r"\\'")
+    for code in (*range(0x20), 0x7F):
+        char = chr(code)
+        replacement = _NAMED_CONTROL_CHAR_ESCAPES.get(char, f"u{code:04x}")
+        escaped = F.regexp_replace(escaped, f"\\x{code:02x}", "\\\\" + replacement)
+    return escaped
+
+
+def _starts_quoted_section(text: str, position: int) -> bool:
+    """Returns True if a back-quoted name or a quoted SQL string starts at *position*."""
+    char = text[position]
+    if char == _BACK_QUOTE:
+        return True
+    if char not in _STRING_QUOTE_CHARS:
+        return False
+    return position == 0 or not _is_name_char(text[position - 1])
+
+
+def _is_name_char(char: str) -> bool:
+    return char.isalnum() or char == "_"
 
 
 def _skip_quoted_section(text: str, start: int) -> int:

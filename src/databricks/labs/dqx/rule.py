@@ -10,9 +10,15 @@ from typing import Annotated, Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 from pydantic.json_schema import WithJsonSchema
+from pyspark.errors import PySparkValueError
 from pyspark.sql import Column
 import pyspark.sql.functions as F
-from databricks.labs.dqx.array_path import ArrayPath, has_array_wildcard, is_array_path_supported
+from databricks.labs.dqx.array_path import (
+    ArrayPath,
+    has_array_wildcard,
+    is_array_path_supported,
+    unsupported_array_path_message,
+)
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
     normalize_bound_args,
@@ -617,16 +623,17 @@ class DQRowRule(DQRule):
     def _validate_attributes(self) -> None:
         super()._validate_attributes()
         if self.array_path is not None and not is_array_path_supported(self.check_func):
-            raise InvalidCheckError(
-                f"Check function '{self.check_func.__name__}' does not support array paths with '[*]': "
-                f"'{self.column}'."
-            )
+            raise InvalidCheckError(unsupported_array_path_message(self.check_func, self.array_path.path))
 
     def _build_array_path_check(self, array_path: ArrayPath) -> Column:
         """Wraps the check function so it is applied to every element the array path reaches.
 
-        The check function is never called with the raw path string. The default name is taken from the
-        check applied to a placeholder column named after the normalized path, so it follows the usual naming.
+        The check function is never called with the raw path string: it receives each element as a *Column*.
+        The default name is taken from the check applied to a placeholder column named after the normalized path,
+        so it follows the usual naming.
+
+        Raises:
+            InvalidCheckError: If the check function does not accept a *Column* for its column argument.
         """
 
         def element_check(element: Column) -> Column:
@@ -635,7 +642,15 @@ class DQRowRule(DQRule):
 
         # The normalized path only contains [a-z0-9_], so it is a plain column name that needs no quoting.
         placeholder = F.col(normalize_col_str(array_path.path) or "array")
-        alias = get_column_name_or_alias(element_check(placeholder), normalize=True)
+        try:
+            placeholder_condition = element_check(placeholder)
+        except (TypeError, PySparkValueError) as exc:  # e.g. the check calls F.col(column), which needs a name
+            raise InvalidCheckError(
+                f"Check function '{self.check_func.__name__}' must accept a Column to be used with array paths: "
+                f"'{array_path.path}'. Use get_normalized_column_and_expr to accept both column names and Column "
+                "objects."
+            ) from exc
+        alias = get_column_name_or_alias(placeholder_condition, normalize=True)
         return array_path.build_condition(element_check, self.check_func.__name__, alias)
 
 

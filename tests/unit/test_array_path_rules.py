@@ -16,6 +16,7 @@ from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.array_path import ArrayPath, has_array_wildcard
 from databricks.labs.dqx.check_funcs import make_condition
 from databricks.labs.dqx.checks_serializer import deserialize_checks, serialize_checks
+from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidCheckError
 from databricks.labs.dqx.geo import check_funcs as geo_check_funcs
 from databricks.labs.dqx.pii import pii_detection_funcs
@@ -92,6 +93,8 @@ def is_valid_json(column: str | Column) -> Column:
         pytest.param("`my_weird_col`[*].field", "my_weird_col", (None, "field"), id="wildcard_after_back_quotes"),
         pytest.param("`odd``name`[*].x", "odd`name", (None, "x"), id="doubled_backtick_is_escaped_backtick"),
         pytest.param("users[*].`it's`", "users", (None, "it's"), id="back_quoted_field_with_quote_character"),
+        pytest.param("root.o'brien[*]", "root", ("o'brien", None), id="quote_inside_bare_name_before_wildcard"),
+        pytest.param('root.say"hi"[*]', "root", ('say"hi"', None), id="double_quotes_inside_bare_name"),
     ],
 )
 def test_dq_row_rule_uses_array_path_mode_when_column_is_array_path(
@@ -154,6 +157,8 @@ def test_dq_row_rule_passes_other_arguments_positionally_when_check_func_args_ar
         pytest.param("`my_weird_col[*]`.`field`", id="wildcard_inside_back_quoted_name"),
         pytest.param("payload.event_date", id="plain_dotted_path"),
         pytest.param("arr[0].field", id="index_without_wildcard"),
+        pytest.param("arr[0]", id="index_is_plain_spark_element_access"),
+        pytest.param("x = '[*]'", id="wildcard_inside_string_after_operator"),
         pytest.param("regexp_replace(name, '[*]', '')", id="wildcard_inside_single_quoted_string"),
         pytest.param('concat(name, "[*]")', id="wildcard_inside_double_quoted_string"),
         pytest.param("concat(name, 'it''s [*]')", id="wildcard_after_doubled_quote_escape_in_string"),
@@ -259,6 +264,9 @@ def test_dq_row_rule_counts_each_consecutive_wildcard_in_depth_limit_when_path_h
         pytest.param("users[*].arr[**]", "unsupported brackets", id="double_star"),
         pytest.param("users[*].arr['key']", "unsupported brackets", id="quoted_key"),
         pytest.param("users[*].events[*", "unclosed", id="unclosed_bracket"),
+        pytest.param("arr[*", "unclosed", id="unclosed_wildcard_is_only_wildcard"),
+        pytest.param("arr[**]", "unsupported brackets", id="double_star_is_only_wildcard"),
+        pytest.param("arr[0].x[*]", "unsupported brackets", id="index_before_wildcard"),
         pytest.param("users[*].tags]", "unexpected ']'", id="stray_closing_bracket"),
         pytest.param("users[*].]x", "unexpected ']'", id="segment_starts_with_closing_bracket"),
         pytest.param("users[*]email", "expected '.' or '[*]'", id="text_follows_wildcard"),
@@ -441,3 +449,84 @@ def test_dq_row_rule_raises_invalid_check_error_when_check_cannot_run_on_array_e
 ) -> None:
     with pytest.raises(InvalidCheckError, match="does not support array paths"):
         DQRowRule(check_func=check_func, column="users[*].value", check_func_kwargs=check_func_kwargs)
+
+
+def not_ends_with_by_name(column: str, suffix: str) -> Column:
+    """Custom check that only accepts a column name, like the custom-check example in the docs used to."""
+    col_expr = F.col(column)
+    return make_condition(col_expr.endswith(suffix), f"Column {column} ends with {suffix}", f"{column}_ends_with")
+
+
+def test_dq_row_rule_builds_as_today_when_check_function_only_accepts_column_name_and_column_is_plain() -> None:
+    rule = DQRowRule(check_func=not_ends_with_by_name, column="ints", check_func_kwargs={"suffix": "foo"})
+
+    assert rule.array_path is None
+    assert rule.name == "ints_ends_with"
+
+
+def test_dq_row_rule_raises_clear_error_when_check_function_only_accepts_column_name_and_column_is_array_path() -> None:
+    expected = (
+        "Check function 'not_ends_with_by_name' must accept a Column to be used with array paths: 'ints[*]'. "
+        "Use get_normalized_column_and_expr to accept both column names and Column objects."
+    )
+    with pytest.raises(InvalidCheckError, match=re.escape(expected)):
+        DQRowRule(check_func=not_ends_with_by_name, column="ints[*]", check_func_kwargs={"suffix": "foo"})
+
+
+def _metadata_check(function: str, column: str, **arguments: object) -> dict:
+    return {"criticality": "error", "check": {"function": function, "arguments": {"column": column, **arguments}}}
+
+
+@pytest.mark.parametrize(
+    "check, expected_error",
+    [
+        pytest.param(
+            _metadata_check("is_not_null", "users[*]..email"),
+            "Invalid array path 'users[*]..email': empty segment.",
+            id="empty_segment",
+        ),
+        pytest.param(
+            _metadata_check("is_not_null", "arr[0][*]"),
+            "Invalid array path 'arr[0][*]': unsupported brackets, only [*] is allowed.",
+            id="index_bracket",
+        ),
+        pytest.param(
+            _metadata_check("is_not_null", "arr[*"),
+            "Invalid array path 'arr[*': unclosed '['.",
+            id="unclosed_wildcard",
+        ),
+        pytest.param(
+            _metadata_check("is_valid_json", "payloads[*]"),
+            "Check function 'is_valid_json' does not support array paths with '[*]': 'payloads[*]'.",
+            id="unsupported_check",
+        ),
+        pytest.param(
+            {"criticality": "error", "check": {"function": "is_not_null", "for_each_column": ["tags[*]", "a[*]..b"]}},
+            "Invalid array path 'a[*]..b': empty segment.",
+            id="for_each_column_entry",
+        ),
+    ],
+)
+def test_validate_checks_reports_error_when_array_path_is_malformed_or_check_is_unsupported(
+    check: dict, expected_error: str
+) -> None:
+    status = DQEngine.validate_checks([check])
+
+    assert len(status.errors) == 1
+    assert status.errors[0].startswith(expected_error)
+
+
+@pytest.mark.parametrize(
+    "check",
+    [
+        pytest.param(_metadata_check("is_not_null", TWO_LEVEL_PATH), id="valid_array_path"),
+        pytest.param(_metadata_check("is_in_range", "tags[*]", min_limit=1, max_limit=10), id="check_with_arguments"),
+        pytest.param(_metadata_check("is_not_null", "regexp_replace(name, '[*]', '')"), id="wildcard_inside_string"),
+        pytest.param(_metadata_check("is_valid_json", "`payloads[*]`"), id="unsupported_check_on_back_quoted_name"),
+        pytest.param(
+            _metadata_check("has_no_outliers", "users[*]..email"), id="dataset_check_does_not_use_array_paths"
+        ),
+    ],
+)
+def test_validate_checks_accepts_check_when_column_is_valid_array_path_or_not_an_array_path(check: dict) -> None:
+    assert not DQEngine.validate_checks([check]).has_errors

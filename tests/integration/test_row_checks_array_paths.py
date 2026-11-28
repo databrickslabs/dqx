@@ -1,3 +1,6 @@
+import re
+from pathlib import Path
+
 import pyspark.sql.functions as F
 import pytest
 import yaml
@@ -5,10 +8,12 @@ from pyspark.errors import AnalysisException
 from pyspark.sql import Column, DataFrame
 
 from databricks.labs.dqx import check_funcs
-from databricks.labs.dqx.check_funcs import make_condition
+from databricks.labs.dqx.array_path import is_array_path_supported
+from databricks.labs.dqx.check_funcs import get_normalized_column_and_expr, make_condition
+from databricks.labs.dqx.checks_resolver import resolve_check_function
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule, DQRowRule
-from tests.integration.conftest import EXTRA_PARAMS, RUN_ID
+from tests.integration.conftest import ALL_CHECKS_ROWS, ALL_CHECKS_SCHEMA, EXTRA_PARAMS, RUN_ID
 
 DATE_PATH = "users[*].events[*].payload.event_date"
 TS_PATH = "users[*].events[*].payload.event_ts"
@@ -539,3 +544,135 @@ def test_apply_checks_reports_failing_values_when_custom_spark_check_runs_on_arr
 
     assert rule.name == "is_lowercase"
     assert apply_rule(ws, df, rule) == {1: [array_message("tags[*]", "is_lowercase", 1, ["'Online'"])]}
+
+
+@pytest.mark.parametrize(
+    "leaf_type, leaf_value, expected_value",
+    [
+        pytest.param("map<string, string>", {"a": "1"}, "'{a -> 1}'", id="map_leaf"),
+        pytest.param("struct<props: map<string, string>>", ({"a": "1"},), "'{{a -> 1}}'", id="struct_with_map_leaf"),
+    ],
+)
+def test_apply_checks_reports_failing_values_when_leaf_type_is_not_comparable(
+    ws, spark, leaf_type: str, leaf_value: object, expected_value: str
+):
+    df = spark.createDataFrame([[1, [(leaf_value,), (None,)]]], f"id int, users array<struct<props: {leaf_type}>>")
+    is_null_rule = DQRowRule(check_func=check_funcs.is_null, column="users[*].props")
+    is_not_null_rule = DQRowRule(check_func=check_funcs.is_not_null, column="users[*].props")
+
+    assert apply_rule(ws, df, is_null_rule) == {1: [array_message("users[*].props", "is_null", 1, [expected_value])]}
+    assert apply_rule(ws, df, is_not_null_rule) == {1: [array_message("users[*].props", "is_not_null", 1, ["null"])]}
+
+
+def test_apply_checks_reports_failing_values_when_leaf_type_is_variant(ws, spark):
+    df = spark.createDataFrame([[1, ['{"a":1}', None]]], "id int, payloads array<string>")
+    df = df.withColumn("payloads", F.transform("payloads", F.parse_json))
+    is_null_rule = DQRowRule(check_func=check_funcs.is_null, column="payloads[*]")
+    is_not_null_rule = DQRowRule(check_func=check_funcs.is_not_null, column="payloads[*]")
+
+    assert apply_rule(ws, df, is_null_rule) == {1: [array_message("payloads[*]", "is_null", 1, ["'{\"a\":1}'"])]}
+    assert apply_rule(ws, df, is_not_null_rule) == {1: [array_message("payloads[*]", "is_not_null", 1, ["null"])]}
+
+
+@pytest.mark.parametrize(
+    "value, expected_value",
+    [
+        pytest.param("a', 'b", "'a\\', \\'b'", id="single_quotes_are_escaped"),
+        pytest.param("a\\b", "'a\\\\b'", id="backslash_is_escaped"),
+        pytest.param("line1\nline2\r\tend", "'line1\\nline2\\r\\tend'", id="named_control_characters_are_escaped"),
+        pytest.param("a\x01b\x7f", "'a\\u0001b\\u007f'", id="other_control_characters_are_escaped"),
+        pytest.param("x" * 101, "'" + "x" * 100 + "…'", id="long_value_is_truncated"),
+        pytest.param("x" * 100, "'" + "x" * 100 + "'", id="value_at_length_limit_is_not_truncated"),
+    ],
+)
+def test_apply_checks_escapes_and_truncates_shown_value_when_failing_value_has_special_characters(
+    ws, spark, value: str, expected_value: str
+):
+    df = spark.createDataFrame([[1, ["2024-01-01", value]]], "id int, dates array<string>")
+    rule = DQRowRule(check_func=check_funcs.is_valid_date, column="dates[*]")
+
+    assert apply_rule(ws, df, rule) == {1: [array_message("dates[*]", "is_valid_date", 1, [expected_value])]}
+
+
+def test_apply_checks_drops_null_struct_element_only_when_another_wildcard_follows_it(ws, spark):
+    df = spark.createDataFrame(
+        [[1, [None]]], "id int, users array<struct<name: string, events: array<struct<date: string>>>>"
+    )
+    name_rule = DQRowRule(check_func=check_funcs.is_not_null, column="users[*].name")
+    date_rule = DQRowRule(check_func=check_funcs.is_not_null, column="users[*].events[*].date")
+
+    assert apply_rule(ws, df, name_rule) == {1: [array_message("users[*].name", "is_not_null", 1, ["null"])]}
+    assert apply_rule(ws, df, date_rule) == {1: []}
+
+
+def not_ends_with(column: str | Column, suffix: str) -> Column:
+    """The custom check example from the docs, which accepts both a column name and a Column."""
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    return make_condition(
+        col_expr.endswith(suffix), f"Column {col_expr_str} ends with {suffix}", f"{col_str_norm}_ends_with_{suffix}"
+    )
+
+
+def test_apply_checks_applies_documented_custom_check_to_plain_column_and_array_path(ws, spark):
+    df = spark.createDataFrame([[1, "abcfoo", ["ok", "xfoo"]]], "id int, col1 string, tags array<string>")
+    plain_rule = DQRowRule(check_func=not_ends_with, column="col1", check_func_kwargs={"suffix": "foo"})
+    array_rule = DQRowRule(check_func=not_ends_with, column="tags[*]", check_func_kwargs={"suffix": "foo"})
+
+    assert apply_rule(ws, df, plain_rule) == {1: ["Column col1 ends with foo"]}
+    assert apply_rule(ws, df, array_rule) == {1: [array_message("tags[*]", "not_ends_with", 1, ["'xfoo'"])]}
+
+
+PLAIN_COLUMN_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def as_array_path_check(check: dict) -> dict | None:
+    """Returns *check* applied to every element of *rows*, or None if it cannot be applied through an array path.
+
+    Only checks whose *column* is a plain top-level name are rewritten (expressions and existing array paths are
+    left out), and only if the check function supports array paths.
+    """
+    arguments = check["check"].get("arguments", {})
+    column = arguments.get("column")
+    if not isinstance(column, str) or not PLAIN_COLUMN_NAME.fullmatch(column):
+        return None
+    check_func = resolve_check_function(check["check"]["function"])
+    if check_func is None or not is_array_path_supported(check_func):
+        return None
+    return {**check, "check": {**check["check"], "arguments": {**arguments, "column": f"rows[*].{column}"}}}
+
+
+def failing_rule_names(checked_df: DataFrame) -> list[tuple[list[str], list[str]]]:
+    """Returns the names of the failing error and warning rules for each row, sorted by *col3*."""
+    return [
+        (sorted(item["name"] for item in row["_errors"] or []), sorted(item["name"] for item in row["_warnings"] or []))
+        for row in checked_df.sort("col3").collect()
+    ]
+
+
+def test_apply_checks_all_row_checks_through_array_path_gives_same_results_as_plain_columns(ws, spark):
+    """Applies every row check from all_row_checks.yaml to the elements of an array, in one *apply_checks* call.
+
+    Guards the list of checks that cannot be applied to array elements: a new check that cannot run inside Spark's
+    higher-order functions (for example one using a Python UDF) fails here on runtimes that do not support it.
+    """
+    file_path = Path(__file__).parent.parent / "resources" / "all_row_checks.yaml"
+    with open(file_path, "r", encoding="utf-8") as f:
+        plain_checks = [check for check in yaml.safe_load(f) if as_array_path_check(check) is not None]
+    array_path_checks = [as_array_path_check(check) for check in plain_checks]
+    assert array_path_checks
+
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    assert not dq_engine.validate_checks(array_path_checks).has_errors
+
+    test_df = spark.createDataFrame(ALL_CHECKS_ROWS, ALL_CHECKS_SCHEMA)
+    # Each row holds a copy of itself in a one-element array, so top-level columns used in check arguments resolve.
+    test_df = test_df.withColumn("rows", F.array(F.struct(*[F.col(name) for name in test_df.columns])))
+
+    plain_checked = dq_engine.apply_checks_by_metadata(test_df, plain_checks)
+    array_path_checked = dq_engine.apply_checks_by_metadata(test_df, array_path_checks)
+
+    skipped = array_path_checked.where(
+        F.exists("_errors", lambda item: item["message"].startswith("Check evaluation skipped"))
+    )
+    assert skipped.isEmpty()
+    assert failing_rule_names(array_path_checked) == failing_rule_names(plain_checked)

@@ -37,6 +37,90 @@ RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
 RUN_ID = "2f9120cf-e9f2-446a-8278-12d508b00639"
 EXTRA_PARAMS = ExtraParams(run_time_overwrite=RUN_TIME.isoformat(), run_id_overwrite=RUN_ID)
 
+# Input data of the tests applying every check from the all_*_checks.yaml resources; every row check passes.
+ALL_CHECKS_SCHEMA = (
+    "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
+    "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
+    "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string, "
+    "col_email: string, col_uuid: string, col_ssn: string, col_country: string, col_currency: string, "
+    "col_subdivision: string, col_language: string, col_url: string"
+)
+
+ALL_CHECKS_ROWS = [
+    [
+        "val1",
+        1,
+        1,
+        [1],
+        datetime(2025, 1, 2).date(),
+        datetime(2025, 1, 12, 1, 0, 0),
+        {"key1": 1},
+        {"field1": 1},
+        2,
+        "val2",
+        "192.168.1.0",
+        "2001:0db8:85a3:08d3:0000:0000:0000:0001",
+        '{"key1": "1"}',
+        '{"a" : 1, "b": 2}',
+        "user@example.com",
+        "550e8400-e29b-41d4-a716-446655440000",
+        "123-45-6789",
+        "US",
+        "USD",
+        "US-CA",
+        "en",
+        "https://example.com/a",
+    ],
+    [
+        "val2",
+        2,
+        2,
+        [2],
+        datetime(2025, 1, 2).date(),
+        datetime(2025, 1, 12, 2, 0, 0),
+        {"key1": 1},
+        {"field1": 1},
+        2,
+        "val2",
+        "192.168.1.1",
+        "2001:0db8:85a3:08d3:0000:0000:0000:1",
+        '{"key1": "1", "key2": "2"}',
+        '{ "a" : 1, "b": 1000,  "c": {"1": 8}}',
+        '"quoted_user"@example.co.uk',
+        "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+        "223-45-6789",
+        "GB",
+        "EUR",
+        "GB-ENG",
+        "en",
+        "https://sub.example.org/p?q=1",
+    ],
+    [
+        "val3",
+        3,
+        3,
+        [3],
+        datetime(2025, 1, 2).date(),
+        datetime(2025, 1, 12, 3, 0, 0),
+        {"key1": 1},
+        {"field1": 1},
+        2,
+        "val2",
+        "192.168.1.2",
+        "2001:0db8:85a3:08d3:0000::2",
+        '{"key1": "[1, 2, 3]"}',
+        '{ "a" : 1, "b": 1023455,  "c": null }',
+        "user@[12.96.144.202]",
+        "12345678-1234-8234-9234-123456789abc",
+        "323-45-6789",
+        "DE",
+        "GBP",
+        "DE-BY",
+        "de",
+        "ftp://files.example.org/f.txt",
+    ],
+]
+
 
 FINGERPRINT_FIELDS = ["rule_fingerprint", "rule_set_fingerprint"]
 
