@@ -2965,6 +2965,145 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
         finally:
             os.unlink(temp_path)
 
+    def test_min_items_only(self, generator):
+        """Test that array field with only minItems generates sql_expression rule."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {
+                    "name": "tags",
+                    "physicalType": "ARRAY<STRING>",
+                    "logicalType": "array",
+                    "logicalTypeOptions": {
+                        "minItems": 2,
+                    },
+                }
+            ]
+        )
+
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+            )
+
+            # Should generate sql_expression rule for minItems
+            rule_functions = [rule["check"]["function"] for rule in rules]
+            assert "sql_expression" in rule_functions, "Should have sql_expression rule for minItems"
+
+            # Verify the array size rule
+            size_rule = next(r for r in rules if "too_few_items" in r["name"])
+            assert size_rule["check"]["function"] == "sql_expression"
+            assert size_rule["criticality"] == "error"
+            assert size_rule["user_metadata"]["dimension"] == "validity"
+            assert size_rule["check"]["arguments"]["expression"] == "tags IS NULL OR size(tags) >= 2"
+
+        finally:
+            os.unlink(temp_path)
+
+    def test_max_items_only(self, generator):
+        """Test that array field with only maxItems generates sql_expression rule."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {
+                    "name": "items",
+                    "physicalType": "ARRAY<STRING>",
+                    "logicalType": "array",
+                    "logicalTypeOptions": {
+                        "maxItems": 10,
+                    },
+                }
+            ]
+        )
+
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+            )
+
+            # Should generate sql_expression rule for maxItems
+            rule_functions = [rule["check"]["function"] for rule in rules]
+            assert "sql_expression" in rule_functions, "Should have sql_expression rule for maxItems"
+
+            # Verify the array size rule
+            size_rule = next(r for r in rules if "too_many_items" in r["name"])
+            assert size_rule["check"]["function"] == "sql_expression"
+            assert size_rule["criticality"] == "error"
+            assert size_rule["user_metadata"]["dimension"] == "validity"
+            assert size_rule["check"]["arguments"]["expression"] == "items IS NULL OR size(items) <= 10"
+
+        finally:
+            os.unlink(temp_path)
+
+    def test_min_and_max_items_together(self, generator):
+        """Test that array field with both minItems and maxItems generates a combined sql_expression rule."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {
+                    "name": "categories",
+                    "physicalType": "ARRAY<STRING>",
+                    "logicalType": "array",
+                    "logicalTypeOptions": {
+                        "minItems": 1,
+                        "maxItems": 5,
+                    },
+                }
+            ]
+        )
+
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+            )
+
+            # Should generate one combined sql_expression rule for both min and max
+            size_rule = next(r for r in rules if "invalid_size" in r["name"])
+            assert size_rule["check"]["function"] == "sql_expression"
+            assert size_rule["criticality"] == "error"
+            assert size_rule["user_metadata"]["dimension"] == "validity"
+            expression = size_rule["check"]["arguments"]["expression"]
+            assert expression == "categories IS NULL OR (size(categories) >= 1 AND size(categories) <= 5)"
+
+        finally:
+            os.unlink(temp_path)
+
+    def test_min_and_max_items_equal(self, generator):
+        """Test that array field with equal minItems and maxItems generates an exact equality check."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {
+                    "name": "coordinates",
+                    "physicalType": "ARRAY<DOUBLE>",
+                    "logicalType": "array",
+                    "logicalTypeOptions": {
+                        "minItems": 2,
+                        "maxItems": 2,
+                    },
+                }
+            ]
+        )
+
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+            )
+
+            # Should generate exact equality rule
+            size_rule = next(r for r in rules if "invalid_size" in r["name"])
+            assert size_rule["check"]["function"] == "sql_expression"
+            assert size_rule["criticality"] == "error"
+            assert size_rule["user_metadata"]["dimension"] == "validity"
+            assert size_rule["check"]["arguments"]["expression"] == "coordinates IS NULL OR size(coordinates) = 2"
+
+        finally:
+            os.unlink(temp_path)
+
     def test_field_with_logical_type_options_but_no_constraints(self, generator):
         """Test field with logicalTypeOptions but no min/max constraints."""
         contract_dict = self.create_basic_contract(

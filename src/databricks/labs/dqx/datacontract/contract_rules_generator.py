@@ -767,6 +767,12 @@ class DataContractRulesGenerator(DQEngineBase):
                 self._generate_string_length_rules_from_options(column, field_metadata, default_criticality, opts)
             )
 
+        # Handle array size constraints
+        if prop.logicalType == 'array' and (opts.get('minItems') is not None or opts.get('maxItems') is not None):
+            rules.extend(
+                self._generate_array_size_rules_from_options(column, field_metadata, default_criticality, opts)
+            )
+
         # Handle date and timestamp format constraints
         if prop.logicalType in _FORMAT_CHECKS_BY_LOGICAL_TYPE and opts.get('format'):
             rules.extend(
@@ -1047,6 +1053,98 @@ class DataContractRulesGenerator(DQEngineBase):
                         },
                     },
                     "name": f"{field_metadata['field']}_too_long",
+                    "criticality": criticality,
+                    "user_metadata": {
+                        **field_metadata,
+                        "dimension": "validity",
+                        "rule_type": "predefined",
+                    },
+                }
+            ]
+
+        return []
+
+    def _generate_array_size_rules_from_options(
+        self, column: str, field_metadata: dict, criticality: str, opts: dict
+    ) -> list[dict]:
+        """Generate array size rules from logicalTypeOptions minItems/maxItems."""
+        min_items = opts.get('minItems')
+        max_items = opts.get('maxItems')
+
+        if min_items is None and max_items is None:
+            return []
+
+        if min_items is not None and max_items is not None and min_items == max_items:
+            return [
+                {
+                    "check": {
+                        "function": "sql_expression",
+                        "arguments": {
+                            "expression": f"{column} IS NULL OR size({column}) = {min_items}",
+                            "columns": [column],
+                        },
+                    },
+                    "name": f"{field_metadata['field']}_invalid_size",
+                    "criticality": criticality,
+                    "user_metadata": {
+                        **field_metadata,
+                        "dimension": "validity",
+                        "rule_type": "predefined",
+                    },
+                }
+            ]
+
+        if min_items is not None and max_items is not None:
+            return [
+                {
+                    "check": {
+                        "function": "sql_expression",
+                        "arguments": {
+                            "expression": f"{column} IS NULL OR (size({column}) >= {min_items} AND size({column}) <= {max_items})",
+                            "columns": [column],
+                        },
+                    },
+                    "name": f"{field_metadata['field']}_invalid_size",
+                    "criticality": criticality,
+                    "user_metadata": {
+                        **field_metadata,
+                        "dimension": "validity",
+                        "rule_type": "predefined",
+                    },
+                }
+            ]
+
+        if min_items is not None:
+            return [
+                {
+                    "check": {
+                        "function": "sql_expression",
+                        "arguments": {
+                            "expression": f"{column} IS NULL OR size({column}) >= {min_items}",
+                            "columns": [column],
+                        },
+                    },
+                    "name": f"{field_metadata['field']}_too_few_items",
+                    "criticality": criticality,
+                    "user_metadata": {
+                        **field_metadata,
+                        "dimension": "validity",
+                        "rule_type": "predefined",
+                    },
+                }
+            ]
+
+        if max_items is not None:
+            return [
+                {
+                    "check": {
+                        "function": "sql_expression",
+                        "arguments": {
+                            "expression": f"{column} IS NULL OR size({column}) <= {max_items}",
+                            "columns": [column],
+                        },
+                    },
+                    "name": f"{field_metadata['field']}_too_many_items",
                     "criticality": criticality,
                     "user_metadata": {
                         **field_metadata,
