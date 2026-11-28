@@ -1,4 +1,6 @@
-import type { RuleParameter, RuleParameterValue } from "@/lib/api";
+import type { RuleParameter } from "@/lib/api";
+
+export type RuleParameterValue = Exclude<RuleParameter["value"], undefined>;
 
 const PLACEHOLDER_RE = /^\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}$/;
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
