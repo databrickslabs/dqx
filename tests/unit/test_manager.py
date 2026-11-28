@@ -2,6 +2,8 @@ from unittest.mock import create_autospec, PropertyMock
 
 from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql.conf import RuntimeConfig
+from pyspark.sql.types import ArrayType, StringType, StructField, StructType
 
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.executor import DQCheckResult
@@ -325,3 +327,43 @@ def test_rule_manager_skips_check_with_destructive_row_filter_positional():
     assert manager.has_unsafe_filter is True
     result = manager.process()
     assert "skipped" in str(result.condition).lower()
+
+
+def _make_spark_with_conf(conf: RuntimeConfig) -> SparkSession:
+    spark = create_autospec(SparkSession)
+    type(spark).conf = PropertyMock(return_value=conf)
+    return spark
+
+
+def _make_array_path_manager(column: str, spark: SparkSession) -> DQRuleManager:
+    df = create_autospec(DataFrame)
+    type(df).schema = PropertyMock(return_value=StructType([StructField("tags", ArrayType(StringType()))]))
+    return DQRuleManager(
+        check=DQRowRule(name="tags_check", check_func=check_funcs.is_not_null, column=column),
+        df=df,
+        spark=spark,
+        engine_user_metadata={},
+        run_time_overwrite=None,
+        run_id="test-run",
+    )
+
+
+def test_rule_manager_matches_array_path_case_insensitively_when_case_sensitivity_config_is_not_available():
+    conf = create_autospec(RuntimeConfig)
+    conf.get.side_effect = AnalysisException(
+        "[CONFIG_NOT_AVAILABLE.WITHOUT_SUGGESTION] Configuration spark.sql.caseSensitive is not available."
+    )
+
+    manager = _make_array_path_manager("TAGS[*]", _make_spark_with_conf(conf))
+
+    assert not manager.invalid_columns
+
+
+def test_rule_manager_reports_raw_path_as_invalid_when_array_path_does_not_match_case_sensitive_schema():
+    conf = create_autospec(RuntimeConfig)
+    conf.get.return_value = "true"
+
+    manager = _make_array_path_manager("TAGS[*]", _make_spark_with_conf(conf))
+
+    assert manager.invalid_columns == ["TAGS[*]"]
+    assert manager.skip_message == "Check evaluation skipped due to invalid check columns: ['TAGS[*]']"

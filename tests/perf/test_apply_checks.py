@@ -2560,3 +2560,35 @@ def test_benchmark_is_in_distribution(benchmark, ws, generated_distribution_df):
     checked = dq_engine.apply_checks(generated_distribution_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize("column", ["event_date", "users[*].events[*].event_date"])
+@pytest.mark.benchmark(group="test_benchmark_array_path_is_valid_date")
+def test_benchmark_array_path_is_valid_date(benchmark, ws, generated_df, column):
+    """Compares a plain-column check with the same check on 10 array elements per row (2 users x 5 events).
+
+    The array path variant checks 10x as many values, across two array levels, so it exercises the nested
+    transform, the null-array filter and flatten.
+    """
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    event_date = F.date_format("col5", "yyyy-MM-dd")
+    events = F.array_repeat(F.struct(event_date.alias("event_date")), 5)
+    nested_df = generated_df.select(
+        event_date.alias("event_date"),
+        F.array_repeat(F.struct(events.alias("events")), 2).alias("users"),
+    )
+    checks = [
+        DQRowRule(
+            criticality="warn",
+            check_func=check_funcs.is_valid_date,
+            column=column,
+            check_func_kwargs={"date_format": "yyyy-MM-dd"},
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(nested_df, checks)
+    # Filter on the result column so the check is evaluated; a plain count() lets Spark prune it from the plan.
+    # All generated dates are valid, so no row has warnings.
+    rows_with_warnings = checked.where(F.col("_warnings").isNotNull())
+    actual_count = benchmark(lambda: rows_with_warnings.count())
+    assert actual_count == 0
