@@ -20,6 +20,10 @@ class TestIsNativeRuleTestable:
     def test_geo_check_is_not_testable(self):
         assert is_native_rule_testable("is_point") is False
 
+    @pytest.mark.parametrize("function", ["is_greater_than", "is_less_than"])
+    def test_strict_comparison_check_is_testable(self, function):
+        assert is_native_rule_testable(function) is True
+
 
 class TestCompileNativeTestPredicate:
     def test_is_in_list(self):
@@ -44,6 +48,19 @@ class TestCompileNativeTestPredicate:
             {"column": "{{amount}}", "min_limit": 0, "max_limit": 100},
         )
         assert pred == "({{amount}} >= 0 AND {{amount}} <= 100)"
+
+    def test_is_greater_than(self):
+        pred = compile_native_test_predicate("is_greater_than", {"column": "{{amount}}", "limit": 0})
+        assert pred == "({{amount}} > 0)"
+
+    def test_is_less_than(self):
+        pred = compile_native_test_predicate("is_less_than", {"column": "{{amount}}", "limit": 100})
+        assert pred == "({{amount}} < 100)"
+
+    @pytest.mark.parametrize("function", ["is_greater_than", "is_less_than"])
+    def test_strict_comparison_rejects_missing_limit(self, function):
+        with pytest.raises(NativeTestCompileError, match=f"{function} requires limit"):
+            compile_native_test_predicate(function, {"column": "{{amount}}"})
 
     def test_sql_expression(self):
         pred = compile_native_test_predicate(

@@ -39,7 +39,11 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidPhysicalTypeError, ODCSContractError, ParameterError
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.package_utils import missing_required_packages
-from databricks.labs.dqx.utils import normalize_column_expr, sanitize_for_logging
+from databricks.labs.dqx.utils import (
+    VALID_UNQUOTED_IDENTIFIER_PATTERN,
+    quote_column_name,
+    sanitize_for_logging,
+)
 
 # DQLLMEngine is referenced only as a type annotation. Eagerly importing it
 # requires installation of [llm] extras which may not be installed or wanted
@@ -63,6 +67,7 @@ _FORMAT_CHECKS_BY_LOGICAL_TYPE: dict[str, _FormatCheck] = {
     "date": _FormatCheck("is_valid_date", "date_format", "valid_date_format"),
     "timestamp": _FormatCheck("is_valid_timestamp", "timestamp_format", "valid_timestamp_format"),
     "datetime": _FormatCheck("is_valid_timestamp", "timestamp_format", "valid_timestamp_format"),
+    "time": _FormatCheck("is_valid_timestamp", "timestamp_format", "valid_time_format"),
 }
 
 _MAX_LOGGED_DESCRIPTION_LENGTH = 120
@@ -680,7 +685,7 @@ class DataContractRulesGenerator(DQEngineBase):
         schema_name: str,
         contract_metadata: dict,
         default_criticality: str,
-        parent_path: str = "",
+        parent_path: tuple[str, ...] = (),
         recursion_depth: int = 0,
     ) -> list[dict]:
         """Generate predefined DQ rules from an ODCS v3.x property."""
@@ -699,111 +704,103 @@ class DataContractRulesGenerator(DQEngineBase):
             )
             return []
 
-        column_path = f"{parent_path}.{prop.name}" if parent_path else prop.name
-        field_metadata = {**contract_metadata, "field": column_path}
+        property_path = (*parent_path, prop.name)
+        # Keep literal dots in property names distinct from struct path separators.
+        column = ".".join(
+            name if VALID_UNQUOTED_IDENTIFIER_PATTERN.fullmatch(name) else quote_column_name(name)
+            for name in property_path
+        )
+        field_metadata = {**contract_metadata, "field": ".".join(property_path)}
 
         rules = []
+        child_properties = prop.properties if prop.logicalType == "object" else None
+        if prop.required:
+            rules.extend(self._generate_not_null_rules_from_property(column, field_metadata, default_criticality))
 
-        # Handle nested properties (objects)
-        if prop.logicalType == "object" and prop.properties:
-            for nested_prop in prop.properties:
+        if child_properties:
+            for nested_prop in child_properties:
                 nested_rules = self._generate_predefined_rules_for_property(
                     nested_prop,
                     schema_name,
                     contract_metadata,
                     default_criticality,
-                    column_path,
+                    property_path,
                     recursion_depth + 1,
                 )
                 rules.extend(nested_rules)
             return rules
 
-        rules.extend(
-            self._generate_rules_from_direct_attributes(prop, column_path, field_metadata, default_criticality)
-        )
+        if prop.unique:
+            rules.extend(self._generate_unique_rules_from_property(column, field_metadata, default_criticality))
 
         if prop.logicalTypeOptions:
             rules.extend(
                 self._generate_rules_from_logical_type_options(
-                    prop, column_path, field_metadata, default_criticality, prop.logicalTypeOptions
+                    prop, column, field_metadata, default_criticality, prop.logicalTypeOptions
                 )
             )
 
         return rules
 
-    def _generate_rules_from_direct_attributes(
-        self, prop: SchemaProperty, column_path: str, field_metadata: dict, default_criticality: str
-    ) -> list[dict]:
-        """Generate rules from direct property attributes (required, unique)."""
-        rules = []
-        if prop.required:
-            rules.extend(self._generate_not_null_rules_from_property(column_path, field_metadata, default_criticality))
-        if prop.unique:
-            rules.extend(self._generate_unique_rules_from_property(column_path, field_metadata, default_criticality))
-        return rules
-
     def _generate_rules_from_logical_type_options(
-        self, prop: SchemaProperty, column_path: str, field_metadata: dict, default_criticality: str, opts: dict
+        self, prop: SchemaProperty, column: str, field_metadata: dict, default_criticality: str, opts: dict
     ) -> list[dict]:
         """Generate rules from logicalTypeOptions (pattern, ranges, length, format)."""
         rules = []
 
         # Handle pattern constraints
         if opts.get('pattern'):
-            rules.extend(
-                self._generate_pattern_rules_from_options(column_path, field_metadata, default_criticality, opts)
-            )
+            rules.extend(self._generate_pattern_rules_from_options(column, field_metadata, default_criticality, opts))
 
         # Handle range constraints from minimum and maximum
         if opts.get('minimum') is not None or opts.get('maximum') is not None:
-            rules.extend(
-                self._generate_range_rules_from_options(column_path, field_metadata, default_criticality, opts)
-            )
+            if prop.logicalType == 'time':
+                logger.warning(
+                    f"Time bounds aren't supported yet for field '{sanitize_for_logging(column)}'; skipping them."
+                )
+            else:
+                rules.extend(self._generate_range_rules_from_options(column, field_metadata, default_criticality, opts))
 
         # Handle string length constraints
         if opts.get('minLength') is not None or opts.get('maxLength') is not None:
             rules.extend(
-                self._generate_string_length_rules_from_options(column_path, field_metadata, default_criticality, opts)
+                self._generate_string_length_rules_from_options(column, field_metadata, default_criticality, opts)
             )
 
         # Handle date and timestamp format constraints
         if prop.logicalType in _FORMAT_CHECKS_BY_LOGICAL_TYPE and opts.get('format'):
             rules.extend(
                 self._generate_format_rules_from_options(
-                    column_path, prop.logicalType, field_metadata, default_criticality, opts
+                    column, prop.logicalType, field_metadata, default_criticality, opts
                 )
             )
 
         return rules
 
-    def _generate_not_null_rules_from_property(
-        self, column_path: str, contract_metadata: dict, criticality: str
-    ) -> list[dict]:
+    def _generate_not_null_rules_from_property(self, column: str, field_metadata: dict, criticality: str) -> list[dict]:
         """Generate not_null rules from required property constraint."""
         return [
             {
-                "check": {"function": "is_not_null", "arguments": {"column": column_path}},
-                "name": f"{column_path}_is_null",
+                "check": {"function": "is_not_null", "arguments": {"column": column}},
+                "name": f"{field_metadata['field']}_is_null",
                 "criticality": criticality,
                 "user_metadata": {
-                    **contract_metadata,
+                    **field_metadata,
                     "dimension": "completeness",
                     "rule_type": "predefined",
                 },
             }
         ]
 
-    def _generate_unique_rules_from_property(
-        self, column_path: str, contract_metadata: dict, criticality: str
-    ) -> list[dict]:
+    def _generate_unique_rules_from_property(self, column: str, field_metadata: dict, criticality: str) -> list[dict]:
         """Generate uniqueness rules from ODCS property."""
         return [
             {
-                "check": {"function": "is_unique", "arguments": {"columns": [column_path]}},
-                "name": f"{column_path}_not_unique",
+                "check": {"function": "is_unique", "arguments": {"columns": [column]}},
+                "name": f"{field_metadata['field']}_not_unique",
                 "criticality": criticality,
                 "user_metadata": {
-                    **contract_metadata,
+                    **field_metadata,
                     "dimension": "uniqueness",
                     "rule_type": "predefined",
                 },
@@ -811,7 +808,7 @@ class DataContractRulesGenerator(DQEngineBase):
         ]
 
     def _generate_pattern_rules_from_options(
-        self, column_path: str, contract_metadata: dict, criticality: str, opts: dict
+        self, column: str, field_metadata: dict, criticality: str, opts: dict
     ) -> list[dict]:
         """Generate pattern/regex rules from logicalTypeOptions."""
         pattern = opts.get('pattern')
@@ -820,11 +817,11 @@ class DataContractRulesGenerator(DQEngineBase):
 
         return [
             {
-                "check": {"function": "regex_match", "arguments": {"column": column_path, "regex": pattern}},
-                "name": f"{column_path}_invalid_pattern",
+                "check": {"function": "regex_match", "arguments": {"column": column, "regex": pattern}},
+                "name": f"{field_metadata['field']}_invalid_pattern",
                 "criticality": criticality,
                 "user_metadata": {
-                    **contract_metadata,
+                    **field_metadata,
                     "dimension": "validity",
                     "rule_type": "predefined",
                 },
@@ -832,7 +829,7 @@ class DataContractRulesGenerator(DQEngineBase):
         ]
 
     def _generate_range_rules_from_options(
-        self, column_path: str, contract_metadata: dict, criticality: str, opts: dict
+        self, column: str, field_metadata: dict, criticality: str, opts: dict
     ) -> list[dict]:
         """Generate range rules from logicalTypeOptions minimum/maximum."""
         minimum = opts.get('minimum')
@@ -845,7 +842,6 @@ class DataContractRulesGenerator(DQEngineBase):
         has_float_limits = (minimum is not None and isinstance(minimum, float)) or (
             maximum is not None and isinstance(maximum, float)
         )
-        normalized_column = normalize_column_expr(column_path)
 
         if minimum is not None and maximum is not None:
             if has_float_limits:
@@ -854,14 +850,14 @@ class DataContractRulesGenerator(DQEngineBase):
                         "check": {
                             "function": "sql_expression",
                             "arguments": {
-                                "expression": f"{normalized_column} >= {minimum} AND {normalized_column} <= {maximum}",
-                                "columns": [column_path],
+                                "expression": f"{column} >= {minimum} AND {column} <= {maximum}",
+                                "columns": [column],
                             },
                         },
-                        "name": f"{column_path}_out_of_range",
+                        "name": f"{field_metadata['field']}_out_of_range",
                         "criticality": criticality,
                         "user_metadata": {
-                            **contract_metadata,
+                            **field_metadata,
                             "dimension": "validity",
                             "rule_type": "predefined",
                         },
@@ -873,15 +869,15 @@ class DataContractRulesGenerator(DQEngineBase):
                     "check": {
                         "function": "is_in_range",
                         "arguments": {
-                            "column": column_path,
+                            "column": column,
                             "min_limit": minimum,
                             "max_limit": maximum,
                         },
                     },
-                    "name": f"{column_path}_out_of_range",
+                    "name": f"{field_metadata['field']}_out_of_range",
                     "criticality": criticality,
                     "user_metadata": {
-                        **contract_metadata,
+                        **field_metadata,
                         "dimension": "validity",
                         "rule_type": "predefined",
                     },
@@ -895,14 +891,14 @@ class DataContractRulesGenerator(DQEngineBase):
                         "check": {
                             "function": "sql_expression",
                             "arguments": {
-                                "expression": f"{normalized_column} >= {minimum}",
-                                "columns": [column_path],
+                                "expression": f"{column} >= {minimum}",
+                                "columns": [column],
                             },
                         },
-                        "name": f"{column_path}_below_minimum",
+                        "name": f"{field_metadata['field']}_below_minimum",
                         "criticality": criticality,
                         "user_metadata": {
-                            **contract_metadata,
+                            **field_metadata,
                             "dimension": "validity",
                             "rule_type": "predefined",
                         },
@@ -913,15 +909,15 @@ class DataContractRulesGenerator(DQEngineBase):
                     "check": {
                         "function": "is_aggr_not_less_than",
                         "arguments": {
-                            "column": column_path,
+                            "column": column,
                             "limit": minimum,
                             "aggr_type": "min",
                         },
                     },
-                    "name": f"{column_path}_below_minimum",
+                    "name": f"{field_metadata['field']}_below_minimum",
                     "criticality": criticality,
                     "user_metadata": {
-                        **contract_metadata,
+                        **field_metadata,
                         "dimension": "validity",
                         "rule_type": "predefined",
                     },
@@ -935,14 +931,14 @@ class DataContractRulesGenerator(DQEngineBase):
                         "check": {
                             "function": "sql_expression",
                             "arguments": {
-                                "expression": f"{normalized_column} <= {maximum}",
-                                "columns": [column_path],
+                                "expression": f"{column} <= {maximum}",
+                                "columns": [column],
                             },
                         },
-                        "name": f"{column_path}_above_maximum",
+                        "name": f"{field_metadata['field']}_above_maximum",
                         "criticality": criticality,
                         "user_metadata": {
-                            **contract_metadata,
+                            **field_metadata,
                             "dimension": "validity",
                             "rule_type": "predefined",
                         },
@@ -953,15 +949,15 @@ class DataContractRulesGenerator(DQEngineBase):
                     "check": {
                         "function": "is_aggr_not_greater_than",
                         "arguments": {
-                            "column": column_path,
+                            "column": column,
                             "limit": maximum,
                             "aggr_type": "max",
                         },
                     },
-                    "name": f"{column_path}_above_maximum",
+                    "name": f"{field_metadata['field']}_above_maximum",
                     "criticality": criticality,
                     "user_metadata": {
-                        **contract_metadata,
+                        **field_metadata,
                         "dimension": "validity",
                         "rule_type": "predefined",
                     },
@@ -971,7 +967,7 @@ class DataContractRulesGenerator(DQEngineBase):
         return []
 
     def _generate_string_length_rules_from_options(
-        self, column_path: str, contract_metadata: dict, criticality: str, opts: dict
+        self, column: str, field_metadata: dict, criticality: str, opts: dict
     ) -> list[dict]:
         """Generate string length rules from logicalTypeOptions minLength/maxLength."""
         min_length = opts.get('minLength')
@@ -980,22 +976,20 @@ class DataContractRulesGenerator(DQEngineBase):
         if min_length is None and max_length is None:
             return []
 
-        normalized_column = normalize_column_expr(column_path)
-
         if min_length is not None and max_length is not None and min_length == max_length:
             return [
                 {
                     "check": {
                         "function": "sql_expression",
                         "arguments": {
-                            "expression": f"LENGTH({normalized_column}) = {min_length}",
-                            "columns": [column_path],
+                            "expression": f"LENGTH({column}) = {min_length}",
+                            "columns": [column],
                         },
                     },
-                    "name": f"{column_path}_invalid_length",
+                    "name": f"{field_metadata['field']}_invalid_length",
                     "criticality": criticality,
                     "user_metadata": {
-                        **contract_metadata,
+                        **field_metadata,
                         "dimension": "validity",
                         "rule_type": "predefined",
                     },
@@ -1008,14 +1002,14 @@ class DataContractRulesGenerator(DQEngineBase):
                     "check": {
                         "function": "sql_expression",
                         "arguments": {
-                            "expression": f"LENGTH({normalized_column}) >= {min_length} AND LENGTH({normalized_column}) <= {max_length}",
-                            "columns": [column_path],
+                            "expression": f"LENGTH({column}) >= {min_length} AND LENGTH({column}) <= {max_length}",
+                            "columns": [column],
                         },
                     },
-                    "name": f"{column_path}_invalid_length",
+                    "name": f"{field_metadata['field']}_invalid_length",
                     "criticality": criticality,
                     "user_metadata": {
-                        **contract_metadata,
+                        **field_metadata,
                         "dimension": "validity",
                         "rule_type": "predefined",
                     },
@@ -1028,14 +1022,14 @@ class DataContractRulesGenerator(DQEngineBase):
                     "check": {
                         "function": "sql_expression",
                         "arguments": {
-                            "expression": f"LENGTH({normalized_column}) >= {min_length}",
-                            "columns": [column_path],
+                            "expression": f"LENGTH({column}) >= {min_length}",
+                            "columns": [column],
                         },
                     },
-                    "name": f"{column_path}_too_short",
+                    "name": f"{field_metadata['field']}_too_short",
                     "criticality": criticality,
                     "user_metadata": {
-                        **contract_metadata,
+                        **field_metadata,
                         "dimension": "validity",
                         "rule_type": "predefined",
                     },
@@ -1048,14 +1042,14 @@ class DataContractRulesGenerator(DQEngineBase):
                     "check": {
                         "function": "sql_expression",
                         "arguments": {
-                            "expression": f"LENGTH({normalized_column}) <= {max_length}",
-                            "columns": [column_path],
+                            "expression": f"LENGTH({column}) <= {max_length}",
+                            "columns": [column],
                         },
                     },
-                    "name": f"{column_path}_too_long",
+                    "name": f"{field_metadata['field']}_too_long",
                     "criticality": criticality,
                     "user_metadata": {
-                        **contract_metadata,
+                        **field_metadata,
                         "dimension": "validity",
                         "rule_type": "predefined",
                     },
@@ -1065,10 +1059,10 @@ class DataContractRulesGenerator(DQEngineBase):
         return []
 
     def _generate_format_rules_from_options(
-        self, column_path: str, logical_type: str, contract_metadata: dict, criticality: str, opts: dict
+        self, column: str, logical_type: str, field_metadata: dict, criticality: str, opts: dict
     ) -> list[dict]:
         """
-        Generate a format validation rule from logicalTypeOptions format (for date/timestamp fields).
+        Generate a format validation rule from logicalTypeOptions format (for date, time, and timestamp fields).
 
         ODCS defines the format as a Java DateTimeFormatter pattern (e.g. *'yyyy-MM-dd'*), the syntax Spark datetime
         patterns are based on. The contract format is passed to the check unchanged. Any pattern containing '%' is
@@ -1077,7 +1071,7 @@ class DataContractRulesGenerator(DQEngineBase):
         format_value = opts['format']
         if isinstance(format_value, str) and "%" in format_value:
             logger.warning(
-                f"Skipping format on '{sanitize_for_logging(column_path)}': '{sanitize_for_logging(format_value)}'; "
+                f"Skipping format on '{sanitize_for_logging(column)}': '{sanitize_for_logging(format_value)}'; "
                 "use a Spark datetime pattern such as 'yyyy-MM-dd'."
             )
             return []
@@ -1088,14 +1082,14 @@ class DataContractRulesGenerator(DQEngineBase):
                 "check": {
                     "function": format_check.function,
                     "arguments": {
-                        "column": column_path,
+                        "column": column,
                         format_check.format_argument: format_value,
                     },
                 },
-                "name": f"{column_path}_{format_check.rule_name_suffix}",
+                "name": f"{field_metadata['field']}_{format_check.rule_name_suffix}",
                 "criticality": criticality,
                 "user_metadata": {
-                    **contract_metadata,
+                    **field_metadata,
                     "dimension": "validity",
                     "rule_type": "predefined",
                 },

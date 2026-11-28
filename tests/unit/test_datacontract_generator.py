@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from pathlib import Path
 import tempfile
 from unittest.mock import Mock
 
@@ -2005,6 +2006,15 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
                             "logicalTypeOptions": {"pattern": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"},
                         },
                         {
+                            "name": "billing",
+                            "physicalType": "BINARY",
+                            "logicalType": "object",
+                            "required": True,
+                            "properties": [
+                                {"name": "note", "physicalType": "STRING", "logicalType": "string"},
+                            ],
+                        },
+                        {
                             "name": "address",
                             "physicalType": "BINARY",
                             "logicalType": "object",
@@ -2031,10 +2041,73 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
         finally:
             os.unlink(temp_path)
 
+    def test_predefined_rules_quote_dotted_property_names(self, generator: DQGenerator, tmp_path: Path) -> None:
+        contract = self.create_basic_contract(
+            properties=[
+                {
+                    "name": "customer.info",
+                    "logicalType": "object",
+                    "required": True,
+                    "properties": [
+                        {
+                            "name": "note",
+                            "logicalType": "string",
+                            "logicalTypeOptions": {"minLength": 2},
+                        }
+                    ],
+                },
+                {"name": "customer.id", "logicalType": "string", "unique": True},
+            ]
+        )
+        contract_file = tmp_path / "contract.yaml"
+        contract_file.write_text(yaml.safe_dump(contract), encoding="utf-8")
+        rules = generator.generate_rules_from_contract(
+            contract_file=str(contract_file),
+            generate_schema_validation=False,
+            process_text_rules=False,
+            default_criticality="warn",
+        )
+
+        by_name = {rule["name"]: rule for rule in rules}
+        object_rule = by_name["customer.info_is_null"]
+        assert object_rule["check"] == {"function": "is_not_null", "arguments": {"column": "`customer.info`"}}
+        assert object_rule["criticality"] == "warn"
+        assert object_rule["user_metadata"] == {
+            "contract_id": "test",
+            "contract_version": "1.0.0",
+            "odcs_version": "v3.0.2",
+            "schema": "test_table",
+            "field": "customer.info",
+            "dimension": "completeness",
+            "rule_type": "predefined",
+        }
+        assert by_name["customer.info.note_too_short"]["check"] == {
+            "function": "sql_expression",
+            "arguments": {"expression": "LENGTH(`customer.info`.note) >= 2", "columns": ["`customer.info`.note"]},
+        }
+        assert by_name["customer.id_not_unique"]["check"] == {
+            "function": "is_unique",
+            "arguments": {"columns": ["`customer.id`"]},
+        }
+
     def _verify_nested_field_rules(self, generator, contract_file):
         """Helper to verify nested field rule generation."""
         rules = generator.generate_rules_from_contract(
             contract_file=contract_file, generate_predefined_rules=True, process_text_rules=False
+        )
+
+        null_columns = [
+            rule["check"]["arguments"]["column"] for rule in rules if rule["check"]["function"] == "is_not_null"
+        ]
+        assert sorted(null_columns) == sorted(
+            [
+                "customer",
+                "customer.billing",
+                "customer.name",
+                "customer.email",
+                "customer.address.street",
+                "customer.address.city",
+            ]
         )
 
         # Verify nested column paths are generated correctly
@@ -2430,8 +2503,9 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
             range_rule = next(r for r in rules if r["check"]["function"] == "sql_expression")
             assert range_rule["check"]["arguments"]["expression"] == "`Päivämäärä` >= 0.0 AND `Päivämäärä` <= 100.0"
-            # The columns list keeps the raw name (used for resolution / skip messaging).
-            assert range_rule["check"]["arguments"]["columns"] == ["Päivämäärä"]
+            assert range_rule["check"]["arguments"]["columns"] == ["`Päivämäärä`"]
+            assert range_rule["name"] == "Päivämäärä_out_of_range"
+            assert range_rule["user_metadata"]["field"] == "Päivämäärä"
 
         finally:
             os.unlink(temp_path)
@@ -3241,6 +3315,65 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             assert len(timestamp_rules) == 1
             assert timestamp_rules[0]["check"]["arguments"]["timestamp_format"] == timestamp_format
             assert not [r for r in caplog.records if r.name == contract_rules_generator_module.__name__]
+        finally:
+            os.unlink(temp_path)
+
+    def test_format_generates_time_validation(self, generator):
+        """Test that format on a time field generates an is_valid_timestamp rule."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {
+                    "name": "start_time",
+                    "physicalType": "STRING",
+                    "logicalType": "time",
+                    "logicalTypeOptions": {"format": "HH:mm:ss"},
+                }
+            ]
+        )
+        contract_dict["apiVersion"] = "v3.1.0"
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_schema_validation=False, process_text_rules=False
+            )
+
+            assert len(rules) == 1
+            assert rules[0]["check"] == {
+                "function": "is_valid_timestamp",
+                "arguments": {"column": "start_time", "timestamp_format": "HH:mm:ss"},
+            }
+        finally:
+            os.unlink(temp_path)
+
+    def test_time_bounds_are_skipped_with_warning(self, generator, caplog):
+        """Test that time bounds are skipped with a warning while the time format rule is still generated."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {
+                    "name": "start_time",
+                    "physicalType": "STRING",
+                    "logicalType": "time",
+                    "logicalTypeOptions": {"format": "HH:mm:ss", "minimum": "08:00:00", "maximum": "18:00:00"},
+                }
+            ]
+        )
+        contract_dict["apiVersion"] = "v3.1.0"
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path, generate_schema_validation=False, process_text_rules=False
+                )
+
+            assert len(rules) == 1
+            assert rules[0]["name"] == "start_time_valid_time_format"
+            assert rules[0]["check"] == {
+                "function": "is_valid_timestamp",
+                "arguments": {"column": "start_time", "timestamp_format": "HH:mm:ss"},
+            }
+            assert "Time bounds aren't supported yet for field 'start_time'; skipping them." in caplog.messages
         finally:
             os.unlink(temp_path)
 

@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { TableChangesDialog, type TableChangesTarget } from "@/components/monitored-tables/TableChangesDialog";
 import { useCallback, useMemo, useState, Suspense, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
@@ -52,10 +53,6 @@ import {
   SavedViewPage,
   type MonitoredTableSummaryOut,
 } from "@/lib/api";
-import {
-  MonitoredTableDiffDialog,
-  type MonitoredTableDiffTarget,
-} from "@/components/drafts/ChangeDiffDialog";
 import { invalidateAfterMonitoredTableChange } from "@/lib/monitored-table-invalidation";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useLabelDefinitions } from "@/lib/api-custom";
@@ -167,7 +164,7 @@ function MonitoredTablesPage() {
   const labelDefinitions = useMemo(() => labelDefsData?.definitions ?? [], [labelDefsData]);
 
   const [deleteTarget, setDeleteTarget] = useState<MonitoredTableSummaryOut | null>(null);
-  const [diffTarget, setDiffTarget] = useState<MonitoredTableDiffTarget | null>(null);
+  const [diffTarget, setDiffTarget] = useState<TableChangesTarget | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
 
@@ -816,7 +813,7 @@ function MonitoredTablesPage() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-7 w-7 p-0 text-purple-600 dark:text-purple-400"
+                            className="h-7 w-7 p-0 text-purple-600 dark:text-purple-400 dark:hover:text-accent-foreground"
                             aria-label={t("rulesDrafts.diff.viewChanges")}
                             onClick={() =>
                               setDiffTarget({
@@ -841,7 +838,7 @@ function MonitoredTablesPage() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-7 w-7 p-0 text-amber-600 dark:text-amber-400"
+                            className="h-7 w-7 p-0 text-amber-600 dark:text-amber-400 dark:hover:text-accent-foreground"
                             aria-label={t("monitoredTables.revertAction")}
                             onClick={() => handleRevert(summary)}
                           >
@@ -948,7 +945,7 @@ function MonitoredTablesPage() {
 
       <AddMonitoredTableModal open={addOpen} onOpenChange={setAddOpen} />
 
-      <MonitoredTableDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
+      <TableChangesDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
       <AlertDialog open={bulkRunOpen} onOpenChange={setBulkRunOpen}>
         <AlertDialogContent>

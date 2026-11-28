@@ -23,6 +23,11 @@ import {
   STICKY_ACTIONS_HEAD_CLASS,
   STICKY_ACTIONS_CELL_CLASS,
   ACTIONS_COL_WIDTH,
+  ACTIONS_COLUMN_KEY,
+  ACTIONS_COLUMN_LAYOUT,
+  splitActionsColumn,
+  type ActionsColumnKey,
+  ACTIONS_ROW_CELL_HEIGHT_CLASS,
 } from "@/components/data-table/sticky-actions";
 import type { SortColumnConfig, SortDirection, SortValue } from "@/components/data-table/sort";
 import type { DataProductOut } from "@/lib/api";
@@ -352,11 +357,17 @@ const DEFAULT_ORDER: DataProductsSortKey[] = [
   "schedule",
 ];
 
+/** Saved-view column layout keys: the data columns plus the Actions column. */
+export type DataProductsLayoutKey = DataProductsSortKey | ActionsColumnKey;
+
 /** Column defaults of the Collections overview, for its saved-view definitions. */
 export const DATA_PRODUCTS_COLUMN_LAYOUT: {
-  defaultOrder: readonly DataProductsSortKey[];
-  columns: Record<DataProductsSortKey, ColumnLayoutDef>;
-} = { defaultOrder: DEFAULT_ORDER, columns: COLUMNS };
+  defaultOrder: readonly DataProductsLayoutKey[];
+  columns: Record<DataProductsLayoutKey, ColumnLayoutDef>;
+} = {
+  defaultOrder: [...DEFAULT_ORDER, ACTIONS_COLUMN_KEY],
+  columns: { ...COLUMNS, [ACTIONS_COLUMN_KEY]: ACTIONS_COLUMN_LAYOUT },
+};
 
 /** Selection state for bulk operations — mirrors `RulesTableSelection` from
  *  `RulesTable.tsx`. The id field is `product_id`. */
@@ -382,7 +393,7 @@ export interface DataProductsTableProps<F extends string = string> {
   /** When set, renders a leading checkbox column for bulk actions. */
   selection?: DataProductsTableSelection;
   /** Column order/visibility/widths — the saved view's column layout (see `useSavedViews`). */
-  columnLayout: SavedViewsColumnLayout<DataProductsSortKey>;
+  columnLayout: SavedViewsColumnLayout<DataProductsLayoutKey>;
   /** Filters view of the Edit View menu. */
   filterLayout?: SortableToggleListConfig<F>;
   /** Saved Views page of the Edit View menu. */
@@ -422,9 +433,16 @@ export function DataProductsTable<F extends string = string>({
   const someSelected = showSelection && selection!.selectedIds.size > 0 && !allSelected;
   const anySelected = showSelection && selection!.selectedIds.size > 0;
 
-  const { colOrder, colWidths, visibleKeys, toggleColumn, handleDragEnd, sensors, onResizeStart } = columnLayout;
+  const { colWidths, toggleColumn, handleDragEnd, sensors, onResizeStart } = columnLayout;
+  // Actions is rendered separately from the data columns (always last), so it
+  // is split out of the layout here and listed as a pinned trailing menu entry.
+  const {
+    order: colOrder,
+    visibleKeys,
+    actionsVisible,
+  } = splitActionsColumn(columnLayout.colOrder, columnLayout.visibleKeys);
 
-  const hasActions = !!renderActions;
+  const hasActions = !!renderActions && actionsVisible;
 
   function handleHeaderClick(key: DataProductsSortKey) {
     if (!COLUMNS[key].sortable) return;
@@ -444,6 +462,15 @@ export function DataProductsTable<F extends string = string>({
           <EditColumnsDropdown
             order={colOrder}
             labelOf={(key) => t(COLUMNS[key].labelKey)}
+            pinnedLast={
+              renderActions
+                ? {
+                    label: t("dataProducts.colActions"),
+                    checked: actionsVisible,
+                    onToggle: () => toggleColumn(ACTIONS_COLUMN_KEY),
+                  }
+                : undefined
+            }
             toggleableOf={(key) => COLUMNS[key].toggleable}
             isChecked={(key) => visibleKeys.includes(key)}
             onToggle={toggleColumn}
@@ -556,7 +583,7 @@ export function DataProductsTable<F extends string = string>({
                       <TableCell
                         key={k}
                         style={{ width, minWidth: width, maxWidth: width }}
-                        className="overflow-hidden p-2 align-middle"
+                        className={cn("overflow-hidden p-2 align-middle", ACTIONS_ROW_CELL_HEIGHT_CLASS)}
                       >
                         {COLUMNS[k].renderCell(p)}
                       </TableCell>

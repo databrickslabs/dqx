@@ -123,6 +123,60 @@ MULTI_SCHEMA_ODCS = {
 }
 
 
+@pytest.mark.parametrize(("column_name", "note_name"), [("customer", "note"), ("customer.info", "note.text")])
+@pytest.mark.parametrize("note_required", [False, True])
+def test_required_object_rule_applies_on_spark(
+    ws: WorkspaceClient, spark: SparkSession, column_name: str, note_name: str, note_required: bool
+) -> None:
+    """Check missing structs and child fields independently, including literal dots."""
+    contract = {
+        "kind": "DataContract",
+        "apiVersion": "v3.0.2",
+        "id": "test:required-object",
+        "name": "Required object",
+        "version": "1.0.0",
+        "status": "active",
+        "schema": [
+            {
+                "name": "customers",
+                "physicalType": "table",
+                "properties": [
+                    {
+                        "name": column_name,
+                        "physicalType": f"STRUCT<`{note_name}`: STRING>",
+                        "logicalType": "object",
+                        "required": True,
+                        "properties": [
+                            {
+                                "name": note_name,
+                                "physicalType": "STRING",
+                                "logicalType": "string",
+                                "required": note_required,
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    rules = _generate_rules_from_temp_contract(
+        ws, spark, contract, process_text_rules=False, generate_schema_validation=False
+    )
+    test_df = spark.createDataFrame(
+        [("missing_object", None), ("missing_note", (None,)), ("valid", ("hello",))],
+        f"case: string, `{column_name}`: struct<`{note_name}`: string>",
+    )
+
+    checked_df = DQEngine(ws, spark).apply_checks_by_metadata(test_df, rules)
+    flagged = {row["case"]: _flagged_names(row) for row in checked_df.select("case", "_errors").collect()}
+    note_errors = {f"{column_name}.{note_name}_is_null"} if note_required else set()
+    assert flagged == {
+        "missing_object": {f"{column_name}_is_null"} | note_errors,
+        "missing_note": note_errors,
+        "valid": set(),
+    }
+
+
 class TestDataContractIntegration:
     """Integration tests for data contract processing."""
 
@@ -435,6 +489,12 @@ class TestDataContractIntegration:
                             "logicalType": "timestamp",
                             "logicalTypeOptions": {"format": "yyyy-MM-dd'T'HH:mm:ss.SSS"},
                         },
+                        {
+                            "name": "start_time",
+                            "physicalType": "STRING",
+                            "logicalType": "time",
+                            "logicalTypeOptions": {"format": "HH:mm:ss"},
+                        },
                     ],
                 },
             ],
@@ -448,11 +508,13 @@ class TestDataContractIntegration:
         )
         test_df = spark.createDataFrame(
             [
-                ["valid", "2024-01-15", "15/01/24", "2024-01-15T10:30:00.123"],
-                ["invalid", "2024-13-45", "2024-01-15", "2024-01-15 10:30:00"],
-                ["null", None, None, None],
+                ["valid", "2024-01-15", "15/01/24", "2024-01-15T10:30:00.123", "10:30:00"],
+                ["invalid", "2024-13-45", "2024-01-15", "2024-01-15 10:30:00", "25:61:00"],
+                ["time_not_a_time", "2024-01-15", "15/01/24", "2024-01-15T10:30:00.123", "abc"],
+                ["time_missing_seconds", "2024-01-15", "15/01/24", "2024-01-15T10:30:00.123", "10:30"],
+                ["null", None, None, None, None],
             ],
-            "case: string, event_date: string, short_date: string, event_ts: string",
+            "case: string, event_date: string, short_date: string, event_ts: string, start_time: string",
         )
 
         checked_df = DQEngine(ws, spark).apply_checks_by_metadata(test_df, rules)
@@ -464,7 +526,10 @@ class TestDataContractIntegration:
                 "event_date_valid_date_format",
                 "event_ts_valid_timestamp_format",
                 "short_date_valid_date_format",
+                "start_time_valid_time_format",
             },
+            "time_not_a_time": {"start_time_valid_time_format"},
+            "time_missing_seconds": {"start_time_valid_time_format"},
             "null": set(),
         }
 

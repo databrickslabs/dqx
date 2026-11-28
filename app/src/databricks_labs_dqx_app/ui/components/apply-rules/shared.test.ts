@@ -10,6 +10,8 @@ import {
   mergeColumnThresholds,
   newStagedRow,
   pickSlotForColumn,
+  completesExistingSet,
+  siblingColumnsForSlot,
 } from "./shared";
 
 // Minimal RegistryRuleOut for newStagedRow — only rule_id, version, and
@@ -427,5 +429,181 @@ describe("desiredApplicationsKey threshold dirty-detection", () => {
     expect(desiredApplicationsKey(withColOverride, ADMIN_DEFAULT)).not.toBe(
       desiredApplicationsKey(noOverride, ADMIN_DEFAULT),
     );
+  });
+});
+
+// Column-picker duplicate detection. A rule may be applied to several column
+// sets on one table; only an exact repeat of an existing set is blocked.
+describe("completesExistingSet", () => {
+  const twoSlots = ["left", "right"];
+  const oneSlot = ["col"];
+
+  test("A+B then C+B: a column used by another set stays pickable (A+B exists, picking B for C+B is allowed)", () => {
+    // Existing set: left=A, right=B. In-progress: left=C. Candidate B for right.
+    const existing = [{ left: "A", right: "B" }];
+    expect(
+      completesExistingSet({
+        slotNames: twoSlots,
+        slotName: "right",
+        candidateValue: "B",
+        partial: { left: "C" },
+        existingGroups: existing,
+      }),
+    ).toBe(false);
+  });
+
+  test("A+B then C+B: B is still pickable for left when right=B is in progress and A+B exists", () => {
+    // Existing: left=A, right=B. In-progress right=B. Candidate C for left
+    // gives C+B, which is not an existing set.
+    const existing = [{ left: "A", right: "B" }];
+    expect(
+      completesExistingSet({
+        slotNames: twoSlots,
+        slotName: "left",
+        candidateValue: "C",
+        partial: { right: "B" },
+        existingGroups: existing,
+      }),
+    ).toBe(false);
+  });
+
+  test("exact duplicate: completing A+B when A+B already exists is blocked", () => {
+    const existing = [{ left: "A", right: "B" }];
+    expect(
+      completesExistingSet({
+        slotNames: twoSlots,
+        slotName: "right",
+        candidateValue: "B",
+        partial: { left: "A" },
+        existingGroups: existing,
+      }),
+    ).toBe(true);
+  });
+
+  test("exact duplicate is order-insensitive across groups and slot keys", () => {
+    const existing = [
+      { left: "C", right: "D" },
+      { right: "B", left: "A" },
+    ];
+    expect(
+      completesExistingSet({
+        slotNames: twoSlots,
+        slotName: "left",
+        candidateValue: "A",
+        partial: { right: "B" },
+        existingGroups: existing,
+      }),
+    ).toBe(true);
+  });
+
+  test("a partial set is never a duplicate while a sibling slot is still empty", () => {
+    const existing = [{ left: "A", right: "B" }];
+    expect(
+      completesExistingSet({
+        slotNames: twoSlots,
+        slotName: "left",
+        candidateValue: "A",
+        partial: {},
+        existingGroups: existing,
+      }),
+    ).toBe(false);
+  });
+
+  test("re-selecting the slot's current value is never blocked", () => {
+    const existing = [{ left: "A", right: "B" }];
+    expect(
+      completesExistingSet({
+        slotNames: twoSlots,
+        slotName: "right",
+        candidateValue: "B",
+        partial: { left: "A", right: "B" },
+        existingGroups: existing,
+        currentValue: "B",
+      }),
+    ).toBe(false);
+  });
+
+  test("single-slot rule: re-adding a column already applied is blocked", () => {
+    const existing = [{ col: "A" }];
+    expect(
+      completesExistingSet({
+        slotNames: oneSlot,
+        slotName: "col",
+        candidateValue: "A",
+        partial: {},
+        existingGroups: existing,
+      }),
+    ).toBe(true);
+  });
+
+  test("single-slot rule: a different column is still allowed", () => {
+    const existing = [{ col: "A" }];
+    expect(
+      completesExistingSet({
+        slotNames: oneSlot,
+        slotName: "col",
+        candidateValue: "B",
+        partial: {},
+        existingGroups: existing,
+      }),
+    ).toBe(false);
+  });
+
+  test("multi-value slot: identical comma-joined value is a duplicate", () => {
+    const existing = [{ left: "A,B", right: "C" }];
+    expect(
+      completesExistingSet({
+        slotNames: twoSlots,
+        slotName: "left",
+        candidateValue: "A,B",
+        partial: { right: "C" },
+        existingGroups: existing,
+      }),
+    ).toBe(true);
+  });
+
+  test("multi-value slot: the hash treats the joined string as opaque, so reordered members are distinct", () => {
+    // compute_mapping_hash sorts groups and slot items, never the members of
+    // a comma-joined value, so "B,A" and "A,B" are different sets to the backend.
+    const existing = [{ left: "A,B", right: "C" }];
+    expect(
+      completesExistingSet({
+        slotNames: twoSlots,
+        slotName: "left",
+        candidateValue: "B,A",
+        partial: { right: "C" },
+        existingGroups: existing,
+      }),
+    ).toBe(false);
+  });
+
+  test("multi-value slot: a single member of an existing multi-value set is not a duplicate", () => {
+    const existing = [{ left: "A,B", right: "C" }];
+    expect(
+      completesExistingSet({
+        slotNames: twoSlots,
+        slotName: "left",
+        candidateValue: "A",
+        partial: { right: "C" },
+        existingGroups: existing,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("siblingColumnsForSlot", () => {
+  test("returns columns from every other slot, excluding the slot itself", () => {
+    expect(siblingColumnsForSlot({ left: "A", right: "B", extra: "C" }, "left", ["left", "right", "extra"])).toEqual([
+      "B",
+      "C",
+    ]);
+  });
+
+  test("splits multi-value sibling slots into individual columns", () => {
+    expect(siblingColumnsForSlot({ left: "A", right: "B,C" }, "left", ["left", "right"])).toEqual(["B", "C"]);
+  });
+
+  test("ignores empty sibling values", () => {
+    expect(siblingColumnsForSlot({ left: "A", right: "" }, "left", ["left", "right"])).toEqual([]);
   });
 });

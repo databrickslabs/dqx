@@ -57,6 +57,7 @@ import {
 import { findReferenceTables, inferRefTableColumns } from "@/lib/refTableColumns";
 import { ManualGrid, type ManualColumn } from "./ManualGrid";
 import { ResultGrid, type ResultColumn } from "./ResultGrid";
+import { DatasetVerdict } from "./DatasetVerdict";
 import { TableTestSource, type TableSourcePayload } from "./TableTestSource";
 import type { CellFamily } from "./TypedCell";
 import { useWarehousePrewarm } from "./useWarehousePrewarm";
@@ -139,8 +140,11 @@ export function RuleTestPanel({
   canTest,
   ruleMode = "sql",
   lowcodeAdvanced = false,
+  checkFunction,
+  datasetLevel = false,
   nativeFunction,
   nativeArguments,
+  compact = false,
 }: {
   /** Effective SQL predicate: raw in SQL mode, compiled AST in Low-Code mode. Unused for dqx_native. */
   predicate: string;
@@ -154,18 +158,28 @@ export function RuleTestPanel({
    *  forwarded so the route can reject a mis-testable rule (belt-and-braces —
    *  the parent already hides the surface for these). */
   lowcodeAdvanced?: boolean;
+  /** The check the saved body materializes to (`sql_query` or `sql_expression`).
+   *  Forwarded so the backend tests the rule with the same shape the job runs;
+   *  when omitted the shape is inferred from the predicate text. */
+  checkFunction?: "sql_query" | "sql_expression";
+  /** True when the rule runs at dataset level: its query returns one row whose
+   *  verdict covers the whole table, shown as a single pass/fail summary. */
+  datasetLevel?: boolean;
   /** DQX Native check function name (required when ruleMode is dqx_native). */
   nativeFunction?: string;
   /** Frozen native body.arguments with {{slot}} placeholders. */
   nativeArguments?: Record<string, unknown>;
+  /** The panel sits in a dialog: keep the results grid short so the dialog fits the viewport. */
+  compact?: boolean;
 }) {
   const { t } = useTranslation();
   const ai = useAiAvailability();
   const { ready: warehouseReady } = useWarehousePrewarm();
 
   // Whole-SELECT rules (`sql_query`) run as a query against the data instead of
-  // as a per-row predicate, which changes what the result grid holds.
-  const isCrossTable = sqlEditorShape(predicate) === "query";
+  // as a per-row predicate, which changes what the result grid holds. The saved
+  // check decides when known, matching the backend; the text is the fallback.
+  const isCrossTable = checkFunction ? checkFunction === "sql_query" : sqlEditorShape(predicate) === "query";
   // Each table the rule's query joins gets its own manual grid, so a cross-table
   // rule can be exercised on fabricated rows without creating any table. Read off
   // the query text, since that is where a joined table is named — and only for a
@@ -342,6 +356,7 @@ export function RuleTestPanel({
       native_arguments: ruleMode === "dqx_native" ? nativeArguments : undefined,
       polarity,
       lowcode_advanced: lowcodeAdvanced,
+      check_function: ruleMode === "dqx_native" ? undefined : checkFunction,
     };
     if (mode === "adhoc") {
       runMutation.mutate(
@@ -407,7 +422,10 @@ export function RuleTestPanel({
     () => new Set(mode === "table" ? (tablePayload?.mappedColumns ?? []) : manual.columns),
     [mode, tablePayload, manual.columns],
   );
-  const tableColumns: ResultColumn[] = (result?.columns ?? []).map((name) => ({ name, mapped: mappedSet.has(name) }));
+  const tableColumns = useMemo<ResultColumn[]>(
+    () => (result?.columns ?? []).map((name) => ({ name, mapped: mappedSet.has(name) })),
+    [result, mappedSet],
+  );
   const tableRows = useMemo(
     () => (result?.rows ?? []).map((r) => tableColumns.map((c) => (r.cells[c.name] == null ? null : String(r.cells[c.name])))),
     [result, tableColumns],
@@ -420,124 +438,134 @@ export function RuleTestPanel({
   }
 
   return (
-    <div className="space-y-4 max-w-4xl">
-      <div className="flex items-center justify-between">
-        <div className="inline-flex border rounded overflow-hidden text-xs">
-          <button
-            type="button"
-            onClick={() => switchMode("adhoc")}
-            className={cn("h-8 px-3", mode === "adhoc" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-accent")}
-          >
-            {t("ruleTest.manualTest")}
-          </button>
-          <button
-            type="button"
-            onClick={() => switchMode("table")}
-            className={cn("h-8 px-3 border-l", mode === "table" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-accent")}
-          >
-            {t("ruleTest.tableTest")}
-          </button>
+    <div className="space-y-4">
+      {/* The inputs keep a readable width; the results grid below spans the page. */}
+      <div className="space-y-4 max-w-4xl">
+        <div className="flex items-center justify-between">
+          <div className="inline-flex border rounded overflow-hidden text-xs">
+            <button
+              type="button"
+              onClick={() => switchMode("adhoc")}
+              className={cn("h-8 px-3", mode === "adhoc" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-accent")}
+            >
+              {t("ruleTest.manualTest")}
+            </button>
+            <button
+              type="button"
+              onClick={() => switchMode("table")}
+              className={cn("h-8 px-3 border-l", mode === "table" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-accent")}
+            >
+              {t("ruleTest.tableTest")}
+            </button>
+          </div>
         </div>
-      </div>
 
-      {mode === "adhoc" ? (
-        <div className="space-y-4">
-          {/* Label the grids only when there is more than one, so a plain
-              single-table rule keeps its uncluttered look. */}
-          {refTables.length > 0 && (
-            <p className="text-xs font-medium text-muted-foreground">{t("ruleTest.inputGridLabel")}</p>
-          )}
-          <ManualGrid
-            columns={manualColumns}
-            rows={manual.rows}
-            verdicts={manualVerdicts}
-            onCellChange={setCell}
-            onAddRow={addRow}
-            onDeleteRow={removeRow}
-          />
-          {refTables.map((tbl) => {
-            const grid = manual.refs[tbl] ?? { columns: [], rows: [], families: {} };
-            return (
-              <div key={tbl} className="space-y-1.5">
-                <p className="text-xs font-medium text-muted-foreground">
-                  {t("ruleTest.refGridLabel")} <code className="font-mono">{tbl}</code>
-                </p>
-                {grid.columns.length === 0 && (
-                  <p className="text-xs text-muted-foreground">{t("ruleTest.refGridEmpty")}</p>
-                )}
-                <ManualGrid
-                  columns={grid.columns.map((c) => ({ name: c, family: (grid.families[c] ?? "any") as CellFamily }))}
-                  rows={grid.rows}
-                  {...refHandlers(tbl)}
-                />
-              </div>
-            );
-          })}
-          {isCrossTable && <p className="text-xs text-muted-foreground">{t("ruleTest.manualQueryResultNote")}</p>}
-        </div>
-      ) : (
-        <div className="space-y-3">
-          <TableTestSource slots={slots} onReady={setTablePayload} />
-          {/* A cross-table rule runs as a query, so the grid shows the rows the
-              QUERY returns rather than every sampled row — say so up front, or a
-              rule that filters to violations looks like it lost rows. */}
-          {isCrossTable && <p className="text-xs text-muted-foreground">{t("ruleTest.crossTableResultNote")}</p>}
-        </div>
-      )}
-
-      {/* "Generate test data" sits BETWEEN the manual-entry grid and the Run
-          test button (not off to the side) — the natural step: fill the grid
-          with AI-generated rows, then run. Each control is wrapped in its own
-          block-level flex row so the (inline-flex) buttons stack vertically
-          and left-align instead of floating up beside the grid. */}
-      {mode === "adhoc" && (
-        <div className="flex">
-          <DisabledTooltip disabled={!ai.available} label={ai.reason ?? t("ruleTest.aiDisabled")}>
-            <Button variant="outline" onClick={onGenerate} disabled={!ai.available || generating}>
-              {generating ? (
-                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-              ) : (
-                <Sparkles className="mr-1.5 h-4 w-4" stroke={AI_GRADIENT_URL} />
-              )}
-              {t("ruleTest.generateData")}
-            </Button>
-          </DisabledTooltip>
-        </div>
-      )}
-
-      <div className="flex items-center justify-between">
-        <WarehouseWaitTooltip show={!warehouseReady} label={t("ruleTest.waitingForWarehouse")}>
-          <DisabledTooltip
-            disabled={mode === "adhoc" && unfilledRefs.length > 0}
-            label={t("ruleTest.refGridsIncomplete", { names: unfilledRefs.join(", ") })}
-          >
-            <Button onClick={onRun} disabled={!canRun || isPending || !warehouseReady}>
-              {isPending && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
-              {isPending ? t("ruleTest.running") : t("ruleTest.runTest")}
-            </Button>
-          </DisabledTooltip>
-        </WarehouseWaitTooltip>
-        {mode === "table" && (
-          <SampleSelector
-            kind={sampleKind}
-            value={sampleValue}
-            onKind={(k) => {
-              setSampleKind(k);
-              if (k === "percent") setSampleValue(10);
-              else if (k === "records") setSampleValue(1000);
-            }}
-            onValue={setSampleValue}
-          />
+        {mode === "adhoc" ? (
+          <div className="space-y-4">
+            {/* Label the grids only when there is more than one, so a plain
+                single-table rule keeps its uncluttered look. */}
+            {refTables.length > 0 && (
+              <p className="text-xs font-medium text-muted-foreground">{t("ruleTest.inputGridLabel")}</p>
+            )}
+            <ManualGrid
+              columns={manualColumns}
+              rows={manual.rows}
+              verdicts={manualVerdicts}
+              onCellChange={setCell}
+              onAddRow={addRow}
+              onDeleteRow={removeRow}
+            />
+            {refTables.map((tbl) => {
+              const grid = manual.refs[tbl] ?? { columns: [], rows: [], families: {} };
+              return (
+                <div key={tbl} className="space-y-1.5">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    {t("ruleTest.refGridLabel")} <code className="font-mono">{tbl}</code>
+                  </p>
+                  {grid.columns.length === 0 && (
+                    <p className="text-xs text-muted-foreground">{t("ruleTest.refGridEmpty")}</p>
+                  )}
+                  <ManualGrid
+                    columns={grid.columns.map((c) => ({ name: c, family: (grid.families[c] ?? "any") as CellFamily }))}
+                    rows={grid.rows}
+                    {...refHandlers(tbl)}
+                  />
+                </div>
+              );
+            })}
+            {isCrossTable && <p className="text-xs text-muted-foreground">{t("ruleTest.manualQueryResultNote")}</p>}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <TableTestSource slots={slots} onReady={setTablePayload} />
+            {/* A cross-table rule runs as a query, so the grid shows the rows the
+                QUERY returns rather than every sampled row — say so up front, or a
+                rule that filters to violations looks like it lost rows. */}
+            {isCrossTable && <p className="text-xs text-muted-foreground">{t("ruleTest.crossTableResultNote")}</p>}
+          </div>
         )}
+
+        {/* "Generate test data" sits BETWEEN the manual-entry grid and the Run
+            test button (not off to the side) — the natural step: fill the grid
+            with AI-generated rows, then run. Each control is wrapped in its own
+            block-level flex row so the (inline-flex) buttons stack vertically
+            and left-align instead of floating up beside the grid. */}
+        {mode === "adhoc" && (
+          <div className="flex">
+            <DisabledTooltip disabled={!ai.available} label={ai.reason ?? t("ruleTest.aiDisabled")}>
+              <Button variant="outline" onClick={onGenerate} disabled={!ai.available || generating}>
+                {generating ? (
+                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="mr-1.5 h-4 w-4" stroke={AI_GRADIENT_URL} />
+                )}
+                {t("ruleTest.generateData")}
+              </Button>
+            </DisabledTooltip>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between">
+          <WarehouseWaitTooltip show={!warehouseReady} label={t("ruleTest.waitingForWarehouse")}>
+            <DisabledTooltip
+              disabled={mode === "adhoc" && unfilledRefs.length > 0}
+              label={t("ruleTest.refGridsIncomplete", { names: unfilledRefs.join(", ") })}
+            >
+              <Button onClick={onRun} disabled={!canRun || isPending || !warehouseReady}>
+                {isPending && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+                {isPending ? t("ruleTest.running") : t("ruleTest.runTest")}
+              </Button>
+            </DisabledTooltip>
+          </WarehouseWaitTooltip>
+          {mode === "table" && (
+            <SampleSelector
+              kind={sampleKind}
+              value={sampleValue}
+              onKind={(k) => {
+                setSampleKind(k);
+                if (k === "percent") setSampleValue(10);
+                else if (k === "records") setSampleValue(1000);
+              }}
+              onValue={setSampleValue}
+            />
+          )}
+        </div>
       </div>
 
       {resultIsGrid &&
         (mode === "adhoc" || tablePayload) &&
         result &&
-        (result.rows.length === 0 ? (
+        (isCrossTable && datasetLevel ? (
+          <DatasetVerdict columns={result.columns} rows={result.rows} />
+        ) : result.rows.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t("ruleTest.noRows")}</p>
         ) : (
-          <ResultGrid columns={tableColumns} rows={tableRows} verdicts={result.rows.map((r) => r.passed)} />
+          <ResultGrid
+            columns={tableColumns}
+            rows={tableRows}
+            verdicts={result.rows.map((r) => r.passed)}
+            maxHeightClassName={compact ? "max-h-[40vh]" : undefined}
+          />
         ))}
 
       {result?.truncated && (

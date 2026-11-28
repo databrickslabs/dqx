@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { RuleChangesPanel, type RuleChangesTarget } from "@/components/changes/RuleChangesDialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,6 +47,7 @@ import {
   ArrowLeft,
   ChevronDown,
   Code2,
+  ExternalLink,
   LineChart,
   FlaskConical,
   History as HistoryIcon,
@@ -73,6 +75,7 @@ import { PredicateEditorExplainer } from "@/components/rules/PredicateEditorExpl
 import { PredicateEditor } from "@/components/rules/PredicateEditor";
 import { AdvancedDisclosure } from "@/components/rules/AdvancedDisclosure";
 import { CursorTooltip } from "@/components/rules/CursorTooltip";
+import { ReferenceGrantPrompt } from "@/components/common/ReferenceGrantPrompt";
 import { LowcodeBuilder } from "@/components/rules/lowcode/LowcodeBuilder";
 import { FilterBuilder } from "@/components/rules/lowcode/FilterBuilder";
 import { JoinsBuilder } from "@/components/rules/lowcode/JoinsBuilder";
@@ -96,6 +99,7 @@ import {
   rowStrandedByRetype,
   slotFamilyToLowcode,
   splitTopLevelCommas,
+  sqlCheckFunctionOf,
   sqlEditorShape,
   type RuleGranularity,
   type LowcodeColumnRef,
@@ -128,7 +132,6 @@ import { useSubmitRegistryRuleWithRationale, type LabelDefinition } from "@/lib/
 import {
   useCreateRegistryRule,
   useUpdateRegistryRule,
-  useListRegistryRuleVersions,
   useGetRuleScore,
   useListMonitoredTables,
   useListCheckFunctions,
@@ -1745,6 +1748,9 @@ const PRISTINE_NEW_SNAPSHOT: RuleEditSnapshot = {
   authorKind: "human",
 };
 
+const CROSS_TABLE_SQL_DOCS_URL = "https://databrickslabs.github.io/dqx/docs/studio/authoring/create-a-rule/cross-table-rules/#custom-sql";
+const ROW_VS_DATASET_DOCS_URL = "https://databrickslabs.github.io/dqx/docs/studio/authoring/create-a-rule/row-and-dataset-level/";
+
 export function RegistryRuleFormDialog({
   open,
   onOpenChange,
@@ -2195,14 +2201,21 @@ export function RegistryRuleFormDialog({
   const { willAutoApprove } = useApprovalsMode();
   const [saving, setSaving] = useState(false);
 
-  // Published version lineage for the History tab. Only queried for a rule
-  // that has been published at least once (version > 0) and while the dialog
-  // is open — a fresh create form or an unpublished draft has no snapshots.
   const versionsRuleId = sourceRule?.rule_id ?? "";
-  const versionsQuery = useListRegistryRuleVersions(versionsRuleId, {
-    query: { enabled: open && Boolean(sourceRule && sourceRule.version > 0) },
-  });
-  const publishedVersions = useMemo(() => versionsQuery.data?.data ?? [], [versionsQuery.data]);
+  // The History tab compares the saved rule with its approved versions.
+  const changesTarget = useMemo<RuleChangesTarget | null>(
+    () =>
+      sourceRule
+        ? {
+            ruleId: sourceRule.rule_id,
+            name: String(sourceRule.user_metadata?.[RESERVED_NAME_KEY] ?? "") || sourceRule.rule_id,
+            version: sourceRule.version,
+            proposed: sourceRule,
+            revision: `${sourceRule.status}:${sourceRule.version}:${sourceRule.updated_at ?? ""}`,
+          }
+        : null,
+    [sourceRule],
+  );
 
   // Rule-level DQ score, fetched here (non-suspending) only to decide the
   // Results tab trigger's enabled state: a rule with zero current
@@ -2295,13 +2308,18 @@ export function RegistryRuleFormDialog({
   // claim a granularity DQX won't honour. Native takes the check's registered
   // `rule_type`; the visual builder asks the compiled body; SQL is the author's
   // choice, forced back to row-level when the text is only a predicate.
+  // Compiled once per builder change; granularity and the Test tab both read it.
+  const compiledLowcodeBody = useMemo(
+    () => (mode === "lowcode" ? compileLowcodeBody(lowcodeAst, groupBy) : null),
+    [mode, lowcodeAst, groupBy],
+  );
   const effectiveGranularity: RuleGranularity =
     mode === "dqx_native"
       ? selectedFn?.rule_type === "dataset"
         ? "dataset"
         : "row"
-      : mode === "lowcode"
-        ? bodyGranularity(compileLowcodeBody(lowcodeAst, groupBy))
+      : compiledLowcodeBody
+        ? bodyGranularity(compiledLowcodeBody)
         : sqlGranularityIsChoice
           ? sqlGranularity
           : "row";
@@ -3707,6 +3725,9 @@ export function RegistryRuleFormDialog({
   // control until there is input to describe. Native is unaffected: picking a
   // check is picking its level, and `conditionChosen` already requires one.
   const granularityDescribesSomething = conditionChosen && currentModeHasContent();
+  // The row-level / dataset-level switch is shown under exactly this condition.
+  // The SQL editor's "complex query" links reuse it so they appear with the switch.
+  const showGranularityControl = granularityDescribesSomething && granularityFrozenReason === undefined;
 
   // Auto-assign a data type to the ANCHOR (first) low-code column when the
   // author picked an operator from a typed group while the column was still
@@ -4098,7 +4119,7 @@ export function RegistryRuleFormDialog({
                     </div>
                   </div>
                 )}
-                {granularityDescribesSomething && granularityFrozenReason === undefined && (
+                {showGranularityControl && (
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
                       {t("rulesRegistry.granularityLabel")}
@@ -4272,6 +4293,30 @@ export function RegistryRuleFormDialog({
             {/* The "reference columns as {{column_name}}" hint sits BELOW the
                 IF text (item 7), directly above the editor it explains. */}
             <PredicateEditorExplainer />
+            {showGranularityControl && (
+              <p className="text-xs text-muted-foreground flex flex-wrap items-center gap-x-1.5">
+                <span>{t("rulesRegistry.sqlLearnMoreLabel")}</span>
+                <a
+                  href={CROSS_TABLE_SQL_DOCS_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline"
+                >
+                  {t("rulesRegistry.sqlLearnMoreCrossTable")}
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+                <span aria-hidden="true">·</span>
+                <a
+                  href={ROW_VS_DATASET_DOCS_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline"
+                >
+                  {t("rulesRegistry.sqlLearnMoreRowDataset")}
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              </p>
+            )}
             <div className={cn(sqlError && "rounded-md ring-1 ring-red-400")}>
               <PredicateEditor
                 value={sqlPredicate}
@@ -4287,6 +4332,10 @@ export function RegistryRuleFormDialog({
                 {sqlError}
               </p>
             )}
+            {/* Any SQL rule can read another table (a full query's JOIN, or a plain
+                condition's subquery), and the task runner reads it either way. The
+                prompt renders nothing until the text names a table. */}
+            <ReferenceGrantPrompt sqlQuery={sqlPredicate} />
             {/* Dataset-level SQL query warning: the query must collapse to one row.
                 Merge-columns picker is in the Advanced section below. */}
             {sqlGranularityIsChoice && sqlGranularity === "dataset" && (
@@ -4575,6 +4624,14 @@ export function RegistryRuleFormDialog({
     mode === "dqx_native"
       ? nativeTestable && functionName.trim().length > 0 && slotsHaveValidNames(nativeSlots) && nativeRequiredParamsFilled
       : testEffectivePredicate.length > 0 && (mode !== "sql" || sqlError === null);
+  // The check the saved body will materialize to, decided by the same compile the
+  // save path uses, so the Test run picks the builder the job will run.
+  const testCheckFunction =
+    mode === "sql" && sqlTestBody
+      ? sqlCheckFunctionOf(sqlTestBody)
+      : compiledLowcodeBody
+        ? sqlCheckFunctionOf(compiledLowcodeBody)
+        : undefined;
   const testTabContent = (
     <div className="space-y-3 pt-2">
       {mode === "dqx_native" && !nativeTestable ? (
@@ -4596,52 +4653,19 @@ export function RegistryRuleFormDialog({
           nativeFunction={mode === "dqx_native" ? functionName : undefined}
           nativeArguments={nativeTestArguments}
           lowcodeAdvanced={lowcodeAdvanced}
+          checkFunction={testCheckFunction}
+          datasetLevel={effectiveGranularity === "dataset"}
           canTest={testCanRun}
         />
       )}
     </div>
   );
 
-  const historyTabContent = (
-    <div className="space-y-4 pt-2">
-      {sourceRule ? (
-        /* Published version lineage (frozen dq_rule_versions snapshots),
-           newest first. Only fetched for a rule that has been published at
-           least once; a never-published draft shows the empty state. The
-           rule's own audit fields live on About's Details list. */
-        <div className="space-y-2">
-          <SectionHeader tooltip={t("rulesRegistry.historyVersionsTooltip")}>
-            {t("rulesRegistry.historyVersionsTitle")}
-          </SectionHeader>
-          {sourceRule.version > 0 ? (
-            versionsQuery.isLoading ? (
-              <p className="text-xs text-muted-foreground flex items-center gap-2">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                {t("common.loading")}
-              </p>
-            ) : publishedVersions.length > 0 ? (
-              <div className="rounded-lg border divide-y text-xs">
-                {publishedVersions.map((v) => (
-                  <div key={v.version} className="flex items-center justify-between gap-3 p-3">
-                    <span className="font-mono font-medium">
-                      {t("rulesRegistry.historyVersionLabel", { version: v.version })}
-                    </span>
-                    <span className="text-muted-foreground">{v.created_by ?? "—"}</span>
-                    <span className="text-muted-foreground">{v.created_at ?? "—"}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground italic">{t("rulesRegistry.historyNoData")}</p>
-            )
-          ) : (
-            <p className="text-xs text-muted-foreground italic">{t("rulesRegistry.historyNoVersionsYet")}</p>
-          )}
-        </div>
-      ) : (
-        <p className="text-xs text-muted-foreground italic">{t("rulesRegistry.historyNoData")}</p>
-      )}
-    </div>
+  const historyTabContent = changesTarget ? (
+    /* The saved rule against its approved versions, with the version timeline. */
+    <RuleChangesPanel target={changesTarget} />
+  ) : (
+    <p className="text-xs text-muted-foreground italic pt-2">{t("rulesRegistry.historyNoData")}</p>
   );
 
   // Two-group tab strip, matching dqlake's RuleTabs: editing tabs (About /

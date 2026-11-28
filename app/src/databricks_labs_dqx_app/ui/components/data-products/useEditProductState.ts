@@ -14,9 +14,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { DEFAULT_SCHEDULE_KIND, type ScheduleKind } from "@/components/common/ScheduleEditor";
 import {
-  useUpdateDataProduct,
-  useAddDataProductMember,
-  useRemoveDataProductMember,
+  useSaveDataProduct,
   useSetObjectGrant,
   useRemoveObjectGrant,
   getGetDataProductQueryKey,
@@ -28,6 +26,7 @@ import {
   type UpdateDataProductIn,
 } from "@/lib/api";
 import { useSubmitDataProductWithRationale } from "@/lib/api-custom";
+import { createSaveGate, runWhilePersisting, saveThenRefetch } from "./saveGate";
 import type { OwnerGrantIntent } from "@/components/permissions/PermissionsTab";
 
 function extractApiError(err: unknown, fallback: string): string {
@@ -220,18 +219,30 @@ export function useEditProductState(product: DataProductOut) {
 
   // --- Mutations ---
   // Suppress the global mutation onError toast — errors are surfaced locally.
-  const updateMut = useUpdateDataProduct({ mutation: { onError: () => {} } });
-  const addMut = useAddDataProductMember({ mutation: { onError: () => {} } });
-  const removeMut = useRemoveDataProductMember({ mutation: { onError: () => {} } });
+  // One save is one request (the changed settings plus the full member list),
+  // so it's one edit in the collection's History, and a table that can't join
+  // is refused before anything is saved.
+  const saveMut = useSaveDataProduct({ mutation: { onError: () => {} } });
   const submitMut = useSubmitDataProductWithRationale({ mutation: { onError: () => {} } });
   const setGrantMut = useSetObjectGrant({ mutation: { onError: () => {} } });
   const removeGrantMut = useRemoveObjectGrant({ mutation: { onError: () => {} } });
 
-  const invalidate = useCallback(() => {
-    qc.invalidateQueries({ queryKey: getGetDataProductQueryKey(product.product_id) });
+  /** Refetch the product and related lists. Resolves once the product detail
+   *  (the snapshot `persist` diffs against) has been refetched. */
+  const invalidate = useCallback(async () => {
+    const detail = qc.invalidateQueries({ queryKey: getGetDataProductQueryKey(product.product_id) });
     qc.invalidateQueries({ queryKey: getListDataProductsQueryKey() });
     qc.invalidateQueries({ queryKey: getListRunSetsQueryKey() });
+    await detail;
   }, [qc, product.product_id]);
+
+  // Save and Submit both diff the buffer against `product`, which only updates
+  // once the post-save refetch lands. The gate keeps them from overlapping, and
+  // `persisting` keeps both buttons disabled until that refetch has landed, so
+  // a quick Submit after Save can't replay Save's removals against a stale
+  // snapshot (which the server rejects as "member not found").
+  const saveGateRef = useRef(createSaveGate());
+  const [persisting, setPersisting] = useState(false);
 
   /** Persist all buffered edits: PATCH name/description/owner/schedule, then
    *  reconcile members (add new, remove dropped, re-add pin-only changes).
@@ -270,29 +281,24 @@ export function useEditProductState(product: DataProductOut) {
       patchNeeded = true;
     }
 
-    if (patchNeeded) {
-      await updateMut.mutateAsync({ productId: product.product_id, data: patch });
-    }
-
-    // Reconcile members. Adds: in buffer, not on server. Pin changes on
-    // existing members: re-POST (the endpoint upserts pinned_version by
-    // binding_id). Removals: on server, not in buffer.
-    const bufferKeys = new Set(members.map(memberKey));
-    for (const m of members) {
-      const k = memberKey(m);
-      const isNew = !serverMemberKeys.has(k);
-      const pinChanged = !isNew && (m.pinned_version ?? null) !== (serverMemberPins.get(k) ?? null);
-      if (isNew || pinChanged) {
-        await addMut.mutateAsync({
-          productId: product.product_id,
-          data: { binding_id: m.binding_id, pinned_version: m.pinned_version ?? null },
-        });
-      }
-    }
-    for (const m of product.members ?? []) {
-      if (!bufferKeys.has(memberKey(m))) {
-        await removeMut.mutateAsync({ productId: product.product_id, memberId: m.id });
-      }
+    // Members: the full list after the save (the server adds, re-pins and
+    // removes to match), or left alone when they're unchanged.
+    const membersChanged =
+      members.length !== serverMemberKeys.size ||
+      members.some((m) => {
+        const k = memberKey(m);
+        return !serverMemberKeys.has(k) || (m.pinned_version ?? null) !== (serverMemberPins.get(k) ?? null);
+      });
+    if (patchNeeded || membersChanged) {
+      await saveMut.mutateAsync({
+        productId: product.product_id,
+        data: {
+          updates: patchNeeded ? patch : null,
+          members: membersChanged
+            ? members.map((m) => ({ binding_id: m.binding_id, pinned_version: m.pinned_version ?? null }))
+            : null,
+        },
+      });
     }
 
     // Write owner grant(s) after the product is persisted.  Fires only when
@@ -350,45 +356,59 @@ export function useEditProductState(product: DataProductOut) {
     serverMemberPins,
     product,
     ownerGrantIntent,
-    updateMut,
-    addMut,
-    removeMut,
+    saveMut,
     setGrantMut,
     removeGrantMut,
   ]);
 
-  const handleSaveDraft = useCallback(async (): Promise<boolean> => {
-    try {
-      await persist();
-      bypassGuardRef.current = true;
-      resyncRef.current = true;
-      invalidate();
-      toast.success(t("dataProducts.toastSavedDraft"));
-      return true;
-    } catch (e) {
-      toast.error(extractApiError(e, t("dataProducts.toastSaveFailed")), { duration: 6000 });
-      return false;
-    }
-  }, [persist, invalidate, t]);
+  /** Run a save-like action through the gate, keeping `persisting` set until
+   *  the product has been refetched (see `saveThenRefetch`). Returns false if
+   *  another save is already running. */
+  const runPersisting = useCallback(
+    (work: () => Promise<boolean>): Promise<boolean> => runWhilePersisting(saveGateRef.current, setPersisting, work),
+    [],
+  );
+
+  const handleSaveDraft = useCallback(
+    (): Promise<boolean> =>
+      runPersisting(() =>
+        saveThenRefetch({
+          save: persist,
+          refetch: invalidate,
+          onFailed: (e) => toast.error(extractApiError(e, t("dataProducts.toastSaveFailed")), { duration: 6000 }),
+          onSaved: () => {
+            bypassGuardRef.current = true;
+            resyncRef.current = true;
+            toast.success(t("dataProducts.toastSavedDraft"));
+          },
+        }),
+      ),
+    [runPersisting, persist, invalidate, t],
+  );
 
   /** Persist any staged edits, then submit the space for review
    *  (draft/rejected -> pending_approval). Mirrors the monitored-table
    *  "Submit for review" flow. Optional change rationale is stored on the
    *  lifecycle event (pending_rationale), not in the comment thread. */
-  const handleSubmit = useCallback(async (rationale?: string | null): Promise<boolean> => {
-    try {
-      await persist();
-      await submitMut.mutateAsync({ productId: product.product_id, rationale: rationale ?? null });
-      bypassGuardRef.current = true;
-      resyncRef.current = true;
-      invalidate();
-      toast.success(t("dataProducts.toastSubmitted"));
-      return true;
-    } catch (e) {
-      toast.error(extractApiError(e, t("dataProducts.toastSubmitFailed")), { duration: 6000 });
-      return false;
-    }
-  }, [persist, submitMut, product.product_id, invalidate, t]);
+  const handleSubmit = useCallback(
+    (rationale?: string | null): Promise<boolean> =>
+      runPersisting(() =>
+        saveThenRefetch({
+          save: async () => {
+            await persist();
+            await submitMut.mutateAsync({ productId: product.product_id, rationale: rationale ?? null });
+          },
+          refetch: invalidate,
+          onFailed: (e) => toast.error(extractApiError(e, t("dataProducts.toastSubmitFailed")), { duration: 6000 }),
+          onSaved: () => {
+            bypassGuardRef.current = true;
+            resyncRef.current = true;
+            toast.success(t("dataProducts.toastSubmitted"));
+          },
+        }),
+      ),
+    [runPersisting, persist, submitMut, product.product_id, invalidate, t],
+  );
 
   // Called by the approve handlers (the space-level approve banner AND the
   // member-level review popover) after a successful approval — but ONLY when
@@ -406,8 +426,9 @@ export function useEditProductState(product: DataProductOut) {
     resyncRef.current = true;
   }, []);
 
-  // A save touches several endpoints; treat any in flight as "save pending".
-  const savePending = updateMut.isPending || addMut.isPending || removeMut.isPending;
+  // A save is one request and then a refetch; treat the whole sequence as
+  // "save pending" (not just the request in flight).
+  const savePending = persisting || saveMut.isPending;
 
   return {
     name,

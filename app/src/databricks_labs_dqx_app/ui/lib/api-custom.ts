@@ -4,7 +4,7 @@
  */
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { UseMutationOptions, UseMutationResult, UseQueryOptions, UseQueryResult } from "@tanstack/react-query";
-import * as axios from "axios";
+import axios from "axios";
 import type { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
 import type {
   BatchImportRegistryRulesIn,
@@ -28,7 +28,7 @@ export const batchSaveRules = (
   body: BatchSaveRulesIn,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<BatchSaveRulesOut>> => {
-  return axios.default.post(`/api/v1/rules/batch`, body, options);
+  return axios.post(`/api/v1/rules/batch`, body, options);
 };
 
 export const useBatchSaveRules = <
@@ -88,7 +88,7 @@ export const batchRunFromCatalog = (
   body: BatchRunFromCatalogIn,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<BatchRunFromCatalogOut>> => {
-  return axios.default.post(`/api/v1/dryrun/batch-from-catalog`, body, options);
+  return axios.post(`/api/v1/dryrun/batch-from-catalog`, body, options);
 };
 
 export const useBatchRunFromCatalog = <
@@ -138,7 +138,7 @@ export const filterTablesByColumns = (
   body: FilterTablesByColumnsIn,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<FilterTablesByColumnsOut>> => {
-  return axios.default.post(`/api/v1/discovery/filter-tables-by-columns`, body, options);
+  return axios.post(`/api/v1/discovery/filter-tables-by-columns`, body, options);
 };
 
 export const useFilterTablesByColumns = <
@@ -209,7 +209,7 @@ export const listValidationRuns = (
   params?: { summary?: boolean; review_status?: string[] },
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<ValidationRunSummaryOut[]>> => {
-  return axios.default.get(`/api/v1/dryrun/runs`, { ...options, params });
+  return axios.get(`/api/v1/dryrun/runs`, { ...options, params });
 };
 
 export const getListValidationRunsQueryKey = (params?: { summary?: boolean; review_status?: string[] }) =>
@@ -242,7 +242,7 @@ export const cancelDryRun = (
   params: { job_run_id: number },
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<{ status: string; run_id: string }>> => {
-  return axios.default.post(`/api/v1/dryrun/runs/${runId}/cancel`, null, {
+  return axios.post(`/api/v1/dryrun/runs/${runId}/cancel`, null, {
     ...options,
     params: { ...params, ...options?.params },
   });
@@ -257,7 +257,7 @@ export const getDryRunStatusCustom = (
   params?: { job_run_id?: number; view_fqn?: string },
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<RunStatusOut>> => {
-  return axios.default.get(`/api/v1/dryrun/runs/${runId}/status`, {
+  return axios.get(`/api/v1/dryrun/runs/${runId}/status`, {
     ...options,
     params: { ...params, ...options?.params },
   });
@@ -272,7 +272,7 @@ export const cancelProfileRun = (
   params: { job_run_id: number; view_fqn?: string },
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<{ status: string; run_id: string }>> => {
-  return axios.default.post(`/api/v1/profiler/runs/${runId}/cancel`, null, {
+  return axios.post(`/api/v1/profiler/runs/${runId}/cancel`, null, {
     ...options,
     params: { ...params, ...options?.params },
   });
@@ -297,7 +297,7 @@ export const checkDuplicates = (
   body: CheckDuplicatesIn,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<CheckDuplicatesOut>> => {
-  return axios.default.post(`/api/v1/rules/check-duplicates`, body, options);
+  return axios.post(`/api/v1/rules/check-duplicates`, body, options);
 };
 
 export const useCheckDuplicates = <
@@ -335,7 +335,7 @@ export const useCheckDuplicates = <
 export const backfillRuleIds = (
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<{ repaired: number }>> => {
-  return axios.default.post(`/api/v1/rules/backfill-ids`, null, options);
+  return axios.post(`/api/v1/rules/backfill-ids`, null, options);
 };
 
 // ---------------------------------------------------------------------------
@@ -346,7 +346,7 @@ export const deleteRuleById = (
   ruleId: string,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<{ status: string; rule_id: string }>> => {
-  return axios.default.delete(`/api/v1/rules/${ruleId}`, options);
+  return axios.delete(`/api/v1/rules/${ruleId}`, options);
 };
 
 export const useDeleteRuleById = <
@@ -385,28 +385,28 @@ export const submitRuleForApproval = (
   ruleId: string,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<RuleCatalogEntryOut>> => {
-  return axios.default.post(`/api/v1/rules/${ruleId}/submit`, null, options);
+  return axios.post(`/api/v1/rules/${ruleId}/submit`, null, options);
 };
 
 export const approveRule = (
   ruleId: string,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<RuleCatalogEntryOut>> => {
-  return axios.default.post(`/api/v1/rules/${ruleId}/approve`, null, options);
+  return axios.post(`/api/v1/rules/${ruleId}/approve`, null, options);
 };
 
 export const rejectRule = (
   ruleId: string,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<RuleCatalogEntryOut>> => {
-  return axios.default.post(`/api/v1/rules/${ruleId}/reject`, null, options);
+  return axios.post(`/api/v1/rules/${ruleId}/reject`, null, options);
 };
 
 export const revokeRule = (
   ruleId: string,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<RuleCatalogEntryOut>> => {
-  return axios.default.post(`/api/v1/rules/${ruleId}/revoke`, null, options);
+  return axios.post(`/api/v1/rules/${ruleId}/revoke`, null, options);
 };
 
 // ---------------------------------------------------------------------------
@@ -426,7 +426,7 @@ export const validateChecks = (
   body: ValidateChecksIn,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<ValidateChecksOut>> => {
-  return axios.default.post(`/api/v1/rules/validate-checks`, body, options);
+  return axios.post(`/api/v1/rules/validate-checks`, body, options);
 };
 
 export const useValidateChecks = <
@@ -480,7 +480,7 @@ export const addComment = (
   body: AddCommentIn,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<CommentOut>> => {
-  return axios.default.post(`/api/v1/comments`, body, options);
+  return axios.post(`/api/v1/comments`, body, options);
 };
 
 export const useAddComment = <
@@ -516,7 +516,7 @@ export const listComments = (
   entityId: string,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<CommentOut[]>> => {
-  return axios.default.get(`/api/v1/comments`, {
+  return axios.get(`/api/v1/comments`, {
     ...options,
     params: { entity_type: entityType, entity_id: entityId, ...options?.params },
   });
@@ -553,7 +553,7 @@ export const deleteComment = (
   commentId: string,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<{ status: string; comment_id: string }>> => {
-  return axios.default.delete(`/api/v1/comments/${commentId}`, options);
+  return axios.delete(`/api/v1/comments/${commentId}`, options);
 };
 
 export const useDeleteComment = <
@@ -618,7 +618,7 @@ export const listQuarantineRecords = (
   params?: QuarantineQueryParams,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<QuarantineListOut>> => {
-  return axios.default.get(`/api/v1/quarantine/runs/${runId}`, {
+  return axios.get(`/api/v1/quarantine/runs/${runId}`, {
     ...options,
     params,
   });
@@ -667,7 +667,7 @@ export const getQuarantineCount = (
   params?: { check_name?: string },
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<{ count: number }>> => {
-  return axios.default.get(`/api/v1/quarantine/runs/${runId}/count`, {
+  return axios.get(`/api/v1/quarantine/runs/${runId}/count`, {
     ...options,
     params,
   });
@@ -740,7 +740,7 @@ export const getMetricsTrend = (
   params?: { limit?: number },
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<MetricSnapshotOut[]>> => {
-  return axios.default.get(`/api/v1/metrics/${encodeURIComponent(tableFqn)}`, {
+  return axios.get(`/api/v1/metrics/${encodeURIComponent(tableFqn)}`, {
     ...options,
     params,
   });
@@ -774,7 +774,7 @@ export const useMetricsTrend = <
 export const getMetricsSummary = (
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<MetricsSummaryOut[]>> => {
-  return axios.default.get(`/api/v1/metrics`, options);
+  return axios.get(`/api/v1/metrics`, options);
 };
 
 export const getMetricsSummaryQueryKey = () => [`/api/v1/metrics/summary`] as const;
@@ -813,7 +813,7 @@ export interface TimezoneIn {
 export const getTimezone = (
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<TimezoneOut>> =>
-  axios.default.get("/api/v1/config/timezone", options);
+  axios.get("/api/v1/config/timezone", options);
 
 export const getTimezoneQueryKey = () => ["timezone"] as const;
 
@@ -846,7 +846,7 @@ export const saveTimezone = (
   body: TimezoneIn,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<TimezoneOut>> =>
-  axios.default.put("/api/v1/config/timezone", body, options);
+  axios.put("/api/v1/config/timezone", body, options);
 
 export const useSaveTimezone = <
   TError = AxiosError<unknown>,
@@ -917,7 +917,7 @@ export interface LabelDefinitionsIn {
 export const getLabelDefinitions = (
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<LabelDefinitionsOut>> =>
-  axios.default.get("/api/v1/config/label-definitions", options);
+  axios.get("/api/v1/config/label-definitions", options);
 
 export const getLabelDefinitionsQueryKey = () => ["label-definitions"] as const;
 
@@ -944,7 +944,7 @@ export const saveLabelDefinitions = (
   body: LabelDefinitionsIn,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<LabelDefinitionsOut>> =>
-  axios.default.put("/api/v1/config/label-definitions", body, options);
+  axios.put("/api/v1/config/label-definitions", body, options);
 
 export const useSaveLabelDefinitions = <
   TError = AxiosError<unknown>,
@@ -997,7 +997,7 @@ export interface RetentionSettingsIn {
 export const getRetentionSettings = (
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<RetentionSettingsOut>> =>
-  axios.default.get("/api/v1/config/retention", options);
+  axios.get("/api/v1/config/retention", options);
 
 export const getRetentionSettingsQueryKey = () => ["retention-settings"] as const;
 
@@ -1024,7 +1024,7 @@ export const saveRetentionSettings = (
   body: RetentionSettingsIn,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<RetentionSettingsOut>> =>
-  axios.default.put("/api/v1/config/retention", body, options);
+  axios.put("/api/v1/config/retention", body, options);
 
 export const useSaveRetentionSettings = <
   TError = AxiosError<unknown>,
@@ -1069,7 +1069,7 @@ export interface WorkspaceHostOut {
 export const getWorkspaceHost = (
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<WorkspaceHostOut>> =>
-  axios.default.get("/api/v1/config/workspace-host", options);
+  axios.get("/api/v1/config/workspace-host", options);
 
 export const getWorkspaceHostQueryKey = () => ["workspace-host"] as const;
 
@@ -1123,7 +1123,7 @@ export interface RunReviewStatusesIn {
 export const getRunReviewStatuses = (
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<RunReviewStatusesOut>> =>
-  axios.default.get("/api/v1/config/run-review-statuses", options);
+  axios.get("/api/v1/config/run-review-statuses", options);
 
 export const getRunReviewStatusesQueryKey = () => ["run-review-statuses"] as const;
 
@@ -1154,7 +1154,7 @@ export const saveRunReviewStatuses = (
   body: RunReviewStatusesIn,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<RunReviewStatusesOut>> =>
-  axios.default.put("/api/v1/config/run-review-statuses", body, options);
+  axios.put("/api/v1/config/run-review-statuses", body, options);
 
 export const useSaveRunReviewStatuses = <
   TError = AxiosError<unknown>,
@@ -1218,7 +1218,7 @@ export const getRunReviewStatus = (
   runId: string,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<RunReviewStatusOut>> =>
-  axios.default.get(`/api/v1/runs/${encodeURIComponent(runId)}/review-status`, options);
+  axios.get(`/api/v1/runs/${encodeURIComponent(runId)}/review-status`, options);
 
 export const getRunReviewStatusQueryKey = (runId: string) =>
   ["run-review-status", runId] as const;
@@ -1248,7 +1248,7 @@ export const setRunReviewStatus = (
   body: SetRunReviewStatusIn,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<RunReviewStatusOut>> =>
-  axios.default.put(`/api/v1/runs/${encodeURIComponent(runId)}/review-status`, body, options);
+  axios.put(`/api/v1/runs/${encodeURIComponent(runId)}/review-status`, body, options);
 
 export const useSetRunReviewStatus = <
   TError = AxiosError<unknown>,
@@ -1281,7 +1281,7 @@ export const clearRunReviewStatus = (
   runId: string,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<RunReviewStatusOut>> =>
-  axios.default.delete(`/api/v1/runs/${encodeURIComponent(runId)}/review-status`, options);
+  axios.delete(`/api/v1/runs/${encodeURIComponent(runId)}/review-status`, options);
 
 export const useClearRunReviewStatus = <
   TError = AxiosError<unknown>,
@@ -1346,7 +1346,7 @@ export const batchRecordPendingApplications = (
   body: BatchRecordPendingApplicationsIn,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<BatchRecordPendingApplicationsOut>> => {
-  return axios.default.post(`/api/v1/monitored-tables/pending-applications/batch`, body, options);
+  return axios.post(`/api/v1/monitored-tables/pending-applications/batch`, body, options);
 };
 
 // ---------------------------------------------------------------------------
@@ -1374,7 +1374,7 @@ export const listPendingApplications = (
   bindingId: string,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<PendingApplicationOut[]>> => {
-  return axios.default.get(
+  return axios.get(
     `/api/v1/monitored-tables/${encodeURIComponent(bindingId)}/pending-applications`,
     options,
   );
@@ -1408,7 +1408,7 @@ export const batchImportRegistryRulesWithDedup = (
   body: BatchImportRegistryRulesDedupIn,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<BatchImportRegistryRulesDedupOut>> => {
-  return axios.default.post(`/api/v1/registry-rules/batch-import`, body, options);
+  return axios.post(`/api/v1/registry-rules/batch-import`, body, options);
 };
 
 export const useListPendingApplications = <
@@ -1436,7 +1436,7 @@ export const getRunReviewStatusHistory = (
   runId: string,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<RunReviewStatusHistoryOut>> =>
-  axios.default.get(`/api/v1/runs/${encodeURIComponent(runId)}/review-status/history`, options);
+  axios.get(`/api/v1/runs/${encodeURIComponent(runId)}/review-status/history`, options);
 
 export const getRunReviewStatusHistoryQueryKey = (runId: string) =>
   ["run-review-status-history", runId] as const;
@@ -1517,19 +1517,19 @@ export const exportRegistryRules = (
   params?: RegistryRuleExportParams,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<ExportOut>> =>
-  axios.default.get(`/api/v1/export/registry-rules`, { ...options, params });
+  axios.get(`/api/v1/export/registry-rules`, { ...options, params });
 
 export const exportRegistryRule = (
   ruleId: string,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<ExportOut>> =>
-  axios.default.get(`/api/v1/export/registry-rules/${encodeURIComponent(ruleId)}`, options);
+  axios.get(`/api/v1/export/registry-rules/${encodeURIComponent(ruleId)}`, options);
 
 export const exportMonitoredTables = (
   params?: MonitoredTableExportParams,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<ExportOut>> =>
-  axios.default.get(`/api/v1/export/monitored-tables`, { ...options, params });
+  axios.get(`/api/v1/export/monitored-tables`, { ...options, params });
 
 export const exportMonitoredTable = (
   bindingId: string,
@@ -1539,7 +1539,7 @@ export const exportMonitoredTable = (
   // Cast: axios ≥1.19 types `AxiosRequestConfig<D, P>` and rejects spreading
   // an untyped `options` with a narrower `params` object (paramsSerializer
   // variance). The cast keeps this compatible with both 1.18 and 1.19.
-  axios.default.get(`/api/v1/export/monitored-tables/${encodeURIComponent(bindingId)}`, {
+  axios.get(`/api/v1/export/monitored-tables/${encodeURIComponent(bindingId)}`, {
     ...options,
     params: { format },
   } as AxiosRequestConfig);
@@ -1548,14 +1548,14 @@ export const exportDataProducts = (
   params?: DataProductExportParams,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<ExportOut>> =>
-  axios.default.get(`/api/v1/export/data-products`, { ...options, params });
+  axios.get(`/api/v1/export/data-products`, { ...options, params });
 
 export const exportDataProduct = (
   productId: string,
   format: ExportFormat,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<ExportOut>> =>
-  axios.default.get(`/api/v1/export/data-products/${encodeURIComponent(productId)}`, {
+  axios.get(`/api/v1/export/data-products/${encodeURIComponent(productId)}`, {
     ...options,
     params: { format },
   } as AxiosRequestConfig);
@@ -1585,26 +1585,26 @@ export const submitRegistryRuleWithRationale = (
   ruleId: string,
   data?: LifecycleRationaleIn | null,
   options?: AxiosRequestConfig,
-) => axios.default.post(`/api/v1/registry-rules/${encodeURIComponent(ruleId)}/submit`, data ?? {}, options);
+) => axios.post(`/api/v1/registry-rules/${encodeURIComponent(ruleId)}/submit`, data ?? {}, options);
 
 export const approveRegistryRuleWithRationale = (
   ruleId: string,
   data?: LifecycleRationaleIn | null,
   options?: AxiosRequestConfig,
-) => axios.default.post(`/api/v1/registry-rules/${encodeURIComponent(ruleId)}/approve`, data ?? {}, options);
+) => axios.post(`/api/v1/registry-rules/${encodeURIComponent(ruleId)}/approve`, data ?? {}, options);
 
 export const rejectRegistryRuleWithRationale = (
   ruleId: string,
   data?: LifecycleRationaleIn | null,
   options?: AxiosRequestConfig,
-) => axios.default.post(`/api/v1/registry-rules/${encodeURIComponent(ruleId)}/reject`, data ?? {}, options);
+) => axios.post(`/api/v1/registry-rules/${encodeURIComponent(ruleId)}/reject`, data ?? {}, options);
 
 export const submitMonitoredTableWithRationale = (
   bindingId: string,
   data?: LifecycleRationaleIn | null,
   options?: AxiosRequestConfig,
 ) =>
-  axios.default.post(
+  axios.post(
     `/api/v1/monitored-tables/${encodeURIComponent(bindingId)}/submit`,
     data ?? {},
     options,
@@ -1615,7 +1615,7 @@ export const approveMonitoredTableWithRationale = (
   data?: LifecycleRationaleIn | null,
   options?: AxiosRequestConfig,
 ) =>
-  axios.default.post(
+  axios.post(
     `/api/v1/monitored-tables/${encodeURIComponent(bindingId)}/approve`,
     data ?? {},
     options,
@@ -1626,7 +1626,7 @@ export const rejectMonitoredTableWithRationale = (
   data?: LifecycleRationaleIn | null,
   options?: AxiosRequestConfig,
 ) =>
-  axios.default.post(
+  axios.post(
     `/api/v1/monitored-tables/${encodeURIComponent(bindingId)}/reject`,
     data ?? {},
     options,
@@ -1637,21 +1637,21 @@ export const submitDataProductWithRationale = (
   data?: LifecycleRationaleIn | null,
   options?: AxiosRequestConfig,
 ) =>
-  axios.default.post(`/api/v1/data-products/${encodeURIComponent(productId)}/submit`, data ?? {}, options);
+  axios.post(`/api/v1/data-products/${encodeURIComponent(productId)}/submit`, data ?? {}, options);
 
 export const approveDataProductWithRationale = (
   productId: string,
   data?: LifecycleRationaleIn | null,
   options?: AxiosRequestConfig,
 ) =>
-  axios.default.post(`/api/v1/data-products/${encodeURIComponent(productId)}/approve`, data ?? {}, options);
+  axios.post(`/api/v1/data-products/${encodeURIComponent(productId)}/approve`, data ?? {}, options);
 
 export const rejectDataProductWithRationale = (
   productId: string,
   data?: LifecycleRationaleIn | null,
   options?: AxiosRequestConfig,
 ) =>
-  axios.default.post(`/api/v1/data-products/${encodeURIComponent(productId)}/reject`, data ?? {}, options);
+  axios.post(`/api/v1/data-products/${encodeURIComponent(productId)}/reject`, data ?? {}, options);
 
 function useLifecyclePost<TVars extends Record<string, unknown>>(
   key: string,

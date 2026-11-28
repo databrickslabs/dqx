@@ -20,7 +20,8 @@
             "owner",
             "dimension",
             "severity",
-            "status"
+            "status",
+            "actions"
           ],
           "visibility": {
             "appliedRules": false,
@@ -116,10 +117,11 @@
           }
         },
         "filters": {
-          "order": ["groupBy", "search", "dimension", "severity", "owner", "labels"],
+          "order": ["groupBy", "search", "status", "dimension", "severity", "owner", "labels"],
           "visibility": {
             "groupBy": true,
             "search": true,
+            "status": false,
             "dimension": true,
             "severity": true,
             "owner": false,
@@ -149,7 +151,8 @@
             "version",
             "owner",
             "status",
-            "schedule"
+            "schedule",
+            "actions"
           ],
           "visibility": {
             "dqScore": true,

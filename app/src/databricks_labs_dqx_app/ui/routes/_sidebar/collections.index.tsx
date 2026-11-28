@@ -52,10 +52,7 @@ import {
   SavedViewPage,
   type DataProductOut,
 } from "@/lib/api";
-import {
-  TableSpaceDiffDialog,
-  type TableSpaceDiffTarget,
-} from "@/components/drafts/ChangeDiffDialog";
+import { CollectionChangesDialog, type CollectionChangesTarget } from "@/components/changes/CollectionChangesDialog";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
   DQ_SCORE_BUCKETS,
@@ -234,7 +231,7 @@ function DataProductsPage() {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [rejectTarget, setRejectTarget] = useState<DataProductOut | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DataProductOut | null>(null);
-  const [diffTarget, setDiffTarget] = useState<TableSpaceDiffTarget | null>(null);
+  const [diffTarget, setDiffTarget] = useState<CollectionChangesTarget | null>(null);
 
   const approveMutation = useApproveDataProduct();
   const rejectMutation = useRejectDataProduct();
@@ -674,7 +671,7 @@ function DataProductsPage() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-7 w-7 p-0 text-purple-600 dark:text-purple-400"
+                            className="h-7 w-7 p-0 text-purple-600 dark:text-purple-400 dark:hover:text-accent-foreground"
                             aria-label={t("rulesDrafts.diff.viewChanges")}
                             onClick={() =>
                               setDiffTarget({
@@ -698,7 +695,7 @@ function DataProductsPage() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-7 w-7 p-0 text-amber-600 dark:text-amber-400"
+                            className="h-7 w-7 p-0 text-amber-600 dark:text-amber-400 dark:hover:text-accent-foreground"
                             aria-label={t("dataProducts.revertAction")}
                             onClick={() => handleRevert(product)}
                           >
@@ -809,7 +806,7 @@ function DataProductsPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <TableSpaceDiffDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
+      <CollectionChangesDialog target={diffTarget} onClose={() => setDiffTarget(null)} />
 
       <AlertDialog open={bulkRunOpen} onOpenChange={setBulkRunOpen}>
         <AlertDialogContent>

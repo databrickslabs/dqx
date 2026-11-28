@@ -184,8 +184,10 @@ Predefined rules are automatically derived from schema field constraints defined
 | `minLength` only | `logicalTypeOptions` | `sql_expression` (LENGTH &gt;= N) | Minimum code length |
 | `maxLength` only | `logicalTypeOptions` | `sql_expression` (LENGTH &lt;= N) | Maximum field size |
 | `minLength` + `maxLength` | `logicalTypeOptions` | `sql_expression` (both checks) | Fixed-length codes |
-| `format` | `logicalTypeOptions` | `is_valid_date` (date) or `is_valid_timestamp` (timestamp; `datetime` is also accepted for compatibility) | Date/timestamp formats such as `yyyy-MM-dd` |
+| `format` | `logicalTypeOptions` | `is_valid_date` (date) or `is_valid_timestamp` (timestamp or time; `datetime` is also accepted for compatibility) | Date, time, and timestamp formats such as `yyyy-MM-dd` or `HH:mm:ss` |
 | `enum` | Not supported directly | None; use `pattern` or a `type: library` quality rule | Status codes, categories |
+
+A required object gets its own `is_not_null` check even when it defines child properties. Optional objects rely on their child checks and receive no object-level check. Regenerate saved rules from the contract if you generated them with DQX 0.17.2 or earlier.
 
 <Admonition type="info" title="Formatting date and time values">
 `format` is defined by ODCS as a Java `DateTimeFormatter` pattern (e.g. `"yyyy-MM-dd'T'HH:mm:ss"`) and is passed to the generated 

@@ -42,7 +42,6 @@ _EXPECTED_OLTP_TABLES = (
     "dq_schedule_configs_history",
     "dq_rules",
     "dq_rule_versions",
-    "dq_rules_history",
     "dq_monitored_tables",
     "dq_applied_rules",
     "dq_pending_applications",
@@ -50,6 +49,8 @@ _EXPECTED_OLTP_TABLES = (
     "dq_monitored_table_versions",
     "dq_data_products",
     "dq_data_product_members",
+    "dq_data_product_versions",
+    "dq_lifecycle_history",
     "dq_run_sets",
     "dq_run_set_members",
     "dq_run_review_status",
@@ -159,7 +160,6 @@ def test_marketplace_setup_provisions_prefix_storage(
         sql=sql,
         settings=_NoGenieSpaceSettings(),
         app_name="dqx-studio-integration",
-        dashboard_id="",
     )
 
     result = access.reconcile_access()
