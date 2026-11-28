@@ -1,13 +1,16 @@
 import re
 from collections.abc import Callable
+from datetime import date, datetime, timezone
 from typing import cast
 
 import pytest
 from pyspark.sql import Column
+from pyspark.sql import functions as F
 
 from databricks.labs.dqx.utils import get_column_name_or_alias
 from databricks.labs.dqx.check_funcs import (
     DQPattern,
+    get_limit_expr,
     get_normalized_column_and_expr,
     is_equal_to,
     is_not_equal_to,
@@ -517,3 +520,18 @@ def test_row_check_rejects_invalid_arguments(
 ):
     with pytest.raises(expected_error, match=re.escape(expected_message)):
         check_func(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "limit, is_timestamp, expected_value",
+    [
+        ("2024-01-01T10:00:00Z", True, datetime(2024, 1, 1, 10, 0, 0, tzinfo=timezone.utc)),
+        ("2024-01-01T10:00:00+00:00", True, datetime(2024, 1, 1, 10, 0, 0, tzinfo=timezone.utc)),
+        ("2020-01-01T10", True, datetime(2020, 1, 1, 10, 0, 0)),
+        ("2020-01-01 10", True, datetime(2020, 1, 1, 10, 0, 0)),
+        ("2024-01-01", False, date(2024, 1, 1)),
+    ],
+)
+def test_get_limit_expr_temporal_strings(limit: str, is_timestamp: bool, expected_value: datetime | date):
+    expected_expr = F.to_timestamp(F.lit(expected_value)) if is_timestamp else F.to_date(F.lit(expected_value))
+    assert str(get_limit_expr(limit)) == str(expected_expr)
