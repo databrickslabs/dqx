@@ -1,6 +1,7 @@
 import logging
+from collections import Counter
 from datetime import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cached_property
 
 import pyspark.sql.functions as F
@@ -22,10 +23,172 @@ from databricks.labs.dqx.utils import (
     quote_column_name,
     is_sql_query_safe,
     safe_filter_expr,
+    VALID_UNQUOTED_IDENTIFIER_PATTERN,
+    ANSI_RESERVED_KEYWORDS,
     sanitize_for_logging,
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class KnownInputSchema:
+    """
+    Facts about the untouched input DataFrame of a run, gathered up front so that each check can be validated
+    without its own schema analysis (an RPC on Spark Connect).
+
+    Whether they still hold for the DataFrames that later checks are validated against is decided by
+    *InputSchemaReuse*: never after a check that may have changed the rows, and otherwise only while the input's
+    column names and types are unchanged (see *holds_for*).
+
+    Attributes:
+        dtypes: Top-level column names and type strings of the input DataFrame, as returned by *DataFrame.dtypes*.
+        resolved_expressions: SQL expressions (filters, custom messages, *sql_expression* expressions) known to resolve
+            against the input DataFrame.
+    """
+
+    dtypes: tuple[tuple[str, str], ...]
+    resolved_expressions: frozenset[str] = frozenset()
+
+    @property
+    def columns(self) -> list[str]:
+        """Top-level column names of the input DataFrame."""
+        return [name for name, _ in self.dtypes]
+
+    def holds_for(self, dtypes: list[tuple[str, str]]) -> bool:
+        """
+        Returns True if these facts still hold for a DataFrame with the given top-level *dtypes*, derived from the
+        input with the same rows (e.g. by a dataset-level check that only adds columns).
+
+        That is the case when every input column is still present under the same name and with the same type, as
+        often as in the input, and no added column has the same name ignoring case (which would make references to
+        the input column ambiguous). A column replaced with a different type invalidates the resolved expressions,
+        as an expression that resolved against the input type may not resolve against the new one.
+
+        Args:
+            dtypes: Top-level column names and type strings of the derived DataFrame.
+
+        Returns:
+            True if the input's column names and resolved expressions are still valid for the derived DataFrame.
+        """
+        input_counts = Counter(name.casefold() for name, _ in self.dtypes)
+        derived_counts = Counter(name.casefold() for name, _ in dtypes)
+        if any(derived_counts[name] != count for name, count in input_counts.items()):
+            return False
+        derived_fields = Counter(dtypes)
+        return all(derived_fields[field] >= count for field, count in Counter(self.dtypes).items())
+
+
+def get_check_sql_expressions(check: DQRule) -> list[str]:
+    """
+    Returns the SQL expressions of a check that are resolved against the DataFrame it is applied to: its filter
+    (unless unsafe, as unsafe SQL is never compiled), custom message expression, and *sql_expression* expression.
+
+    Args:
+        check: The check to inspect.
+
+    Returns:
+        The SQL expression strings of the check.
+    """
+    expressions = []
+    filter_expr = check.effective_filter
+    if filter_expr and is_sql_query_safe(filter_expr):
+        expressions.append(filter_expr)
+    if isinstance(check.message_expr, str):
+        expressions.append(check.message_expr)
+    sql_expression = _get_sql_expression_argument(check)
+    if sql_expression:
+        expressions.append(sql_expression)
+    return expressions
+
+
+def build_known_input_schema(df: DataFrame, checks: list[DQRule]) -> KnownInputSchema:
+    """
+    Gathers the column names and types of *df* and validates the SQL expressions of all *checks* against it together, in a
+    single schema analysis instead of one per expression.
+
+    If the expressions do not all resolve together (e.g. one is invalid, or refers to a column added by an earlier
+    check), none is recorded as resolved and every check validates its expressions on its own instead.
+
+    Args:
+        df: The untouched input DataFrame. Its schema is read here (one schema analysis on Spark Connect, unless
+            already read), and later reads of it on the same DataFrame are served from the client's cache.
+        checks: The checks that are going to be applied to *df*.
+
+    Returns:
+        The known schema facts of *df*.
+    """
+    dtypes = tuple(df.dtypes)
+    expressions = list(dict.fromkeys(expression for check in checks for expression in get_check_sql_expressions(check)))
+    if not expressions:
+        return KnownInputSchema(dtypes=dtypes)
+    try:
+        # The expressions are wrapped in one struct, rather than selected as aliased siblings, so that an expression
+        # cannot resolve a missing column against the alias of another one (lateral column alias resolution).
+        _ = df.select(F.struct(*[F.expr(expression) for expression in expressions])).schema
+    except AnalysisException as e:
+        logger.debug("Check expressions do not resolve together, validating them one by one", exc_info=e)
+        return KnownInputSchema(dtypes=dtypes)
+    return KnownInputSchema(dtypes=dtypes, resolved_expressions=frozenset(expressions))
+
+
+class InputSchemaReuse:
+    """
+    Decides, check by check, whether the schema facts of the input (*KnownInputSchema*) can be reused to validate a
+    check.
+
+    A check's columns are validated against the DataFrame with its input rows, and its SQL expressions (filters,
+    custom messages, *sql_expression* expressions) against the DataFrame it is applied to. The *row_preserving*
+    marker only concerns rows, so it is not relied on for the columns: the column names and types of those
+    DataFrames are compared with the input's, and the facts are not used if an input column is missing, renamed,
+    has a different type or is shadowed. The Spark Connect client caches a DataFrame's schema after the first read,
+    so this costs at most one schema analysis per DataFrame, and none for the checks that return their input
+    unchanged (e.g. row-level checks).
+
+    Args:
+        known_input: Schema facts of the input, or None if they can't be reused.
+    """
+
+    def __init__(self, known_input: KnownInputSchema | None):
+        self._known_input = known_input
+
+    def for_check(self, check_df: DataFrame, check_input_df: DataFrame) -> KnownInputSchema | None:
+        """
+        Returns the schema facts that hold for validating a check, or None if they can't be reused.
+
+        Args:
+            check_df: DataFrame the check is applied to; its SQL expressions are validated against it.
+            check_input_df: DataFrame with the check's input rows; its columns are validated against it.
+
+        Returns:
+            The schema facts, without the resolved expressions if they don't hold for *check_df*, or None if they
+            don't hold for *check_input_df*.
+        """
+        if self._known_input is None:
+            return None
+        if not self._known_input.holds_for(check_input_df.dtypes):
+            self._known_input = None
+            return None
+        if self._known_input.holds_for(check_df.dtypes):
+            return self._known_input
+        return replace(self._known_input, resolved_expressions=frozenset())
+
+    def stop(self) -> None:
+        """Stops reusing the facts, e.g. after a check that may have changed the rows."""
+        self._known_input = None
+
+
+def _get_sql_expression_argument(check: DQRule) -> str | None:
+    """Returns the expression argument of a *sql_expression* check, or None for other checks."""
+    if check.check_func is not check_funcs.sql_expression:
+        return None
+    if "expression" in check.check_func_kwargs:
+        expression = check.check_func_kwargs["expression"]
+    elif check.check_func_args:
+        expression = check.check_func_args[0]
+    else:
+        return None  # should never happen, as it is validated for correct args when building rules
+    return expression if isinstance(expression, str) else None
 
 
 @dataclass(frozen=True)
@@ -53,6 +216,9 @@ class DQRuleManager:
         input_df: Optional untouched input DataFrame (defaults to *df*). Check columns are validated against it,
             and dataset-level checks compute their aggregates from it.
         reference_cache: Optional per-run cache of compatible reference projections.
+        known_input: Optional schema facts of the untouched input that still hold for *df* and *input_df*, i.e. no
+            earlier check may have changed the rows. Plain check column names and SQL expressions found there are
+            accepted without a schema analysis (an RPC on Spark Connect); everything else is still resolved by Spark.
     """
 
     check: DQRule
@@ -67,6 +233,7 @@ class DQRuleManager:
     rule_set_fingerprint: str | None = None
     input_df: DataFrame | None = None
     reference_cache: dict[tuple[str, str], DataFrame] | None = None
+    known_input: KnownInputSchema | None = None
 
     @cached_property
     def user_metadata(self) -> dict[str, str]:
@@ -144,9 +311,12 @@ class DQRuleManager:
         An unsafe filter is short-circuited here so that ``filter_condition`` (which rejects unsafe SQL by
         raising) is never compiled for it; the check is reported as skipped via ``_get_invalid_cols_message``.
         """
+        filter_expr = self.check.effective_filter
+        if not filter_expr:
+            return False  # no filter to resolve; avoids a schema analysis round trip (an RPC on Spark Connect)
         if self.has_unsafe_filter:
             return True
-        return self._is_invalid_column(safe_filter_expr(self.check.effective_filter))
+        return self._is_invalid_column(filter_expr)
 
     @cached_property
     def has_invalid_custom_message(self) -> bool:
@@ -162,16 +332,9 @@ class DQRuleManager:
         """
         Returns an invalid expression for sql expression check.
         """
-        if self.check.check_func is check_funcs.sql_expression:
-            if "expression" in self.check.check_func_kwargs:
-                field_value = self.check.check_func_kwargs["expression"]
-            elif self.check.check_func_args:
-                field_value = self.check.check_func_args[0]
-            else:
-                return None  # should never happen, as it is validated for correct args when building rules
-
-            if self._is_invalid_column(field_value):
-                return field_value
+        field_value = _get_sql_expression_argument(self.check)
+        if field_value is not None and self._is_invalid_column(field_value):
+            return field_value
         return None
 
     @cached_property
@@ -356,9 +519,36 @@ class DQRuleManager:
         "Customer Name") first, so validation and execution agree and an unresolvable name is skipped
         rather than aborting the run.
         """
+        if isinstance(column, str) and self._is_existing_top_level_column(column):
+            return False
         resolved: str | Column = normalize_column_expr(column) if isinstance(column, str) else column
-        input_df = self.df if self.input_df is None else self.input_df
-        return not self._resolves(input_df, resolved)
+        return not self._resolves(self._check_input_df, resolved)
+
+    @property
+    def _check_input_df(self) -> DataFrame:
+        return self.df if self.input_df is None else self.input_df
+
+    @cached_property
+    def _check_input_column_names(self) -> list[str]:
+        if self.known_input is not None:
+            return self.known_input.columns
+        # On Spark Connect the schema is cached per DataFrame instance, and the managers of a run share their input
+        # DataFrame, so this costs at most one schema analysis per DataFrame instead of one per check column.
+        return self._check_input_df.columns
+
+    def _is_existing_top_level_column(self, column: str) -> bool:
+        """
+        Returns True if *column* is a bare identifier that names exactly one top-level column of the input DataFrame.
+
+        This lets plain column names skip the per-column schema analysis only when exactly one column matches both
+        exactly and ignoring case. Expressions, nested paths, back-quoted names, case-insensitive matches (including
+        case-variant column names), and ambiguous duplicates return False and are resolved by Spark. So are reserved
+        keywords, which may not parse as bare identifiers (depending on the session's ANSI settings).
+        """
+        if not VALID_UNQUOTED_IDENTIFIER_PATTERN.match(column) or column.lower() in ANSI_RESERVED_KEYWORDS:
+            return False
+        columns = self._check_input_column_names
+        return columns.count(column) == 1 and sum(name.casefold() == column.casefold() for name in columns) == 1
 
     def _is_invalid_column(self, column: str | Column) -> bool:
         """
@@ -369,6 +559,8 @@ class DQRuleManager:
         preserving support for columns added by an earlier check. Only the check's own columns are resolved
         against the untouched *input_df* (see *_is_invalid_check_column*).
         """
+        if isinstance(column, str) and self.known_input is not None and column in self.known_input.resolved_expressions:
+            return False
         return not self._resolves(self.df, column)
 
     def _resolves(self, df: DataFrame, column: str | Column) -> bool:

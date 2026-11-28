@@ -44,7 +44,7 @@ from databricks.labs.dqx.config import (
     LakebaseActionsStorageConfig,
 )
 from databricks.labs.dqx.check_funcs import add_dataset_aggregates
-from databricks.labs.dqx.manager import DQRuleManager
+from databricks.labs.dqx.manager import DQRuleManager, InputSchemaReuse, KnownInputSchema, build_known_input_schema
 from databricks.labs.dqx.reporting_columns import ColumnArguments, DefaultColumnNames, merge_info_columns
 from databricks.labs.dqx.rule import (
     Criticality,
@@ -187,6 +187,8 @@ class DQEngineCore(DQEngineCoreBase):
 
         rule_set_fingerprint = compute_rule_set_fingerprint(checks) if checks else None
         reference_cache: dict[tuple[str, str], DataFrame] = {}
+        # One schema analysis validates the SQL expressions of every check that sees the input's rows and columns.
+        known_input = build_known_input_schema(df, _checks_validated_before_row_changes(error_checks + warning_checks))
         checks_before_row_changes = itertools.takewhile(_keeps_input_rows, error_checks + warning_checks)
         input_managers = {
             id(check): DQRuleManager(
@@ -202,6 +204,7 @@ class DQEngineCore(DQEngineCoreBase):
                 rule_set_fingerprint=rule_set_fingerprint,
                 input_df=df,
                 reference_cache=reference_cache,
+                known_input=known_input,
             )
             for check in checks_before_row_changes
             if isinstance(check, DQDatasetRule)
@@ -213,7 +216,7 @@ class DQEngineCore(DQEngineCoreBase):
         ]
         result_df = add_dataset_aggregates(df, df, shared_aggregates)
 
-        result_df, skipped_error_checks = self._create_results_array(
+        result_df, skipped_error_checks, schema_reuse_after_errors = self._create_results_array(
             result_df,
             error_checks,
             self._result_column_names[ColumnArguments.ERRORS],
@@ -223,8 +226,10 @@ class DQEngineCore(DQEngineCoreBase):
             input_df=df,
             reference_cache=reference_cache,
             input_managers=input_managers,
+            # The shared aggregates only add columns, so the input's schema facts still hold for result_df
+            schema_reuse=InputSchemaReuse(known_input),
         )
-        result_df, skipped_warning_checks = self._create_results_array(
+        result_df, skipped_warning_checks, _ = self._create_results_array(
             result_df,
             warning_checks,
             self._result_column_names[ColumnArguments.WARNINGS],
@@ -234,6 +239,7 @@ class DQEngineCore(DQEngineCoreBase):
             input_df=df,
             reference_cache=reference_cache,
             input_managers=input_managers,
+            schema_reuse=schema_reuse_after_errors,
         )
         if shared_aggregates:
             result_df = result_df.drop(*[aggregate.metric_col for aggregate in shared_aggregates])
@@ -609,7 +615,8 @@ class DQEngineCore(DQEngineCoreBase):
         input_df: DataFrame | None = None,
         reference_cache: dict[tuple[str, str], DataFrame] | None = None,
         input_managers: dict[int, DQRuleManager] | None = None,
-    ) -> tuple[DataFrame, set[str]]:
+        schema_reuse: InputSchemaReuse | None = None,
+    ) -> tuple[DataFrame, set[str], InputSchemaReuse]:
         """
         Apply a list of data quality checks to a DataFrame and assemble their results into an array column.
 
@@ -630,22 +637,28 @@ class DQEngineCore(DQEngineCoreBase):
             input_managers: Managers of the checks that read *input_df*, keyed by check id. The metric columns of
                 their built-in aggregates must already be present in *df*. Other checks read *df*, or the result of
                 the last check that may have changed the rows.
+            schema_reuse: Reuse of the schema facts of *input_df* to validate checks without a schema analysis (an RPC
+                on Spark Connect). It ends once a check may have changed the rows, and the facts are only used for a
+                DataFrame whose column names and types still match the input's.
 
         Returns:
-            DataFrame with an added array column (*dest_col*) containing the results of the applied checks, and the
-            fingerprints of checks whose evaluation was skipped.
+            DataFrame with an added array column (*dest_col*) containing the results of the applied checks, the
+            fingerprints of checks whose evaluation was skipped, and the reuse of the schema facts for checks
+            validated against the returned DataFrame.
         """
+        schema_reuse = schema_reuse or InputSchemaReuse(None)
         if not checks:
             # No checks then just append a null array result
-            return df.select("*", F.lit(None).cast(dq_result_schema).alias(dest_col)), set()
+            return df.select("*", F.lit(None).cast(dq_result_schema).alias(dest_col)), set(), schema_reuse
 
         check_conditions = []
         skipped_checks: set[str] = set()
         info_col_names: list[str] = []
-        original_columns = set(df.columns)
         input_df = df if input_df is None else input_df
 
-        def build_manager(check: DQRule, manager_df: DataFrame, check_input_df: DataFrame) -> DQRuleManager:
+        def build_manager(
+            check: DQRule, manager_df: DataFrame, check_input_df: DataFrame, check_known_input: KnownInputSchema | None
+        ) -> DQRuleManager:
             return DQRuleManager(
                 # each check pass may add new columns to the df and certain checks require original columns
                 check=self._preselect_original_columns(input_df, check),
@@ -660,6 +673,7 @@ class DQEngineCore(DQEngineCoreBase):
                 rule_set_fingerprint=rule_set_fingerprint,
                 input_df=check_input_df,
                 reference_cache=reference_cache,
+                known_input=check_known_input,
             )
 
         current_df = df
@@ -667,7 +681,11 @@ class DQEngineCore(DQEngineCoreBase):
         input_managers = input_managers or {}
         for check in checks:
             reads_input = id(check) in input_managers
-            manager = input_managers[id(check)] if reads_input else build_manager(check, current_df, rows_df)
+            manager = (
+                input_managers[id(check)]
+                if reads_input
+                else build_manager(check, current_df, rows_df, schema_reuse.for_check(current_df, rows_df))
+            )
             log_telemetry(self.ws, "check", manager.check.check_func.__name__)
             result = manager.process(current_df, aggregate_added=reads_input)
             check_conditions.append(result.condition)
@@ -681,6 +699,7 @@ class DQEngineCore(DQEngineCoreBase):
             current_df = result.check_df
             if not _keeps_input_rows(check):
                 rows_df = current_df  # later checks must see the rows this check may have changed
+                schema_reuse.stop()
 
         # Build array of non-null results
         combined_result_array = F.array_compact(F.array(*check_conditions))
@@ -695,20 +714,39 @@ class DQEngineCore(DQEngineCoreBase):
 
         result_df = merge_info_columns(dest_info_col, result_df, info_col_names=info_col_names)
 
-        # Drop temporary columns used to build check conditions, while preserving result columns.
-        columns_to_drop = [
-            col
-            for col in result_df.columns
-            if col not in original_columns
-            and col != dest_col
-            and col != dest_info_col
-            and col != self._result_column_names[ColumnArguments.ERRORS]
-            and col != self._result_column_names[ColumnArguments.WARNINGS]
-        ]
-        if columns_to_drop:
-            result_df = result_df.drop(*columns_to_drop)
+        # Only checks that return a new DataFrame (e.g. dataset-level checks) can add temporary columns, so skip reading
+        # the result schema (an RPC on Spark Connect) when every check returned the input DataFrame unchanged.
+        if current_df is not df:
+            result_df = self._drop_temporary_columns(result_df, df, dest_col, dest_info_col)
 
-        return result_df, skipped_checks
+        # The result and info columns are added and only temporary columns dropped, so the facts hold for result_df if
+        # they were found to hold for current_df.
+        return result_df, skipped_checks, schema_reuse
+
+    def _drop_temporary_columns(
+        self, result_df: DataFrame, df: DataFrame, dest_col: str, dest_info_col: str
+    ) -> DataFrame:
+        """
+        Drop the temporary columns that checks added to build their conditions, preserving the result columns.
+
+        Args:
+            result_df: DataFrame with the check results.
+            df: DataFrame the checks were applied to; its columns are kept.
+            dest_col: Name of the result column being built.
+            dest_info_col: Name of the info column being built.
+
+        Returns:
+            *result_df* without the temporary columns.
+        """
+        original_columns = set(df.columns)
+        kept_columns = {
+            dest_col,
+            dest_info_col,
+            self._result_column_names[ColumnArguments.ERRORS],
+            self._result_column_names[ColumnArguments.WARNINGS],
+        }
+        columns_to_drop = [col for col in result_df.columns if col not in original_columns and col not in kept_columns]
+        return result_df.drop(*columns_to_drop) if columns_to_drop else result_df
 
     def _observe_metrics(
         self, df: DataFrame, checks: list[DQRule] | None = None, skipped_checks: set[str] | None = None
@@ -749,6 +787,19 @@ class DQEngineCore(DQEngineCoreBase):
             return df.observe(self.observer.id, *metric_exprs), observation
 
         return df.observe(observation, *metric_exprs), observation
+
+
+def _checks_validated_before_row_changes(checks: list[DQRule]) -> list[DQRule]:
+    """
+    Return the leading *checks* that are validated before any check may have changed the rows, i.e. up to and
+    including the first check that may change them (it is validated before it is applied).
+    """
+    validated = []
+    for check in checks:
+        validated.append(check)
+        if not _keeps_input_rows(check):
+            break
+    return validated
 
 
 def _keeps_input_rows(check: DQRule) -> bool:
